@@ -200,6 +200,8 @@ dependencies = [
 name = "brainiac-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "chrono",
  "serde",
  "serde_json",
@@ -244,6 +246,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "brainiac-core",
  "reqwest",
  "serde",
  "serde_json",
@@ -283,6 +286,7 @@ dependencies = [
  "brainiac-store",
  "chrono",
  "clap",
+ "dotenvy",
  "reqwest",
  "serde",
  "serde_json",
