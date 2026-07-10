@@ -280,4 +280,51 @@ async fn console_reviews_graph_analytics() {
         .expect("contradictions")
         .iter()
         .any(|c| c["status"] == "resolved_supersede"));
+
+    // ── cortex map: overview ──────────────────────────────────────────────
+    let r = http
+        .get(format!("{base}/v1/graph/overview"))
+        .bearer_auth("tok_analyst")
+        .send()
+        .await
+        .expect("overview");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["teams"].as_array().expect("teams").len(), 3);
+    let kafka = body["canonicals"]
+        .as_array()
+        .expect("canonicals")
+        .iter()
+        .find(|c| c["name"] == "kafka")
+        .expect("kafka hub");
+    assert_eq!(kafka["teams"], 3);
+    assert!(!body["team_links"].as_array().expect("links").is_empty());
+
+    // ── cortex map: canonical drill-down under RLS ────────────────────────
+    let kafka_id = kafka["id"].as_str().expect("id").to_string();
+    let r = http
+        .get(format!("{base}/v1/graph/canonical/{kafka_id}"))
+        .bearer_auth("tok_analyst")
+        .send()
+        .await
+        .expect("canonical");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["canonical"]["name"], "kafka");
+    let forms = body["surface_forms"].as_array().expect("forms");
+    assert_eq!(forms.len(), 3, "three team dialects of kafka");
+    assert!(!body["edges"].as_array().expect("edges").is_empty());
+    // The analyst must not see payments team-visible memory content anywhere
+    // in the drill-down (evidence or anchored memories).
+    let leak = "checkout.events.v2; the v1 topic is frozen";
+    assert!(body["edges"]
+        .as_array()
+        .expect("edges")
+        .iter()
+        .all(|e| e["evidence"].as_str().is_none_or(|s| !s.contains(leak))));
+    assert!(body["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .all(|m| !m["content"].as_str().expect("content").contains(leak)));
 }

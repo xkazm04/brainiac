@@ -37,6 +37,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/graph", get(graph))
         .route("/v1/analytics", get(analytics))
         .route("/v1/analytics/observatory", get(observatory))
+        .route("/v1/graph/overview", get(graph_overview))
+        .route("/v1/graph/canonical/{id}", get(graph_canonical))
 }
 
 type HttpError = (StatusCode, String);
@@ -543,5 +545,205 @@ async fn observatory(
         })).collect::<Vec<_>>(),
         "queue": { "ingest_depth": queue_depth },
         "embedding_model": state.embedder.model_name(),
+    })))
+}
+
+// ── cortex map (multi-level graph; never ships the whole graph at once) ──
+
+/// L0/L1: team lobes with volumes, top canonical hubs with team spread, and
+/// team-pair binding strength (shared canonicals). Bounded by construction.
+async fn graph_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers)?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let teams = sqlx::query(
+        "SELECT t.id, t.name,
+                (SELECT count(*) FROM memories m WHERE m.team_id = t.id) AS memories,
+                (SELECT count(*) FROM entities e WHERE e.team_id = t.id) AS entities
+         FROM teams t ORDER BY t.name",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let canonicals = sqlx::query(
+        "SELECT ce.id, ce.name, ce.kind,
+                count(DISTINCT me.memory_id) AS memories,
+                count(DISTINCT e.team_id) AS team_count,
+                array_agg(DISTINCT e.team_id) AS team_ids
+         FROM canonical_entities ce
+         JOIN entity_links l ON l.canonical_id = ce.id
+         JOIN entities e ON e.id = l.entity_id
+         LEFT JOIN memory_entities me ON me.entity_id = e.id
+         GROUP BY ce.id, ce.name, ce.kind
+         ORDER BY memories DESC, team_count DESC, ce.name
+         LIMIT 60",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // Binding strength between team pairs = canonicals both teams link into.
+    let team_links = sqlx::query(
+        "SELECT ta.team_id AS a, tb.team_id AS b, count(DISTINCT ta.canonical_id) AS shared
+         FROM (SELECT DISTINCT l.canonical_id, e.team_id
+               FROM entity_links l JOIN entities e ON e.id = l.entity_id) ta
+         JOIN (SELECT DISTINCT l.canonical_id, e.team_id
+               FROM entity_links l JOIN entities e ON e.id = l.entity_id) tb
+           ON ta.canonical_id = tb.canonical_id AND ta.team_id < tb.team_id
+         GROUP BY 1, 2",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    Ok(Json(json!({
+        "teams": teams.iter().map(|r| json!({
+            "id": r.get::<Uuid, _>("id"),
+            "name": r.get::<String, _>("name"),
+            "memories": r.get::<i64, _>("memories"),
+            "entities": r.get::<i64, _>("entities"),
+        })).collect::<Vec<_>>(),
+        "canonicals": canonicals.iter().map(|r| json!({
+            "id": r.get::<Uuid, _>("id"),
+            "name": r.get::<String, _>("name"),
+            "kind": r.get::<String, _>("kind"),
+            "memories": r.get::<i64, _>("memories"),
+            "teams": r.get::<i64, _>("team_count"),
+            "team_ids": r.get::<Vec<Uuid>, _>("team_ids"),
+        })).collect::<Vec<_>>(),
+        "team_links": team_links.iter().map(|r| json!({
+            "a": r.get::<Uuid, _>("a"),
+            "b": r.get::<Uuid, _>("b"),
+            "shared": r.get::<i64, _>("shared"),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+/// L2/L3: one canonical entity's neighborhood — surface forms per team,
+/// 1-hop evidence edges (content RLS-scoped), neighbor canonicals reachable
+/// through those edges, and the anchored memories the caller may read.
+async fn graph_canonical(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers)?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let canonical =
+        sqlx::query("SELECT id, name, kind, summary FROM canonical_entities WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(internal)?
+            .ok_or((StatusCode::NOT_FOUND, "canonical entity not found".into()))?;
+
+    let surface_forms = sqlx::query(
+        "SELECT e.id, e.name, e.kind, e.team_id, t.name AS team, l.confidence, l.method
+         FROM entity_links l
+         JOIN entities e ON e.id = l.entity_id
+         JOIN teams t ON t.id = e.team_id
+         WHERE l.canonical_id = $1
+         ORDER BY t.name, e.name",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // 1-hop edges touching any surface form; evidence text under caller RLS.
+    let edges = sqlx::query(
+        "SELECT ed.src_entity, es.name AS src_name, ed.dst_entity, ds.name AS dst_name,
+                ed.relation, ed.memory_id, m.content AS evidence
+         FROM edges ed
+         JOIN entities es ON es.id = ed.src_entity
+         JOIN entities ds ON ds.id = ed.dst_entity
+         LEFT JOIN memories m ON m.id = ed.memory_id
+         WHERE ed.src_entity IN (SELECT entity_id FROM entity_links WHERE canonical_id = $1)
+            OR ed.dst_entity IN (SELECT entity_id FROM entity_links WHERE canonical_id = $1)
+         LIMIT 60",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // Neighbor canonicals: the far end of those edges, resolved via links.
+    let neighbors = sqlx::query(
+        "SELECT ce.id, ce.name, ce.kind, count(*) AS shared_edges
+         FROM edges ed
+         JOIN entity_links far ON far.entity_id =
+              CASE WHEN ed.src_entity IN (SELECT entity_id FROM entity_links WHERE canonical_id = $1)
+                   THEN ed.dst_entity ELSE ed.src_entity END
+         JOIN canonical_entities ce ON ce.id = far.canonical_id
+         WHERE ce.id <> $1
+           AND (ed.src_entity IN (SELECT entity_id FROM entity_links WHERE canonical_id = $1)
+             OR ed.dst_entity IN (SELECT entity_id FROM entity_links WHERE canonical_id = $1))
+         GROUP BY ce.id, ce.name, ce.kind
+         ORDER BY shared_edges DESC, ce.name
+         LIMIT 12",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // Anchored memories the CALLER can read (RLS filters the join).
+    let memories = sqlx::query(
+        "SELECT DISTINCT m.id, m.content, m.kind, m.status::text AS status, t.name AS team
+         FROM memory_entities me
+         JOIN memories m ON m.id = me.memory_id
+         JOIN teams t ON t.id = m.team_id
+         WHERE me.entity_id IN (SELECT entity_id FROM entity_links WHERE canonical_id = $1)
+         ORDER BY m.kind, m.id
+         LIMIT 12",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    Ok(Json(json!({
+        "canonical": {
+            "id": canonical.get::<Uuid, _>("id"),
+            "name": canonical.get::<String, _>("name"),
+            "kind": canonical.get::<String, _>("kind"),
+            "summary": canonical.get::<Option<String>, _>("summary"),
+        },
+        "surface_forms": surface_forms.iter().map(|r| json!({
+            "entity_id": r.get::<Uuid, _>("id"),
+            "name": r.get::<String, _>("name"),
+            "kind": r.get::<String, _>("kind"),
+            "team_id": r.get::<Uuid, _>("team_id"),
+            "team": r.get::<String, _>("team"),
+            "confidence": r.get::<Option<f32>, _>("confidence"),
+            "method": r.get::<Option<String>, _>("method"),
+        })).collect::<Vec<_>>(),
+        "edges": edges.iter().map(|r| json!({
+            "src": r.get::<Uuid, _>("src_entity"),
+            "src_name": r.get::<String, _>("src_name"),
+            "dst": r.get::<Uuid, _>("dst_entity"),
+            "dst_name": r.get::<String, _>("dst_name"),
+            "relation": r.get::<String, _>("relation"),
+            "memory_id": r.get::<Option<Uuid>, _>("memory_id"),
+            "evidence": r.get::<Option<String>, _>("evidence"),
+        })).collect::<Vec<_>>(),
+        "neighbors": neighbors.iter().map(|r| json!({
+            "id": r.get::<Uuid, _>("id"),
+            "name": r.get::<String, _>("name"),
+            "kind": r.get::<String, _>("kind"),
+            "shared_edges": r.get::<i64, _>("shared_edges"),
+        })).collect::<Vec<_>>(),
+        "memories": memories.iter().map(|r| json!({
+            "id": r.get::<Uuid, _>("id"),
+            "content": r.get::<String, _>("content"),
+            "kind": r.get::<String, _>("kind"),
+            "status": r.get::<String, _>("status"),
+            "team": r.get::<String, _>("team"),
+        })).collect::<Vec<_>>(),
     })))
 }
