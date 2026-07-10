@@ -59,10 +59,14 @@ pub async fn router(store: Store, embedder: Arc<dyn Embedder>) -> Result<Router>
         .route("/v1/memories/search", post(search))
         .route("/v1/memories", post(memory_add))
         .route("/v1/reviews/promotions", get(pending_promotions))
+        .merge(crate::console::routes())
         .with_state(state))
 }
 
-fn principal_of(state: &AppState, headers: &HeaderMap) -> Result<Principal, (StatusCode, String)> {
+pub(crate) fn principal_of(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Principal, (StatusCode, String)> {
     let bearer = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -209,6 +213,6 @@ async fn pending_promotions(
     Ok(Json(json!({ "promotions": out })))
 }
 
-fn internal(e: impl std::fmt::Display) -> (StatusCode, String) {
+pub(crate) fn internal(e: impl std::fmt::Display) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }

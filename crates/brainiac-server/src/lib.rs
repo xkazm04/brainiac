@@ -3,5 +3,6 @@
 //! boot the same router directly.
 
 pub mod auth;
+pub mod console;
 pub mod http;
 pub mod mcp;
