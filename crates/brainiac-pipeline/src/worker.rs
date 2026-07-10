@@ -1,0 +1,155 @@
+//! Worker loop: claim `ingest` jobs and run the full stage chain for each
+//! source. One job = one source end-to-end in v0 (see lib.rs).
+
+use anyhow::{Context, Result};
+use brainiac_core::embed::Embedder;
+use brainiac_core::{MemoryStatus, PolicyDecision};
+use brainiac_gateway::ChatProvider;
+use brainiac_store::{queue, Store};
+use serde_json::json;
+use uuid::Uuid;
+
+use crate::policy::PolicyEngine;
+use crate::{contradict, extract, pipeline_principal, resolve};
+
+pub const INGEST_QUEUE: &str = "ingest";
+const VISIBILITY_SECS: i64 = 300;
+
+/// Enqueue a source for the pipeline.
+pub async fn enqueue_source(store: &Store, org_id: Uuid, source_id: Uuid) -> Result<i64> {
+    queue::send(
+        store.pool(),
+        INGEST_QUEUE,
+        &json!({ "org_id": org_id, "source_id": source_id }),
+    )
+    .await
+}
+
+#[derive(Debug, Default)]
+pub struct TickStats {
+    pub jobs: usize,
+    pub memories: usize,
+    pub auto_promoted: usize,
+    pub needs_review: usize,
+    pub contradictions_opened: usize,
+}
+
+/// Process up to `batch` ingest jobs. Returns per-tick stats; callers loop.
+pub async fn tick(
+    store: &Store,
+    provider: &dyn ChatProvider,
+    embedder: &dyn Embedder,
+    embedding_version: i32,
+    batch: i64,
+) -> Result<TickStats> {
+    let mut stats = TickStats::default();
+    let jobs = queue::read(store.pool(), INGEST_QUEUE, batch, VISIBILITY_SECS).await?;
+    for job in jobs {
+        match process_job(
+            store,
+            provider,
+            embedder,
+            embedding_version,
+            &job,
+            &mut stats,
+        )
+        .await
+        {
+            Ok(()) => queue::complete(store.pool(), &job).await?,
+            Err(e) => {
+                tracing::error!(job = job.id, error = %e, "ingest job failed");
+                queue::fail(store.pool(), &job, 30).await?;
+            }
+        }
+        stats.jobs += 1;
+    }
+    Ok(stats)
+}
+
+async fn process_job(
+    store: &Store,
+    provider: &dyn ChatProvider,
+    embedder: &dyn Embedder,
+    embedding_version: i32,
+    job: &queue::Job,
+    stats: &mut TickStats,
+) -> Result<()> {
+    let org_id: Uuid = serde_json::from_value(job.payload["org_id"].clone())?;
+    let source_id: Uuid = serde_json::from_value(job.payload["source_id"].clone())?;
+    // Worker authority: later stages (contradict, promote) must read back the
+    // team-visible memories the extract stage just wrote for any team of the
+    // org — worker_tx sets the audited app.worker read scope (org + team
+    // tiers, never private; migrations/0002_worker_read.sql).
+    let principal = pipeline_principal(org_id);
+    let mut tx = store.worker_tx(&principal).await?;
+
+    let (team_id, raw_text) = brainiac_store::governance::get_source_text(&mut tx, source_id)
+        .await?
+        .context("source not found")?;
+
+    // extract (+ embed inline)
+    let extracted = extract::run_extract(
+        &mut tx,
+        provider,
+        embedder,
+        embedding_version,
+        org_id,
+        team_id,
+        source_id,
+        &raw_text,
+    )
+    .await?;
+    stats.memories += extracted.memories_written;
+
+    // resolve every NEW entity this source introduced
+    for entity_id in &extracted.entities_created {
+        use sqlx::Row;
+        let row = sqlx::query("SELECT name, kind FROM entities WHERE id = $1")
+            .bind(entity_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let name: String = row.get("name");
+        let kind: String = row.get("kind");
+        resolve::resolve_entity(
+            &mut tx, provider, embedder, org_id, *entity_id, &name, &kind,
+        )
+        .await?;
+    }
+
+    // contradict + promote per new memory
+    let new_memories = brainiac_store::memories::get_by_ids(&mut tx, &extracted.memory_ids).await?;
+    let engine = PolicyEngine;
+    for m in &new_memories {
+        let c =
+            contradict::run_contradict(&mut tx, provider, embedder, embedding_version, org_id, m)
+                .await?;
+        stats.contradictions_opened += c.opened;
+
+        let (decision, rule) = engine.evaluate(m, MemoryStatus::Candidate);
+        brainiac_store::governance::insert_promotion(
+            &mut tx,
+            org_id,
+            m.id,
+            m.status,
+            MemoryStatus::Candidate,
+            decision,
+            rule,
+        )
+        .await?;
+        match decision {
+            PolicyDecision::AutoApproved => {
+                brainiac_store::governance::set_memory_status(
+                    &mut tx,
+                    m.id,
+                    MemoryStatus::Candidate,
+                )
+                .await?;
+                stats.auto_promoted += 1;
+            }
+            _ => stats.needs_review += 1,
+        }
+    }
+
+    tx.commit().await?;
+    Ok(())
+}

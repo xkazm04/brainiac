@@ -11,6 +11,7 @@
 //!   goes through such a transaction; there is no unscoped query path.
 
 pub mod entities;
+pub mod governance;
 pub mod memories;
 pub mod orgs;
 pub mod queue;
@@ -72,6 +73,24 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "SELECT set_config('app.org_id', $1, true), set_config('app.user_id', $2, true)",
+        )
+        .bind(principal.org_id.to_string())
+        .bind(principal.user_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        Ok(tx)
+    }
+
+    /// Worker-scoped transaction: org-wide read of the org + team tiers
+    /// (never private) via the `app.worker` escape in the memories read
+    /// policy — see migrations/0002_worker_read.sql. Only pipeline stages
+    /// use this; end-user requests always go through [`Self::scoped_tx`].
+    pub async fn worker_tx(&self, principal: &Principal) -> Result<Tx<'static>> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "SELECT set_config('app.org_id', $1, true),
+                    set_config('app.user_id', $2, true),
+                    set_config('app.worker', 'on', true)",
         )
         .bind(principal.org_id.to_string())
         .bind(principal.user_id.to_string())

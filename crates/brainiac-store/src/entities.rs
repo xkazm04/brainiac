@@ -165,3 +165,40 @@ pub async fn neighbors(
         .map(|r| r.get::<Uuid, _>("entity_id"))
         .collect())
 }
+
+/// Case-insensitive lookup of a raw entity by name within a team scope
+/// (extraction get-or-create path).
+pub async fn find_by_name(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    team_id: Option<Uuid>,
+    name: &str,
+) -> Result<Option<Uuid>> {
+    let row = sqlx::query(
+        "SELECT id FROM entities
+         WHERE org_id = $1 AND team_id IS NOT DISTINCT FROM $2 AND lower(name) = lower($3)
+         LIMIT 1",
+    )
+    .bind(org_id)
+    .bind(team_id)
+    .bind(name)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|r| r.get::<Uuid, _>("id")))
+}
+
+/// All canonical entities of the org (resolve blocking candidates; small in
+/// v0 — revisit with ANN over canonical embeddings at scale).
+pub async fn list_canonicals(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+) -> Result<Vec<(Uuid, String, String)>> {
+    let rows = sqlx::query("SELECT id, name, kind FROM canonical_entities WHERE org_id = $1")
+        .bind(org_id)
+        .fetch_all(conn)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get("id"), r.get("name"), r.get("kind")))
+        .collect())
+}
