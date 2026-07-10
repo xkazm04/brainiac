@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
 use brainiac_core::{MemoryStatus, PolicyDecision};
-use brainiac_gateway::ChatProvider;
+use brainiac_gateway::{ProviderRouter, Stage};
 use brainiac_store::{queue, Store};
 use serde_json::json;
 use uuid::Uuid;
@@ -37,7 +37,7 @@ pub struct TickStats {
 /// Process up to `batch` ingest jobs. Returns per-tick stats; callers loop.
 pub async fn tick(
     store: &Store,
-    provider: &dyn ChatProvider,
+    providers: &ProviderRouter,
     embedder: &dyn Embedder,
     embedding_version: i32,
     batch: i64,
@@ -47,7 +47,7 @@ pub async fn tick(
     for job in jobs {
         match process_job(
             store,
-            provider,
+            providers,
             embedder,
             embedding_version,
             &job,
@@ -68,7 +68,7 @@ pub async fn tick(
 
 async fn process_job(
     store: &Store,
-    provider: &dyn ChatProvider,
+    providers: &ProviderRouter,
     embedder: &dyn Embedder,
     embedding_version: i32,
     job: &queue::Job,
@@ -90,7 +90,7 @@ async fn process_job(
     // extract (+ embed inline)
     let extracted = extract::run_extract(
         &mut tx,
-        provider,
+        providers.for_stage(Stage::Extract),
         embedder,
         embedding_version,
         org_id,
@@ -111,7 +111,13 @@ async fn process_job(
         let name: String = row.get("name");
         let kind: String = row.get("kind");
         resolve::resolve_entity(
-            &mut tx, provider, embedder, org_id, *entity_id, &name, &kind,
+            &mut tx,
+            providers.for_stage(Stage::Resolve),
+            embedder,
+            org_id,
+            *entity_id,
+            &name,
+            &kind,
         )
         .await?;
     }
@@ -120,9 +126,15 @@ async fn process_job(
     let new_memories = brainiac_store::memories::get_by_ids(&mut tx, &extracted.memory_ids).await?;
     let engine = PolicyEngine;
     for m in &new_memories {
-        let c =
-            contradict::run_contradict(&mut tx, provider, embedder, embedding_version, org_id, m)
-                .await?;
+        let c = contradict::run_contradict(
+            &mut tx,
+            providers.for_stage(Stage::Contradict),
+            embedder,
+            embedding_version,
+            org_id,
+            m,
+        )
+        .await?;
         stats.contradictions_opened += c.opened;
 
         let (decision, rule) = engine.evaluate(m, MemoryStatus::Candidate);

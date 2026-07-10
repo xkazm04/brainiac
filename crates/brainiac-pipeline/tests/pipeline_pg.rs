@@ -119,7 +119,8 @@ async fn full_pipeline_over_seed_transcripts() {
     let store = Store::connect(&url).await.expect("connect");
     let fx = brainiac_fixtures::load(brainiac_fixtures::loader::default_root()).expect("fixtures");
     let embedder = DeterministicEmbedder::default();
-    let provider = perfect_mock(&fx);
+    let provider =
+        brainiac_gateway::ProviderRouter::single(std::sync::Arc::new(perfect_mock(&fx)));
 
     // Identity + sources.
     let org_id = brainiac_fixtures::ids::stable_uuid(&fx.org.org);

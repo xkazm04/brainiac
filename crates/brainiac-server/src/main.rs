@@ -122,17 +122,20 @@ async fn worker(mock: bool) -> Result<()> {
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
 
-    let provider: Box<dyn brainiac_gateway::ChatProvider> = if mock {
+    let default_provider: Arc<dyn brainiac_gateway::ChatProvider> = if mock {
         tracing::warn!("worker running with the MOCK provider — dev/demo only");
-        Box::new(brainiac_gateway::MockProvider::new(|_| {
+        Arc::new(brainiac_gateway::MockProvider::new(|_| {
             r#"{"memories":[]}"#.to_string()
         }))
     } else {
-        Box::new(
+        Arc::new(
             brainiac_gateway::QwenProvider::from_env()
                 .context("set DASHSCOPE_API_KEY (or pass --mock for dev)")?,
         )
     };
+    // Per-stage overrides (BRAINIAC_MODEL_EXTRACT / _RESOLVE / _CONTRADICT)
+    // let extraction run a stronger model than adjudication.
+    let providers = brainiac_gateway::ProviderRouter::from_env(default_provider)?;
 
     let version = {
         let principal = brainiac_pipeline::pipeline_principal(uuid::Uuid::nil());
@@ -147,16 +150,11 @@ async fn worker(mock: bool) -> Result<()> {
         v
     };
 
-    tracing::info!(provider = %provider.model_ref(), embedder = embedder.model_name(), "brainiac worker started");
+    tracing::info!(providers = %providers.describe(), embedder = embedder.model_name(), "brainiac worker started");
     loop {
-        let stats = brainiac_pipeline::worker::tick(
-            &store,
-            provider.as_ref(),
-            embedder.as_ref(),
-            version,
-            8,
-        )
-        .await?;
+        let stats =
+            brainiac_pipeline::worker::tick(&store, &providers, embedder.as_ref(), version, 8)
+                .await?;
         if stats.jobs == 0 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         } else {

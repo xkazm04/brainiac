@@ -286,6 +286,123 @@ impl brainiac_core::embed::Embedder for QwenEmbedder {
     }
 }
 
+// ── provider registry & per-stage routing ───────────────────────────────
+
+/// Pipeline stages that consume a chat provider. Extraction wants the
+/// strongest model; resolution/contradiction adjudication are short
+/// classification calls where a cheaper model is usually enough.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Stage {
+    Extract,
+    Resolve,
+    Contradict,
+}
+
+impl Stage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stage::Extract => "extract",
+            Stage::Resolve => "resolve",
+            Stage::Contradict => "contradict",
+        }
+    }
+
+    fn env_key(self) -> &'static str {
+        match self {
+            Stage::Extract => "BRAINIAC_MODEL_EXTRACT",
+            Stage::Resolve => "BRAINIAC_MODEL_RESOLVE",
+            Stage::Contradict => "BRAINIAC_MODEL_CONTRADICT",
+        }
+    }
+}
+
+/// Build a provider from a spec string: `qwen` (default model),
+/// `qwen:<model>` (e.g. `qwen:qwen-turbo`), or `mock`. The single place new
+/// providers plug into routing.
+pub fn provider_from_spec(spec: &str) -> Result<std::sync::Arc<dyn ChatProvider>> {
+    let spec = spec.trim();
+    let (provider, model) = match spec.split_once(':') {
+        Some((p, m)) => (p, Some(m.to_string())),
+        None => (spec, None),
+    };
+    match provider {
+        "qwen" => {
+            let key = dashscope_key_from_env()
+                .context("provider spec `qwen` needs DASHSCOPE_API_KEY or QWEN_API_KEY")?;
+            Ok(std::sync::Arc::new(QwenProvider::new(
+                key,
+                model.or_else(|| std::env::var("QWEN_MODEL").ok()),
+                std::env::var("QWEN_BASE_URL").ok(),
+            )))
+        }
+        "mock" => Ok(std::sync::Arc::new(MockProvider::new(|_| {
+            r#"{"memories":[]}"#.to_string()
+        }))),
+        other => anyhow::bail!("unknown provider `{other}` in spec `{spec}` (qwen|mock)"),
+    }
+}
+
+/// Routes each pipeline stage to a provider. Defaults to one provider for
+/// everything; `BRAINIAC_MODEL_EXTRACT` / `_RESOLVE` / `_CONTRADICT` override
+/// a stage with a spec accepted by [`provider_from_spec`].
+pub struct ProviderRouter {
+    default: std::sync::Arc<dyn ChatProvider>,
+    extract: Option<std::sync::Arc<dyn ChatProvider>>,
+    resolve: Option<std::sync::Arc<dyn ChatProvider>>,
+    contradict: Option<std::sync::Arc<dyn ChatProvider>>,
+}
+
+impl ProviderRouter {
+    /// One provider for every stage (previous behavior).
+    pub fn single(provider: std::sync::Arc<dyn ChatProvider>) -> Self {
+        Self {
+            default: provider,
+            extract: None,
+            resolve: None,
+            contradict: None,
+        }
+    }
+
+    /// Apply per-stage env overrides on top of `default`.
+    pub fn from_env(default: std::sync::Arc<dyn ChatProvider>) -> Result<Self> {
+        let mut router = Self::single(default);
+        for stage in [Stage::Extract, Stage::Resolve, Stage::Contradict] {
+            if let Ok(spec) = std::env::var(stage.env_key()) {
+                if spec.trim().is_empty() {
+                    continue;
+                }
+                let provider = provider_from_spec(&spec)
+                    .with_context(|| format!("{} = `{spec}`", stage.env_key()))?;
+                tracing::info!(stage = stage.as_str(), model = %provider.model_ref(), "stage model override");
+                match stage {
+                    Stage::Extract => router.extract = Some(provider),
+                    Stage::Resolve => router.resolve = Some(provider),
+                    Stage::Contradict => router.contradict = Some(provider),
+                }
+            }
+        }
+        Ok(router)
+    }
+
+    pub fn for_stage(&self, stage: Stage) -> &dyn ChatProvider {
+        let slot = match stage {
+            Stage::Extract => &self.extract,
+            Stage::Resolve => &self.resolve,
+            Stage::Contradict => &self.contradict,
+        };
+        slot.as_deref().unwrap_or(self.default.as_ref())
+    }
+
+    /// `stage=model` pairs for startup logging.
+    pub fn describe(&self) -> String {
+        [Stage::Extract, Stage::Resolve, Stage::Contradict]
+            .iter()
+            .map(|s| format!("{}={}", s.as_str(), self.for_stage(*s).model_ref()))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 // ── Mock provider (tests / offline) ─────────────────────────────────────
 
 type Responder = dyn Fn(&ChatRequest) -> String + Send + Sync;
