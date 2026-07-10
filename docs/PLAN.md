@@ -74,4 +74,14 @@ crates/
       REST — an agent can never read more than its operator. Tested in
       `crates/brainiac-server/tests/mcp_pg.rs` (handshake, tool list, RLS leak
       check, entity resolution, ingest).
+- [x] Embedding backend seam live: async `Embedder`, `QwenEmbedder`
+      (DashScope `text-embedding-v4`, 1024-d, same OpenAI-compatible base as
+      the chat provider; `--embedder qwen` / `BRAINIAC_EMBEDDER`). First
+      real-model baseline: **NDCG@10 0.876** (semantic 0.811, czech 0.785)
+      vs deterministic 0.685 — results/history/.
+- [x] Console REST slice: promotion approve/reject + contradiction resolve
+      (maintainer-of-owning-team gate), `/v1/graph`, `/v1/analytics`.
+- [x] Next.js console scaffold (`console/`): server-only typed API client
+      (vitest-covered), reviews/graph/analytics pages with server actions.
+      Deliberately unstyled — the visual-identity pass replaces the chrome.
 - [ ] P7 CI eval gates wired to thresholds
