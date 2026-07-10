@@ -189,9 +189,22 @@ async fn pending_promotions(
     let principal = principal_of(&state, &headers)?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     use sqlx::Row;
+    // LEFT JOINs: an RLS-invisible memory keeps the promotion row visible
+    // (it's org metadata) but renders content/provenance as null — same
+    // no-oracle stance as the contradictions listing.
     let rows = sqlx::query(
-        "SELECT p.id, p.memory_id, p.to_status::text AS to_status, p.policy_rule, p.created_at
+        "SELECT p.id, p.memory_id, p.from_status::text AS from_status,
+                p.to_status::text AS to_status, p.policy_rule, p.created_at,
+                EXTRACT(EPOCH FROM now() - p.created_at)::bigint AS age_secs,
+                m.content, m.kind, m.status::text AS memory_status, m.confidence,
+                t.name AS team,
+                pv.actor_kind, pv.actor_id, pv.model_ref,
+                s.kind AS source_kind, s.external_ref AS source_ref
          FROM promotions p
+         LEFT JOIN memories m ON m.id = p.memory_id
+         LEFT JOIN teams t ON t.id = m.team_id
+         LEFT JOIN provenance pv ON pv.id = m.provenance_id
+         LEFT JOIN sources s ON s.id = pv.source_id
          WHERE p.policy_decision = 'needs_review' AND p.reviewed_at IS NULL
          ORDER BY p.created_at ASC
          LIMIT 100",
@@ -202,11 +215,30 @@ async fn pending_promotions(
     let out: Vec<serde_json::Value> = rows
         .iter()
         .map(|r| {
+            let provenance = r.get::<Option<String>, _>("actor_kind").map(|actor_kind| {
+                json!({
+                    "actor_kind": actor_kind,
+                    "actor_id": r.get::<String, _>("actor_id"),
+                    "model_ref": r.get::<Option<String>, _>("model_ref"),
+                    "source_kind": r.get::<Option<String>, _>("source_kind"),
+                    "source_ref": r.get::<Option<String>, _>("source_ref"),
+                })
+            });
             json!({
                 "id": r.get::<Uuid, _>("id"),
                 "memory_id": r.get::<Uuid, _>("memory_id"),
+                "from_status": r.get::<String, _>("from_status"),
                 "to_status": r.get::<String, _>("to_status"),
                 "policy_rule": r.get::<Option<String>, _>("policy_rule"),
+                "age_secs": r.get::<i64, _>("age_secs"),
+                "memory": r.get::<Option<String>, _>("content").map(|content| json!({
+                    "content": content,
+                    "kind": r.get::<Option<String>, _>("kind"),
+                    "status": r.get::<Option<String>, _>("memory_status"),
+                    "confidence": r.get::<Option<f32>, _>("confidence"),
+                    "team": r.get::<Option<String>, _>("team"),
+                })),
+                "provenance": provenance,
             })
         })
         .collect();
