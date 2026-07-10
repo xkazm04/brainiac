@@ -261,7 +261,10 @@ async fn console_reviews_graph_analytics() {
     assert!(r.status().is_success());
     let body: serde_json::Value = r.json().await.expect("json");
     assert!(!body["totals"].as_array().expect("totals").is_empty());
-    assert!(!body["weekly"]["captured"].as_array().expect("cap").is_empty());
+    assert!(!body["weekly"]["captured"]
+        .as_array()
+        .expect("cap")
+        .is_empty());
     assert!(!body["by_kind"].as_array().expect("kinds").is_empty());
     // kafka is the flagship theme: 3 team-scoped surface forms, memories > 0.
     let kafka = body["top_entities"]
@@ -327,4 +330,75 @@ async fn console_reviews_graph_analytics() {
         .expect("memories")
         .iter()
         .all(|m| !m["content"].as_str().expect("content").contains(leak)));
+
+    // ── archive: as-of time travel ────────────────────────────────────────
+    // At 2026-04-01 the 10s psp timeout (mem-pay-0063) was still valid and
+    // its 30s successor (mem-pay-0064) did not exist yet.
+    let old_id = stable_uuid("mem-pay-0063").to_string();
+    let new_id = stable_uuid("mem-pay-0064").to_string();
+    let r = http
+        .get(format!(
+            "{base}/v1/memories?as_of=2026-04-01T00:00:00Z&limit=200"
+        ))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("as-of list");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    let ids: Vec<&str> = body["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .map(|m| m["id"].as_str().expect("id"))
+        .collect();
+    assert!(
+        ids.contains(&old_id.as_str()),
+        "deprecated-but-then-valid row must resurface"
+    );
+    assert!(
+        !ids.contains(&new_id.as_str()),
+        "not-yet-valid successor must be absent"
+    );
+
+    // Without as_of both exist; kind filter narrows.
+    let r = http
+        .get(format!("{base}/v1/memories?limit=200"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("list");
+    let body: serde_json::Value = r.json().await.expect("json");
+    // RLS: the payments lead sees org rows + payments-team rows only
+    // (~46 of 82 — 27 org + payments' share of the 50 team-tier rows).
+    assert!(body["total"].as_i64().expect("total") >= 35);
+    let r = http
+        .get(format!("{base}/v1/memories?kind=pitfall&limit=200"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("kind filter");
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert!(body["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .all(|m| m["kind"] == "pitfall"));
+
+    // ── archive: detail + supersession lineage ────────────────────────────
+    let r = http
+        .get(format!("{base}/v1/memories/{new_id}"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("detail");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["memory"]["id"], new_id);
+    assert!(!body["entities"].as_array().expect("entities").is_empty());
+    let preds = body["chain"]["predecessors"].as_array().expect("preds");
+    assert!(
+        preds.iter().any(|p| p["id"] == old_id),
+        "10s timeout must appear as the predecessor of the 30s decision"
+    );
 }

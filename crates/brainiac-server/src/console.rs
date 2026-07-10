@@ -40,6 +40,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/analytics/observatory", get(observatory))
         .route("/v1/graph/overview", get(graph_overview))
         .route("/v1/graph/canonical/{id}", get(graph_canonical))
+        .route("/v1/memories", get(memories_list))
+        .route("/v1/memories/{id}", get(memory_detail))
 }
 
 type HttpError = (StatusCode, String);
@@ -858,5 +860,234 @@ async fn graph_canonical(
             "status": r.get::<String, _>("status"),
             "team": r.get::<String, _>("team"),
         })).collect::<Vec<_>>(),
+    })))
+}
+
+// ── archive (the memory ledger: as-of browsing + full lineage) ───────────
+
+#[derive(Deserialize)]
+struct MemoriesListParams {
+    kind: Option<String>,
+    status: Option<String>,
+    team: Option<Uuid>,
+    /// RFC3339. When set, returns rows VALID at that instant — including
+    /// deprecated ones that were true then. The archive's time travel.
+    as_of: Option<String>,
+    #[serde(default = "default_list_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
+fn default_list_limit() -> i64 {
+    50
+}
+
+fn memory_row_json(r: &sqlx::postgres::PgRow) -> serde_json::Value {
+    let ts = |col: &str| {
+        r.get::<Option<chrono::DateTime<chrono::Utc>>, _>(col)
+            .map(|d| d.to_rfc3339())
+    };
+    json!({
+        "id": r.get::<Uuid, _>("id"),
+        "content": r.get::<String, _>("content"),
+        "kind": r.get::<String, _>("kind"),
+        "status": r.get::<String, _>("status"),
+        "visibility": r.get::<String, _>("visibility"),
+        "team": r.get::<String, _>("team"),
+        "team_id": r.get::<Uuid, _>("team_id"),
+        "valid_from": ts("valid_from"),
+        "valid_to": ts("valid_to"),
+        "superseded_by": r.get::<Option<Uuid>, _>("superseded_by"),
+        "created_at": ts("created_at"),
+        "confidence": r.get::<Option<f32>, _>("confidence"),
+    })
+}
+
+async fn memories_list(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(p): axum::extract::Query<MemoriesListParams>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let as_of = match &p.as_of {
+        None => None,
+        Some(s) => Some(
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map_err(|_| (StatusCode::BAD_REQUEST, "as_of must be RFC3339".into()))?
+                .with_timezone(&chrono::Utc),
+        ),
+    };
+    let limit = p.limit.clamp(1, 200);
+    let offset = p.offset.max(0);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    const FILTER: &str = "WHERE ($1::text IS NULL OR m.kind = $1)
+           AND ($2::text IS NULL OR m.status = $2::memory_status)
+           AND ($3::uuid IS NULL OR m.team_id = $3)
+           AND ($4::timestamptz IS NULL OR
+                ((m.valid_from IS NULL OR m.valid_from <= $4)
+                 AND (m.valid_to IS NULL OR m.valid_to > $4)))";
+
+    let rows = sqlx::query(&format!(
+        "SELECT m.id, m.content, m.kind, m.status::text AS status,
+                m.visibility::text AS visibility, t.name AS team, m.team_id,
+                m.valid_from, m.valid_to, m.superseded_by, m.created_at, m.confidence
+         FROM memories m JOIN teams t ON t.id = m.team_id
+         {FILTER}
+         ORDER BY m.created_at DESC, m.id
+         LIMIT $5 OFFSET $6"
+    ))
+    .bind(&p.kind)
+    .bind(&p.status)
+    .bind(p.team)
+    .bind(as_of)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let total: i64 = sqlx::query(&format!("SELECT count(*) AS n FROM memories m {FILTER}"))
+        .bind(&p.kind)
+        .bind(&p.status)
+        .bind(p.team)
+        .bind(as_of)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(internal)?
+        .get("n");
+
+    Ok(Json(json!({
+        "total": total,
+        "memories": rows.iter().map(memory_row_json).collect::<Vec<_>>(),
+    })))
+}
+
+async fn memory_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let row = sqlx::query(
+        "SELECT m.id, m.content, m.kind, m.status::text AS status,
+                m.visibility::text AS visibility, t.name AS team, m.team_id,
+                m.valid_from, m.valid_to, m.superseded_by, m.created_at, m.confidence,
+                pv.actor_kind, pv.actor_id, pv.model_ref,
+                s.kind AS source_kind, s.external_ref AS source_ref
+         FROM memories m
+         JOIN teams t ON t.id = m.team_id
+         LEFT JOIN provenance pv ON pv.id = m.provenance_id
+         LEFT JOIN sources s ON s.id = pv.source_id
+         WHERE m.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal)?
+    .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
+
+    let entities = sqlx::query(
+        "SELECT e.name, e.kind, t.name AS team
+         FROM memory_entities me
+         JOIN entities e ON e.id = me.entity_id
+         JOIN teams t ON t.id = e.team_id
+         WHERE me.memory_id = $1
+         ORDER BY t.name, e.name",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let promotions = sqlx::query(
+        "SELECT from_status::text AS from_status, to_status::text AS to_status,
+                policy_decision, policy_rule, reviewer_id, reviewed_at, created_at
+         FROM promotions WHERE memory_id = $1 ORDER BY created_at",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // Supersession lineage, both directions. RLS silently drops chain
+    // members the caller can't read.
+    let successors = sqlx::query(
+        "WITH RECURSIVE chain AS (
+             SELECT id, content, status, valid_from, valid_to, superseded_by, 0 AS depth
+             FROM memories WHERE id = $1
+             UNION ALL
+             SELECT m.id, m.content, m.status, m.valid_from, m.valid_to, m.superseded_by, c.depth + 1
+             FROM memories m JOIN chain c ON m.id = c.superseded_by
+             WHERE c.depth < 8
+         )
+         SELECT id, content, status::text AS status, valid_from, valid_to, depth
+         FROM chain WHERE depth > 0 ORDER BY depth",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let predecessors = sqlx::query(
+        "WITH RECURSIVE chain AS (
+             SELECT id, content, status, valid_from, valid_to, 0 AS depth
+             FROM memories WHERE id = $1
+             UNION ALL
+             SELECT m.id, m.content, m.status, m.valid_from, m.valid_to, c.depth + 1
+             FROM memories m JOIN chain c ON m.superseded_by = c.id
+             WHERE c.depth < 8
+         )
+         SELECT id, content, status::text AS status, valid_from, valid_to, depth
+         FROM chain WHERE depth > 0 ORDER BY depth DESC",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let ts = |r: &sqlx::postgres::PgRow, col: &str| {
+        r.get::<Option<chrono::DateTime<chrono::Utc>>, _>(col)
+            .map(|d| d.to_rfc3339())
+    };
+    let chain_json = |r: &sqlx::postgres::PgRow, dir: i64| {
+        json!({
+            "id": r.get::<Uuid, _>("id"),
+            "content": r.get::<String, _>("content"),
+            "status": r.get::<String, _>("status"),
+            "valid_from": ts(r, "valid_from"),
+            "valid_to": ts(r, "valid_to"),
+            "depth": r.get::<i32, _>("depth") as i64 * dir,
+        })
+    };
+
+    Ok(Json(json!({
+        "memory": memory_row_json(&row),
+        "provenance": row.get::<Option<String>, _>("actor_kind").map(|actor_kind| json!({
+            "actor_kind": actor_kind,
+            "actor_id": row.get::<String, _>("actor_id"),
+            "model_ref": row.get::<Option<String>, _>("model_ref"),
+            "source_kind": row.get::<Option<String>, _>("source_kind"),
+            "source_ref": row.get::<Option<String>, _>("source_ref"),
+        })),
+        "entities": entities.iter().map(|r| json!({
+            "name": r.get::<String, _>("name"),
+            "kind": r.get::<String, _>("kind"),
+            "team": r.get::<String, _>("team"),
+        })).collect::<Vec<_>>(),
+        "promotions": promotions.iter().map(|r| json!({
+            "from_status": r.get::<String, _>("from_status"),
+            "to_status": r.get::<String, _>("to_status"),
+            "policy_decision": r.get::<String, _>("policy_decision"),
+            "policy_rule": r.get::<Option<String>, _>("policy_rule"),
+            "reviewed_at": ts(r, "reviewed_at"),
+            "created_at": ts(r, "created_at"),
+        })).collect::<Vec<_>>(),
+        "chain": {
+            "predecessors": predecessors.iter().map(|r| chain_json(r, -1)).collect::<Vec<_>>(),
+            "successors": successors.iter().map(|r| chain_json(r, 1)).collect::<Vec<_>>(),
+        },
     })))
 }
