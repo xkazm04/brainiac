@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/brainiac-core",
+    "crates/brainiac-fixtures",
+    "crates/brainiac-store",
+    "crates/brainiac-gateway",
+    "crates/brainiac-pipeline",
+    "crates/brainiac-eval",
+    "crates/brainiac-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/xkazm04/brainiac"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+async-trait = "0.1"
+
+# Internal crates
+brainiac-core = { path = "crates/brainiac-core" }
+brainiac-fixtures = { path = "crates/brainiac-fixtures" }
+brainiac-store = { path = "crates/brainiac-store" }
+brainiac-gateway = { path = "crates/brainiac-gateway" }
+brainiac-pipeline = { path = "crates/brainiac-pipeline" }
+brainiac-eval = { path = "crates/brainiac-eval" }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"

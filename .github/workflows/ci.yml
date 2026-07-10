@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgres://brainiac:brainiac@localhost:5432/brainiac
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: brainiac
+          POSTGRES_PASSWORD: brainiac
+          POSTGRES_DB: brainiac
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brainiac -d brainiac"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+      - name: eval retrieval profile
+        run: cargo run -p brainiac-server -- eval --fixtures fixtures/v1 --profile retrieval --out results/ci-run.json

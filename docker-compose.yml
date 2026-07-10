@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: brainiac
+      POSTGRES_PASSWORD: brainiac
+      POSTGRES_DB: brainiac
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brainiac -d brainiac"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - brainiac-pg:/var/lib/postgresql/data
+
+volumes:
+  brainiac-pg:
