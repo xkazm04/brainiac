@@ -69,6 +69,56 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface MemoryRow {
+  id: string;
+  content: string;
+  kind: string;
+  status: string;
+  visibility: string;
+  team: string;
+  team_id: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  superseded_by: string | null;
+  created_at: string | null;
+  confidence: number | null;
+}
+
+export interface MemoriesList {
+  total: number;
+  memories: MemoryRow[];
+}
+
+export interface ChainLink {
+  id: string;
+  content: string;
+  status: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  depth: number;
+}
+
+export interface MemoryDetail {
+  memory: MemoryRow;
+  provenance: {
+    actor_kind: string;
+    actor_id: string;
+    model_ref: string | null;
+    source_kind: string | null;
+    source_ref: string | null;
+  } | null;
+  entities: { name: string; kind: string; team: string }[];
+  promotions: {
+    from_status: string;
+    to_status: string;
+    policy_decision: string;
+    policy_rule: string | null;
+    reviewed_at: string | null;
+    created_at: string | null;
+  }[];
+  chain: { predecessors: ChainLink[]; successors: ChainLink[] };
+}
+
 export interface GraphOverview {
   teams: { id: string; name: string; memories: number; entities: number }[];
   canonicals: {

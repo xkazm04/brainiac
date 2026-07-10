@@ -12,6 +12,8 @@ import type {
   ContradictionResolution,
   Graph,
   GraphOverview,
+  MemoriesList,
+  MemoryDetail,
   ObservatoryPayload,
   PendingPromotion,
   ReviewedPromotion,
@@ -133,6 +135,18 @@ export async function getObservatory(cfg: ApiConfig): Promise<ObservatoryPayload
 
 export async function getGraphOverview(cfg: ApiConfig): Promise<GraphOverview> {
   return call(cfg, "GET", "/v1/graph/overview");
+}
+
+export async function listMemories(
+  cfg: ApiConfig,
+  params: Record<string, string> = {},
+): Promise<MemoriesList> {
+  const qs = new URLSearchParams(params).toString();
+  return call(cfg, "GET", `/v1/memories${qs ? `?${qs}` : ""}`);
+}
+
+export async function getMemoryDetail(cfg: ApiConfig, id: string): Promise<MemoryDetail> {
+  return call(cfg, "GET", `/v1/memories/${id}`);
 }
 
 export async function getGraphCanonical(
