@@ -13,6 +13,10 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
+pub mod resilience;
+
+use resilience::Resilience;
+
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
     pub system: String,
@@ -43,6 +47,7 @@ pub struct QwenProvider {
     base_url: String,
     api_key: String,
     model: String,
+    resilience: Resilience,
 }
 
 impl QwenProvider {
@@ -55,6 +60,7 @@ impl QwenProvider {
             base_url: base_url.unwrap_or_else(|| Self::DEFAULT_BASE.to_string()),
             api_key,
             model: model.unwrap_or_else(|| Self::DEFAULT_MODEL.to_string()),
+            resilience: Resilience::from_env(),
         }
     }
 
@@ -116,22 +122,12 @@ impl ChatProvider for QwenProvider {
         if req.json_mode {
             body["response_format"] = json!({"type": "json_object"});
         }
-        let resp = self
+        let req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context("dashscope request")?;
-        let status = resp.status();
-        let text = resp.text().await.context("dashscope body")?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "dashscope {status}: {}",
-                text.chars().take(400).collect::<String>()
-            );
-        }
+            .json(&body);
+        let text = self.resilience.send(req, "dashscope").await?;
         let parsed: OpenAiResponse = serde_json::from_str(&text).context("dashscope parse")?;
         let content = parsed
             .choices
@@ -165,6 +161,7 @@ pub struct QwenEmbedder {
     api_key: String,
     model: String,
     dim: usize,
+    resilience: Resilience,
 }
 
 impl QwenEmbedder {
@@ -179,6 +176,7 @@ impl QwenEmbedder {
             api_key,
             model: Self::DEFAULT_MODEL.to_string(),
             dim: dim.unwrap_or(Self::DEFAULT_DIM),
+            resilience: Resilience::from_env(),
         }
     }
 
@@ -204,7 +202,7 @@ impl QwenEmbedder {
         struct EmbeddingResponse {
             data: Vec<EmbeddingRow>,
         }
-        let resp = self
+        let req = self
             .http
             .post(format!("{}/embeddings", self.base_url))
             .bearer_auth(&self.api_key)
@@ -213,18 +211,8 @@ impl QwenEmbedder {
                 "input": texts,
                 "dimensions": self.dim,
                 "encoding_format": "float",
-            }))
-            .send()
-            .await
-            .context("dashscope embeddings request")?;
-        let status = resp.status();
-        let body = resp.text().await.context("dashscope embeddings body")?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "dashscope embeddings {status}: {}",
-                body.chars().take(400).collect::<String>()
-            );
-        }
+            }));
+        let body = self.resilience.send(req, "dashscope embeddings").await?;
         let parsed: EmbeddingResponse =
             serde_json::from_str(&body).context("dashscope embeddings parse")?;
         anyhow::ensure!(
