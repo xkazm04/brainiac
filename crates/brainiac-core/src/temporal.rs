@@ -191,7 +191,7 @@ mod tests {
         // 1 -> 2 -> 1 (corrupt). Must terminate.
         let m1 = mem(1, None, None, Some(2));
         let m2 = mem(2, None, None, Some(1));
-        let all = vec![m1.clone(), m2];
+        let all = [m1.clone(), m2];
         let pool: HashMap<Uuid, &Memory> = all.iter().map(|m| (m.id, m)).collect();
         let head = chain_head(&all[0], &pool);
         assert_eq!(head.id, uuid(2), "stops after one revisit");

@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn single_list_degenerates_to_input_order() {
         let only = vec!["a", "b", "c"];
-        let fused = reciprocal_rank_fusion(&[only.clone()], 60.0, 10);
+        let fused = reciprocal_rank_fusion(std::slice::from_ref(&only), 60.0, 10);
         assert_eq!(fused.iter().map(|(i, _)| *i).collect::<Vec<_>>(), only);
     }
 
