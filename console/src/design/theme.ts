@@ -40,6 +40,7 @@ export const MODULE_BAND: Record<string, BandKey> = {
   reviews: "alpha",
   graph: "gamma",
   analytics: "beta",
+  demo: "beta",
   memories: "delta",
 };
 

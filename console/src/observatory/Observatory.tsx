@@ -1,10 +1,13 @@
 "use client";
 
 /*
- * Observatory variant A — "Mission Control". Mental model: an operations
- * wall — every gauge visible at once, tiled small multiples, dense mono
- * instrumentation. You stand back and scan; nothing requires scrolling a
- * story. Beta band (active recall) accent throughout.
+ * Observatory — the consolidated dashboard structure ("Mission Control",
+ * winner of the 2026-07-10 prototype round). An operations wall: every
+ * gauge visible at once, tiled small multiples, dense mono instrumentation.
+ * Beta band (active recall) accent throughout.
+ *
+ * Pure presentation over ObservatoryData — consumed by /analytics (live,
+ * demo fallback) and /demo (visitor-facing, always demo data).
  */
 
 import { motion } from "framer-motion";
@@ -22,7 +25,7 @@ import {
 
 import { band, bandGlow, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
-import type { ObservatoryData } from "../observatory-data";
+import type { ObservatoryData } from "./observatory-data";
 
 const MINT = band("beta");
 const MINT_DIM = band("beta", 68, 0.35);
@@ -63,7 +66,7 @@ function ChartTip({
   );
 }
 
-export default function MissionControlVariant({ data }: { data: ObservatoryData }) {
+export default function Observatory({ data }: { data: ObservatoryData }) {
   const teams = [...new Set(data.byKind.map((k) => k.team))].sort();
   const kinds = [...new Set(data.byKind.map((k) => k.kind))].sort();
   const kindCount = (kind: string, team: string) =>

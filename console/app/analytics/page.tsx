@@ -1,11 +1,10 @@
-import { configFromEnv, getObservatory } from "@/lib/api";
-
-import ObservatoryLab from "./ObservatoryLab";
+import Observatory from "@/observatory/Observatory";
 import {
   DEMO_OBSERVATORY,
   normalizeObservatory,
   type ObservatoryData,
-} from "./observatory-data";
+} from "@/observatory/observatory-data";
+import { configFromEnv, getObservatory } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +12,8 @@ export const metadata = {
   title: "Brainiac — Observatory",
 };
 
-// Prototype round: live data when brainiac serve is up, demo shape when not,
-// so all three variants stay comparable either way.
+// Live data when brainiac serve is reachable; the demo shape (clearly
+// labeled in the UI) when not, so the page never 500s.
 async function observatoryData(): Promise<ObservatoryData> {
   try {
     return normalizeObservatory(await getObservatory(configFromEnv()));
@@ -24,5 +23,5 @@ async function observatoryData(): Promise<ObservatoryData> {
 }
 
 export default async function AnalyticsPage() {
-  return <ObservatoryLab data={await observatoryData()} />;
+  return <Observatory data={await observatoryData()} />;
 }
