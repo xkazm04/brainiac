@@ -85,9 +85,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "brainiac-core",
+ "brainiac-fixtures",
+ "brainiac-store",
  "chrono",
  "serde",
  "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

@@ -6,11 +6,19 @@ license.workspace = true
 
 [dependencies]
 brainiac-core = { workspace = true }
+brainiac-fixtures = { workspace = true }
+brainiac-store = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+sqlx = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+brainiac-fixtures = { workspace = true }

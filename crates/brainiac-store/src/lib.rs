@@ -14,6 +14,7 @@ pub mod entities;
 pub mod memories;
 pub mod orgs;
 pub mod queue;
+pub mod retrieval;
 
 use anyhow::{Context, Result};
 use brainiac_core::Principal;

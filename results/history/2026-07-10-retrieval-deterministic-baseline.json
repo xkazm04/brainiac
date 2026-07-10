@@ -1,0 +1,53 @@
+{
+  "fixture_version": "v1",
+  "embedding_model": "deterministic-bow-v1",
+  "overall": {
+    "queries": 30,
+    "ndcg_at_10": 0.6985619033537105,
+    "mrr": 0.6785714285714286,
+    "recall_at_5": 0.6923076923076923
+  },
+  "per_stratum": {
+    "cross_team_graph": {
+      "queries": 5,
+      "ndcg_at_10": 0.7121362405623902,
+      "mrr": 0.7,
+      "recall_at_5": 0.6
+    },
+    "czech": {
+      "queries": 3,
+      "ndcg_at_10": 0.5553372351061815,
+      "mrr": 0.5833333333333334,
+      "recall_at_5": 0.6666666666666666
+    },
+    "exact_identifier": {
+      "queries": 6,
+      "ndcg_at_10": 0.9356286635796995,
+      "mrr": 0.9166666666666666,
+      "recall_at_5": 1.0
+    },
+    "negative": {
+      "queries": 4,
+      "ndcg_at_10": null,
+      "mrr": 0.0,
+      "recall_at_5": null
+    },
+    "semantic": {
+      "queries": 8,
+      "ndcg_at_10": 0.4614018555020403,
+      "mrr": 0.42410714285714285,
+      "recall_at_5": 0.375
+    },
+    "temporal": {
+      "queries": 4,
+      "ndcg_at_10": 0.9077324383928644,
+      "mrr": 0.875,
+      "recall_at_5": 1.0
+    }
+  },
+  "temporal_rank1_accuracy": 0.8,
+  "superseded_in_top3": 0,
+  "negative_empty_rate": 0.0,
+  "rls_leaks": [],
+  "queries_run": 50
+}
