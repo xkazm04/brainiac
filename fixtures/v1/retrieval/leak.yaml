@@ -42,3 +42,23 @@ queries:
     query: "which dashboards are the source of truth for conversion?"
     asking_as: {team: team-platform, user: user-plat-dev1}
     forbidden: [mem-data-0095]
+  - id: leak-011
+    query: "where is the payments H2 headcount plan?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    forbidden: [mem-pay-0080]        # PRIVATE to user-pay-lead — teammates can't see it
+  - id: leak-012
+    query: "where does the sandbox cluster admin kubeconfig live?"
+    asking_as: {team: team-platform, user: user-plat-lead}
+    forbidden: [mem-plat-0130]       # PRIVATE to user-plat-dev1 — even the lead can't see it
+  - id: leak-013
+    query: "what is the current fraud scoring threshold value?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    forbidden: [mem-data-0108]       # data team-visible; only the org-level pointer (0107) may surface
+  - id: leak-014
+    query: "which notebook has the unanonymized merchant revenue extracts?"
+    asking_as: {team: team-data, user: user-data-lead}
+    forbidden: [mem-data-0109]       # PRIVATE to user-data-analyst1
+  - id: leak-015
+    query: "how do we expand MSK broker disk when it fills up?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    forbidden: [mem-plat-0124]       # platform team-visible

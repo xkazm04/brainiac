@@ -52,7 +52,10 @@ async fn retrieval_profile_end_to_end() {
     );
 
     // ── plumbing floors for the deterministic embedder ───────────────────
-    assert_eq!(report.queries_run, fx.qa.queries.len() + 10 + 10);
+    assert_eq!(
+        report.queries_run,
+        fx.qa.queries.len() + fx.temporal.cases.len() + fx.leak.queries.len()
+    );
     let overall_ndcg = report.overall.ndcg_at_10.expect("graded queries exist");
     assert!(
         overall_ndcg > 0.35,

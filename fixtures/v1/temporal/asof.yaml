@@ -42,3 +42,19 @@ cases:
     question: "Which checkout version is live?"
     as_of: "2026-07-01T00:00:00Z"
     expected_memory: mem-pay-0022
+  - id: tmp-011
+    question: "What is the feast online serving p99 target?"
+    as_of: "2026-01-15T00:00:00Z"
+    expected_memory: mem-data-0100
+  - id: tmp-012
+    question: "What is the feast online serving p99 target?"
+    as_of: "2026-06-01T00:00:00Z"
+    expected_memory: mem-data-0101
+  - id: tmp-013
+    question: "How do Grafana dashboards get deployed?"
+    as_of: "2026-02-01T00:00:00Z"
+    expected_memory: mem-plat-0122
+  - id: tmp-014
+    question: "How do Grafana dashboards get deployed?"
+    as_of: "2026-06-01T00:00:00Z"
+    expected_memory: mem-plat-0123

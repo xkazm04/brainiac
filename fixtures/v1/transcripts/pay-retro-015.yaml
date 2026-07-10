@@ -1,0 +1,34 @@
+# Transcript 5: checkout v2 rollout retro — decisions with a shelf life
+# (v1 fallback kept one quarter) and a pitfall generalized beyond its bug.
+id: src-pay-015
+team: team-payments
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "Retro time. v2 is fully rolled out — can we delete the v1 path now?"
+  - role: assistant
+    text: "The retro decision was to keep the v1 fallback dark but deployable for one more quarter. It costs nothing while frozen and it's the only rollback story if a PSP integration regresses."
+  - role: user
+    text: "Fine. What was the weirdest bug of the rollout?"
+  - role: assistant
+    text: "Browser autofill firing duplicate tokenization requests on the card form. Debounce fixed it, but it's worth remembering for any new form field — autofill fires change events in ways manual typing never does."
+  - role: user
+    text: "Someone claimed conversion dropped in the DACH region?"
+  - role: assistant
+    text: "That claim didn't survive contact with the funnel dashboards — the dip was a tracking gap during the cutover window, not real conversion loss."
+gold_memories:
+  - id: mem-pay-0078
+    kind: decision
+    content_gist: "keep the checkout v1 fallback path dark but deployable for one more quarter"
+    entities: [ent-pay-checkout-v2, ent-pay-checkout-v1]
+    visibility: team
+    must_extract: true
+  - id: mem-pay-0079
+    kind: pitfall
+    content_gist: "browser autofill fired duplicate tokenization requests on the v2 card form; debounce fixed it"
+    entities: [ent-pay-checkout-v2]
+    visibility: team
+    must_extract: true
+distractors:
+  - "debunked claim of a DACH conversion drop — a tracking gap, not a fact to store"

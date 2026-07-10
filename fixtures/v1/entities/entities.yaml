@@ -15,6 +15,8 @@ entities:
   - {id: ent-pay-refund-worker, team: team-payments, name: "refund-worker", kind: service}
   - {id: ent-pay-deploy-cli, team: team-payments, name: "the deploy CLI", kind: tech}
   - {id: ent-pay-payments-team, team: team-payments, name: "payments team", kind: team}
+  - {id: ent-pay-ledger, team: team-payments, name: "ledger-service", kind: service}
+  - {id: ent-pay-chargeback-svc, team: team-payments, name: "chargeback-service", kind: service}
 
   # ── platform ──────────────────────────────────────────────────────────
   - {id: ent-plat-payments-api, team: team-platform, name: "payments API", kind: service}
@@ -29,6 +31,8 @@ entities:
   - {id: ent-plat-infra-live, team: team-platform, name: "infra-live", kind: repo}
   - {id: ent-plat-kafka-streams, team: team-platform, name: "Kafka Streams jobs", kind: service}
   - {id: ent-plat-opa-retry-rule, team: team-platform, name: "OPA retry rule", kind: concept}
+  - {id: ent-plat-grafana, team: team-platform, name: "Grafana", kind: tech}
+  - {id: ent-plat-vault, team: team-platform, name: "Vault", kind: tech}
 
   # ── data ──────────────────────────────────────────────────────────────
   - {id: ent-data-payments-backend, team: team-data, name: "the payments backend", kind: service}
@@ -42,3 +46,5 @@ entities:
   - {id: ent-data-fraud-scoring, team: team-data, name: "fraud scoring model", kind: concept}
   - {id: ent-data-schema-registry, team: team-data, name: "event schema registry", kind: service}
   - {id: ent-data-embedding-models, team: team-data, name: "embedding models", kind: concept}
+  - {id: ent-data-dbt, team: team-data, name: "dbt-models", kind: repo}
+  - {id: ent-data-airflow, team: team-data, name: "Airflow", kind: tech}

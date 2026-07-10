@@ -1,0 +1,34 @@
+# Transcript 7: platform deploy-policy session — the exception runbook is
+# org-visible (other teams need it), the CI mechanics stay team-scoped.
+id: src-plat-009
+team: team-platform
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "Payments needs to ship a hotfix during the release freeze. What's the clean path?"
+  - role: assistant
+    text: "A deploy exception: they PR an override into infra-live/policies with the incident linked, and OPA requires two maintainer approvals before the sync unblocks. No side doors."
+  - role: user
+    text: "How do we know a policy change itself doesn't break the gate?"
+  - role: assistant
+    text: "Every OPA policy has conftest unit tests in CI — a failing policy test blocks the infra-live merge, so a broken gate can't land."
+  - role: user
+    text: "And if OPA itself is down during an incident?"
+  - role: assistant
+    text: "Hypothetical we haven't designed for yet — raise it in the resilience review rather than inventing an answer here."
+gold_memories:
+  - id: mem-plat-0127
+    kind: howto
+    content_gist: "deploy exception = override PR into infra-live/policies with a linked incident; OPA requires two maintainer approvals"
+    entities: [ent-plat-opa, ent-plat-infra-live]
+    visibility: org
+    must_extract: true
+  - id: mem-plat-0128
+    kind: fact
+    content_gist: "OPA deploy policies are conftest unit-tested in CI; a failing test blocks the infra-live merge"
+    entities: [ent-plat-opa, ent-plat-infra-live]
+    visibility: team
+    must_extract: true
+distractors:
+  - "unanswered hypothetical about OPA being down, deferred to the resilience review"

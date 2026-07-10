@@ -125,6 +125,101 @@ memories:
     language: cs
     content: "refund-worker při špičkách latence PSP zahlcuje psp-gateway opakovanými pokusy; retry limit je nutné držet podle std-retry policy"
     entities: [ent-pay-refund-worker, ent-pay-psp-gateway, ent-pay-retry-rules]
+  - id: mem-pay-0071
+    team: team-payments
+    visibility: team
+    kind: fact
+    content: "the PSP adapter normalizes decline codes from all three PSPs into the psp.decline_code span attribute the tracing collector indexes"
+    entities: [ent-pay-psp-adapter, ent-pay-tracing-collector]
+    relations:
+      - {src: ent-pay-psp-adapter, rel: uses, dst: ent-pay-tracing-collector}
+    source: src-pay-011
+  - id: mem-pay-0072
+    team: team-payments
+    visibility: team
+    kind: howto
+    content: "triage a decline spike by grouping tracing collector spans by psp.decline_code, then check the PSP status page before rolling anything back"
+    entities: [ent-pay-tracing-collector, ent-pay-psp-gateway]
+    source: src-pay-011
+  - id: mem-pay-0073
+    team: team-payments
+    visibility: team
+    kind: pitfall
+    content: "decline code 05 (do-not-honor) spikes are issuer-side; retrying them burns PSP quota and reads as fraud velocity to the issuer"
+    entities: [ent-pay-psp-adapter, ent-pay-retry-rules]
+    source: src-pay-011
+  - id: mem-pay-0074
+    team: team-payments
+    visibility: org
+    kind: fact
+    content: "chargeback-service files representments automatically for disputes under 50 EUR; larger cases go to manual review"
+    entities: [ent-pay-chargeback-svc]
+  - id: mem-pay-0075
+    team: team-payments
+    visibility: team
+    kind: decision
+    content: "chargeback evidence bundles are assembled by chargeback-service from ledger-service entries; manual evidence uploads are deprecated"
+    entities: [ent-pay-chargeback-svc, ent-pay-ledger]
+    relations:
+      - {src: ent-pay-chargeback-svc, rel: depends_on, dst: ent-pay-ledger}
+  - id: mem-pay-0076
+    team: team-payments
+    visibility: org
+    kind: fact
+    content: "ledger-service is double-entry; every payment event lands as balanced ledger entries within 5 minutes"
+    entities: [ent-pay-ledger]
+  - id: mem-pay-0077
+    team: team-payments
+    visibility: team
+    kind: howto
+    content: "reconcile PSP settlement files against ledger-service with the deploy CLI recon command every business morning"
+    entities: [ent-pay-deploy-cli, ent-pay-ledger]
+  - id: mem-pay-0078
+    team: team-payments
+    visibility: team
+    kind: decision
+    content: "the checkout v2 rollout retro decided to keep the v1 fallback path dark but deployable for one more quarter"
+    entities: [ent-pay-checkout-v2, ent-pay-checkout-v1]
+    source: src-pay-015
+  - id: mem-pay-0079
+    team: team-payments
+    visibility: team
+    kind: pitfall
+    content: "browser autofill on the checkout v2 card form fired duplicate tokenization requests; debounce fixed it — watch for the same on any new form field"
+    entities: [ent-pay-checkout-v2]
+    source: src-pay-015
+  - id: mem-pay-0080
+    team: team-payments
+    visibility: private
+    owner: user-pay-lead
+    kind: fact
+    content: "my draft of the payments team H2 headcount plan sits in my personal drive folder; do not circulate before the org review"
+    entities: [ent-pay-payments-team]
+  - id: mem-pay-0081
+    team: team-payments
+    visibility: team
+    kind: fact
+    language: cs
+    content: "chargeback-service automaticky odesílá representmenty u sporů pod 50 EUR; větší případy řeší tým ručně"
+    entities: [ent-pay-chargeback-svc]
+  - id: mem-pay-0082
+    team: team-payments
+    visibility: org
+    kind: fact
+    content: "Meridian merchants settle in EUR, GBP and CZK; ledger-service keeps balances per currency"
+    entities: [ent-pay-ledger]
+  - id: mem-pay-0083
+    team: team-payments
+    visibility: org
+    kind: howto
+    content: "check merchant payout status via the ledger-service /payouts API before answering merchant support tickets"
+    entities: [ent-pay-ledger]
+  - id: mem-pay-0084
+    team: team-payments
+    visibility: team
+    kind: fact
+    content: "the PSP adapter fallback order is primary PSP then secondary; flipping the order is a payments-lead decision"
+    entities: [ent-pay-psp-adapter]
 
   # ── platform ──────────────────────────────────────────────────────────
   - id: mem-plat-0107
@@ -221,6 +316,96 @@ memories:
     kind: fact
     content: "the std-retry policy applies to every Kafka consumer org-wide"
     entities: [ent-plat-std-retry, ent-plat-msk]
+  - id: mem-plat-0122
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "Grafana dashboards are deployed manually through the Grafana UI by whoever owns the dashboard"
+    entities: [ent-plat-grafana]
+    valid_from: "2025-01-01T00:00:00Z"
+    valid_to: "2026-04-15T00:00:00Z"
+    superseded_by: mem-plat-0123
+    status: deprecated
+  - id: mem-plat-0123
+    team: team-platform
+    visibility: team
+    kind: decision
+    content: "Grafana dashboards are gitops-managed in infra-live since mid-April 2026; UI edits are read-only previews"
+    entities: [ent-plat-grafana, ent-plat-infra-live]
+    valid_from: "2026-04-15T00:00:00Z"
+  - id: mem-plat-0124
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "MSK broker disk crossed 80% during the checkout event replay; broker storage autoscaling is not enabled — expansion is a manual infra-live change"
+    entities: [ent-plat-msk, ent-plat-infra-live]
+    source: src-plat-004
+  - id: mem-plat-0125
+    team: team-platform
+    visibility: team
+    kind: pitfall
+    content: "a Kafka Streams state-store restore saturates broker network for the whole cluster; throttle restores to 40 MB/s"
+    entities: [ent-plat-kafka-streams, ent-plat-msk]
+    source: src-plat-004
+  - id: mem-plat-0126
+    team: team-platform
+    visibility: org
+    kind: decision
+    content: "partition counts on payment topics are fixed at 24; changing them requires a data-team sign-off because funnel jobs key by partition"
+    entities: [ent-plat-msk]
+    source: src-plat-004
+  - id: mem-plat-0127
+    team: team-platform
+    visibility: org
+    kind: howto
+    content: "request a production deploy exception by PR-ing an override into infra-live/policies with a linked incident; OPA requires two maintainer approvals"
+    entities: [ent-plat-opa, ent-plat-infra-live]
+    source: src-plat-009
+  - id: mem-plat-0128
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "OPA deploy policies are unit-tested with conftest in CI; a failing policy test blocks the infra-live merge"
+    entities: [ent-plat-opa, ent-plat-infra-live]
+    source: src-plat-009
+  - id: mem-plat-0129
+    team: team-platform
+    visibility: org
+    kind: fact
+    content: "secrets are issued by Vault; static credentials in Kubernetes secrets are forbidden org-wide"
+    entities: [ent-plat-vault]
+  - id: mem-plat-0130
+    team: team-platform
+    visibility: private
+    owner: user-plat-dev1
+    kind: fact
+    content: "my sandbox cluster kubeconfig lives at ~/.kube/sandbox; the admin token there expires every 12 hours"
+    entities: [ent-plat-msk]
+  - id: mem-plat-0131
+    team: team-platform
+    visibility: team
+    kind: howto
+    language: cs
+    content: "výjimku z deploy policy zakládáme přes override v infra-live/policies; OPA vyžaduje schválení dvou maintainerů"
+    entities: [ent-plat-opa, ent-plat-infra-live]
+  - id: mem-plat-0132
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "Grafana alert routing pages the platform on-call for MSK and otel collector alerts; product dashboards never page"
+    entities: [ent-plat-grafana, ent-plat-msk, ent-plat-otel-config]
+  - id: mem-plat-0133
+    team: team-platform
+    visibility: org
+    kind: fact
+    content: "every repo deploys from master; release branches are forbidden by the deploy policy"
+    entities: [ent-plat-deploy-tools, ent-plat-opa]
+  - id: mem-plat-0134
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "the platform sandbox cluster is rebuilt weekly on Monday 06:00 UTC; anything not in gitops is lost"
+    entities: [ent-plat-infra-live]
 
   # ── data ──────────────────────────────────────────────────────────────
   - id: mem-data-0071
@@ -296,3 +481,95 @@ memories:
     kind: decision
     content: "event-lake retention: raw payment events 400 days, aggregated tables indefinitely"
     entities: [ent-data-event-lake]
+  - id: mem-data-0100
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "the feast online serving p99 target is 100ms for all fraud scoring features"
+    entities: [ent-data-feast, ent-data-fraud-scoring]
+    valid_from: "2025-08-01T00:00:00Z"
+    valid_to: "2026-03-01T00:00:00Z"
+    superseded_by: mem-data-0101
+    status: deprecated
+  - id: mem-data-0101
+    team: team-data
+    visibility: team
+    kind: decision
+    content: "the feast online serving p99 target tightened to 50ms after the fraud latency review in March 2026"
+    entities: [ent-data-feast, ent-data-fraud-scoring]
+    valid_from: "2026-03-01T00:00:00Z"
+  - id: mem-data-0102
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "the minor-units double conversion entered through a dbt model that re-divided amounts already normalized by the ingestion job"
+    entities: [ent-data-dbt, ent-data-fraud-scoring]
+    source: src-data-017
+  - id: mem-data-0103
+    team: team-data
+    visibility: team
+    kind: decision
+    content: "all monetary amounts in the feature store are integer minor units by contract; conversion to display units happens only in dashboards"
+    entities: [ent-data-feature-store, ent-data-dbt]
+    source: src-data-017
+  - id: mem-data-0104
+    team: team-data
+    visibility: team
+    kind: howto
+    content: "validate monetary features after any dbt change by running the amounts sanity suite against a day of ledger totals"
+    entities: [ent-data-dbt, ent-data-feature-store]
+    source: src-data-017
+  - id: mem-data-0105
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "Airflow orchestrates event-lake backfills; the replay job is a DAG parameterized by partition date"
+    entities: [ent-data-airflow, ent-data-event-lake]
+    relations:
+      - {src: ent-data-airflow, rel: uses, dst: ent-data-event-lake}
+    source: src-data-021
+  - id: mem-data-0106
+    team: team-data
+    visibility: team
+    kind: pitfall
+    language: cs
+    content: "backfill DAG v Airflow se nesmí spouštět souběžně s hodinovým ingestem — zámky na partition v event-lake se jinak zablokují"
+    entities: [ent-data-airflow, ent-data-event-lake]
+    source: src-data-021
+  - id: mem-data-0107
+    team: team-data
+    visibility: org
+    kind: fact
+    content: "the fraud scoring threshold and its change history are documented in the fraud-model repo; changes need a data-lead approval"
+    entities: [ent-data-fraud-model-repo, ent-data-fraud-scoring]
+  - id: mem-data-0108
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "the fraud scoring threshold is currently 0.87; transactions scoring below it pass silently"
+    entities: [ent-data-fraud-scoring]
+  - id: mem-data-0109
+    team: team-data
+    visibility: private
+    owner: user-data-analyst1
+    kind: fact
+    content: "my scratch notebook with unanonymized merchant revenue extracts is in my home dir — delete it after the analysis lands"
+    entities: [ent-data-event-lake]
+  - id: mem-data-0110
+    team: team-data
+    visibility: team
+    kind: decision
+    content: "dbt models are the only supported transform layer over event-lake; ad-hoc SQL jobs are frozen"
+    entities: [ent-data-dbt, ent-data-event-lake]
+  - id: mem-data-0111
+    team: team-data
+    visibility: org
+    kind: fact
+    content: "checkout funnel conversion is defined as sessions reaching payment-confirmed over sessions adding to cart"
+    entities: [ent-data-checkout-funnel]
+  - id: mem-data-0112
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "feature-store snapshots are versioned daily and retained for 90 days"
+    entities: [ent-data-feature-store]

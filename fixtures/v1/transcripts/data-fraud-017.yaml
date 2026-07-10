@@ -1,0 +1,39 @@
+# Transcript 8: data-team retro on the 100x fraud-feature inflation —
+# root cause, the contract decision, and the verification howto.
+id: src-data-017
+team: team-data
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "Post-mortem on the fraud feature inflation. Where exactly did the 100x come from?"
+  - role: assistant
+    text: "A dbt model re-divided amounts the ingestion job had already normalized — the double conversion of minor units. Each layer assumed the other hadn't converted."
+  - role: user
+    text: "What's the rule going forward so this can't recur?"
+  - role: assistant
+    text: "Contract: all monetary amounts in the feature store are integer minor units, full stop. Conversion to display units happens only in dashboards. Any layer that divides is wrong by definition."
+  - role: user
+    text: "And how do we catch a violation before it ships?"
+  - role: assistant
+    text: "After any dbt change touching money, run the amounts sanity suite against a day of ledger totals — a double conversion shows up as a two-order-of-magnitude mismatch immediately."
+gold_memories:
+  - id: mem-data-0102
+    kind: fact
+    content_gist: "the 100x inflation came from a dbt model re-dividing amounts already normalized by ingestion"
+    entities: [ent-data-dbt, ent-data-fraud-scoring]
+    visibility: team
+    must_extract: true
+  - id: mem-data-0103
+    kind: decision
+    content_gist: "feature-store monetary amounts are integer minor units by contract; display conversion only in dashboards"
+    entities: [ent-data-feature-store, ent-data-dbt]
+    visibility: team
+    must_extract: true
+  - id: mem-data-0104
+    kind: howto
+    content_gist: "after dbt money changes, run the amounts sanity suite against a day of ledger totals"
+    entities: [ent-data-dbt, ent-data-feature-store]
+    visibility: team
+    must_extract: true
+distractors: []

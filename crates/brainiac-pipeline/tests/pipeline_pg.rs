@@ -180,13 +180,17 @@ async fn full_pipeline_over_seed_transcripts() {
             .await
             .expect("enqueue");
     }
-    let stats = worker::tick(&store, &provider, &embedder, version, 10)
+    let stats = worker::tick(&store, &provider, &embedder, version, 32)
         .await
         .expect("tick");
 
     // ── plumbing assertions ──────────────────────────────────────────────
     let gold_total: usize = fx.transcripts.iter().map(|t| t.gold_memories.len()).sum();
-    assert_eq!(stats.jobs, 3, "three sources processed");
+    assert_eq!(
+        stats.jobs,
+        fx.transcripts.len(),
+        "every seed source processed"
+    );
     assert_eq!(
         stats.memories, gold_total,
         "one memory per gold item, none dropped"

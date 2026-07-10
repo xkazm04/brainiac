@@ -1,0 +1,36 @@
+# Transcript 9: Czech-language data-team session — exercises cross-lingual
+# extraction (Czech transcript → one Czech + one English gold memory).
+id: src-data-021
+team: team-data
+kind: session_transcript
+language: cs
+turns:
+  - role: user
+    text: "Potřebuju doplnit tři dny dat do event-lake. Jak se dnes spouští backfill?"
+  - role: assistant
+    text: "Backfilly orchestruje Airflow — replay job je DAG parametrizovaný datem partition. Spustíš ho třikrát, jednou pro každý den."
+  - role: user
+    text: "Můžu to pustit hned, nebo mám počkat?"
+  - role: assistant
+    text: "Počkej na konec hodinového ingestu. Backfill DAG se nesmí spouštět souběžně s ním — zámky na partition v event-lake se jinak vzájemně zablokují a obě úlohy zamrznou."
+  - role: user
+    text: "Jo, a kolega říkal, že prý Airflow brzo vyměníme za Dagster?"
+  - role: assistant
+    text: "To je jen chodbová spekulace bez rozhodnutí — neber to jako fakt, dokud neprojde architektonickým review."
+gold_memories:
+  - id: mem-data-0105
+    kind: fact
+    content_gist: "Airflow orchestrates event-lake backfills; the replay job is a DAG parameterized by partition date"
+    entities: [ent-data-airflow, ent-data-event-lake]
+    relations:
+      - {src: ent-data-airflow, rel: uses, dst: ent-data-event-lake}
+    visibility: team
+    must_extract: true
+  - id: mem-data-0106
+    kind: pitfall
+    content_gist: "backfill DAG must not run concurrently with the hourly ingest — event-lake partition locks deadlock"
+    entities: [ent-data-airflow, ent-data-event-lake]
+    visibility: team
+    must_extract: true
+distractors:
+  - "hallway speculation about replacing Airflow with Dagster, explicitly not a decision"

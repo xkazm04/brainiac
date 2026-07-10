@@ -12,14 +12,14 @@ fn fixtures_v1_load_and_validate() {
     assert_eq!(fx.merges.merge_sets.len(), 12, "12 collision sets");
     assert_eq!(fx.merges.negative_pairs.len(), 6, "6 near-miss traps");
     assert_eq!(fx.contradictions.cases.len(), 12, "12 contradiction cases");
-    assert_eq!(fx.temporal.cases.len(), 10, "10 as-of cases");
-    assert_eq!(fx.transcripts.len(), 3, "3 seed transcripts");
+    assert_eq!(fx.temporal.cases.len(), 14, "14 as-of cases");
+    assert_eq!(fx.transcripts.len(), 9, "9 seed transcripts");
     assert!(
-        fx.memories.memories.len() >= 40,
-        "seed corpus >= 40 gold memories"
+        fx.memories.memories.len() >= 80,
+        "expanded corpus >= 80 gold memories"
     );
-    assert!(fx.qa.queries.len() >= 30, "seed retrieval QA >= 30 queries");
-    assert_eq!(fx.leak.queries.len(), 10, "10 RLS leak tests");
+    assert!(fx.qa.queries.len() >= 54, "retrieval QA >= 54 queries");
+    assert_eq!(fx.leak.queries.len(), 15, "15 RLS leak tests");
 
     // Every stratum represented.
     for stratum in [
