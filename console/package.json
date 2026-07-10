@@ -10,15 +10,20 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "framer-motion": "^12.42.2",
+    "lucide-react": "^1.24.0",
     "next": "^15.3.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "recharts": "^3.9.2",
     "server-only": "^0.0.1"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "tailwindcss": "^4.3.2",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   }
