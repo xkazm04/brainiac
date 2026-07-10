@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3100",
-    "build": "next build",
-    "start": "next start -p 3100",
+    "build": "cross-env NEXT_DIST_DIR=.next-build next build",
+    "start": "cross-env NEXT_DIST_DIR=.next-build next start -p 3100",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "dev:fresh": "node -e \"fs.rmSync('.next',{recursive:true,force:true})\" && next dev -p 3100"
@@ -24,6 +24,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^10.1.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
