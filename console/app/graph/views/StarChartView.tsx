@@ -1,7 +1,7 @@
 "use client";
 
 /*
- * Cortex Map variant B — "Star Chart". Mental model: astronomy. Canonical
+ * Cortex Map — "Star Chart" view (relationship lens). Mental model: astronomy. Canonical
  * entities are stars; magnitude = anchored memories; γ-bound knowledge
  * burns gold. Constellation lines are drawn only for the SELECTED star —
  * to its one-hop neighbors — so the sky never becomes a hairball. Hovering
@@ -21,7 +21,7 @@ const GOLD = band("gamma");
 const W = 1000;
 const H = 560;
 
-export default function StarChartVariant({ data }: { data: CortexData }) {
+export default function StarChartView({ data }: { data: CortexData }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [hoverTeam, setHoverTeam] = useState<string | null>(null);
   const [query, setQuery] = useState("");

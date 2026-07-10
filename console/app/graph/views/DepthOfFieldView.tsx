@@ -1,7 +1,7 @@
 "use client";
 
 /*
- * Cortex Map variant C — "Depth of Field". Mental model: focal planes.
+ * Cortex Map — "Depth of Field" view (catalog lens). Mental model: focal planes.
  * Levels are physical depth: the org summary strip (L0) sits above a grid
  * of canonical cards (L1); focusing one pushes the grid back — blurred,
  * receded — while the neighborhood (L2/L3) comes forward in focus. The
@@ -20,7 +20,7 @@ import { AnchoredMemories, EvidenceEdges, NeighborHops, SurfaceForms } from "../
 
 const GOLD = band("gamma");
 
-export default function DepthOfFieldVariant({ data }: { data: CortexData }) {
+export default function DepthOfFieldView({ data }: { data: CortexData }) {
   const [selected, setSelected] = useState<string | null>(null);
   const { detail, loading } = useCanonicalDetail(selected, data);
   const { overview } = data;

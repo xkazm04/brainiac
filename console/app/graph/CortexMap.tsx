@@ -1,8 +1,11 @@
 "use client";
 
 /*
- * Cortex Map prototype switcher (/prototype round 1). Three mental models
- * over the same multi-level graph data. Removed at consolidation.
+ * Cortex Map — consolidated from the 2026-07-10 prototype round with TWO
+ * surviving lenses (Hemisphere was cut): Star Chart uncovers relationships
+ * spatially; Depth of Field is the logical catalog. The toggle is product
+ * UI, not prototype scaffolding — both views ship. The scale button swaps
+ * in a deterministic 50-node mock for density checks and demos.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -11,53 +14,52 @@ import { AnimatePresence, motion } from "framer-motion";
 import { band } from "@/design/theme";
 
 import { makeLargeCortex, type CortexData } from "./cortex-data";
-import DepthOfFieldVariant from "./variants/DepthOfFieldVariant";
-import HemisphereVariant from "./variants/HemisphereVariant";
-import StarChartVariant from "./variants/StarChartVariant";
+import DepthOfFieldView from "./views/DepthOfFieldView";
+import StarChartView from "./views/StarChartView";
 
-const VARIANTS = [
-  {
-    id: "hemisphere",
-    name: "Hemisphere",
-    blurb: "anatomy · team lobes · binding pulls hubs to center",
-    Component: HemisphereVariant,
-  },
+const VIEWS = [
   {
     id: "starchart",
     name: "Star Chart",
-    blurb: "astronomy · magnitude = memories · constellations on focus",
-    Component: StarChartVariant,
+    blurb: "relationship lens · constellations reveal what binds",
+    Component: StarChartView,
   },
   {
     id: "depth",
     name: "Depth of Field",
-    blurb: "focal planes · grid recedes, neighborhood comes forward",
-    Component: DepthOfFieldVariant,
+    blurb: "catalog lens · focus a card, the rest recedes",
+    Component: DepthOfFieldView,
   },
 ] as const;
 
-type VariantId = (typeof VARIANTS)[number]["id"];
+type ViewId = (typeof VIEWS)[number]["id"];
 
-const STORAGE_KEY = "brainiac-cortex-variant";
+const STORAGE_KEY = "brainiac-cortex-view";
 
-export default function CortexLab({ data }: { data: CortexData }) {
-  const [active, setActive] = useState<VariantId>("hemisphere");
-  // Scale stress-toggle: swap the real org for a deterministic 50-node,
-  // 7-team mock to evaluate how each metaphor degrades with density.
+export default function CortexMap({ data }: { data: CortexData }) {
+  const [active, setActive] = useState<ViewId>("starchart");
   const [large, setLarge] = useState(false);
   const largeData = useMemo(() => makeLargeCortex(), []);
   const shown = large ? largeData : data;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const fromUrl = params.get("variant");
+    const fromUrl = params.get("view");
     const stored = window.localStorage.getItem(STORAGE_KEY);
     const initial = fromUrl ?? stored;
-    if (initial && VARIANTS.some((v) => v.id === initial)) {
-      setActive(initial as VariantId);
+    if (initial && VIEWS.some((v) => v.id === initial)) {
+      setActive(initial as ViewId);
     }
     if (params.get("scale") === "large") setLarge(true);
   }, []);
+
+  const pick = (id: ViewId) => {
+    setActive(id);
+    window.localStorage.setItem(STORAGE_KEY, id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", id);
+    window.history.replaceState(null, "", url.toString());
+  };
 
   const pickScale = (next: boolean) => {
     setLarge(next);
@@ -67,15 +69,7 @@ export default function CortexLab({ data }: { data: CortexData }) {
     window.history.replaceState(null, "", url.toString());
   };
 
-  const pick = (id: VariantId) => {
-    setActive(id);
-    window.localStorage.setItem(STORAGE_KEY, id);
-    const url = new URL(window.location.href);
-    url.searchParams.set("variant", id);
-    window.history.replaceState(null, "", url.toString());
-  };
-
-  const current = VARIANTS.find((v) => v.id === active) ?? VARIANTS[0];
+  const current = VIEWS.find((v) => v.id === active) ?? VIEWS[0];
 
   return (
     <div className="relative pb-24">
@@ -95,9 +89,9 @@ export default function CortexLab({ data }: { data: CortexData }) {
         <div
           className="flex items-center gap-1 rounded-full border border-white/15 bg-black/70 p-1.5 shadow-2xl backdrop-blur-xl"
           role="tablist"
-          aria-label="Cortex Map variants"
+          aria-label="Cortex Map lens"
         >
-          {VARIANTS.map((v) => {
+          {VIEWS.map((v) => {
             const selected = v.id === active;
             return (
               <button
@@ -111,7 +105,7 @@ export default function CortexLab({ data }: { data: CortexData }) {
               >
                 {selected && (
                   <motion.span
-                    layoutId="cortex-pill"
+                    layoutId="cortex-view-pill"
                     className="absolute inset-0 rounded-full bg-white"
                     transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
                   />
