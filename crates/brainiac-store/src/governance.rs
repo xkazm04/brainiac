@@ -47,6 +47,7 @@ pub async fn get_source_text(
     }))
 }
 
+#[allow(clippy::too_many_arguments)] // mirrors the provenance row shape
 pub async fn insert_provenance(
     conn: &mut PgConnection,
     id: Uuid,
