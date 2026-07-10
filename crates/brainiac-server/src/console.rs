@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -34,6 +34,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/v1/reviews/contradictions/{id}/resolve",
             post(resolve_contradiction),
         )
+        .route("/v1/audit", get(audit))
         .route("/v1/graph", get(graph))
         .route("/v1/analytics", get(analytics))
         .route("/v1/analytics/observatory", get(observatory))
@@ -160,27 +161,67 @@ async fn reject(
 
 // ── contradictions ──────────────────────────────────────────────────────
 
+#[derive(Deserialize)]
+struct ContradictionsQuery {
+    /// open | resolved_supersede | resolved_coexist | dismissed | all (default open)
+    status: Option<String>,
+    /// Filter by detector (e.g. `embedding_similarity`, `llm`).
+    detected_by: Option<String>,
+    /// Only rows at least this many hours old (SLA aging view).
+    min_age_hours: Option<i64>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
 async fn list_contradictions(
     State(state): State<Arc<AppState>>,
+    Query(q): Query<ContradictionsQuery>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     let principal = principal_of(&state, &headers)?;
+    let status = q.status.as_deref().unwrap_or("open");
+    if !matches!(
+        status,
+        "open" | "resolved_supersede" | "resolved_coexist" | "dismissed" | "all"
+    ) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("unknown status `{status}` (open|resolved_supersede|resolved_coexist|dismissed|all)"),
+        ));
+    }
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let offset = q.offset.unwrap_or(0).max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     // LEFT JOIN: RLS-invisible memories render as null content rather than
-    // hiding the contradiction row (the row itself is org-scoped).
+    // hiding the contradiction row (the row itself is org-scoped). Oldest
+    // first — the aging queue surfaces SLA breaches at the top.
     let rows = sqlx::query(
-        "SELECT c.id, c.memory_a, c.memory_b, c.detected_by, c.resolution_note,
+        "SELECT c.id, c.memory_a, c.memory_b, c.detected_by, c.status,
+                c.resolution_note, c.resolved_by, c.resolved_at, c.created_at,
+                EXTRACT(EPOCH FROM now() - c.created_at)::bigint AS age_secs,
                 ma.content AS content_a, mb.content AS content_b
          FROM contradictions c
          LEFT JOIN memories ma ON ma.id = c.memory_a
          LEFT JOIN memories mb ON mb.id = c.memory_b
-         WHERE c.status = 'open'
-         ORDER BY c.id
-         LIMIT 200",
+         WHERE ($1 = 'all' OR c.status = $1)
+           AND ($2::text IS NULL OR c.detected_by = $2)
+           AND ($3::bigint IS NULL OR c.created_at <= now() - make_interval(hours => $3::int))
+         ORDER BY c.created_at ASC, c.id
+         LIMIT $4 OFFSET $5",
     )
+    .bind(status)
+    .bind(q.detected_by.as_deref())
+    .bind(q.min_age_hours)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
+    // Status counts ignore the row filters — they power the queue's tabs.
+    let counts = sqlx::query("SELECT status, count(*) AS n FROM contradictions GROUP BY 1")
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(internal)?;
     let out: Vec<serde_json::Value> = rows
         .iter()
         .map(|r| {
@@ -189,11 +230,22 @@ async fn list_contradictions(
                 "memory_a": {"id": r.get::<Uuid, _>("memory_a"), "content": r.get::<Option<String>, _>("content_a")},
                 "memory_b": {"id": r.get::<Uuid, _>("memory_b"), "content": r.get::<Option<String>, _>("content_b")},
                 "detected_by": r.get::<String, _>("detected_by"),
+                "status": r.get::<String, _>("status"),
                 "suggested_resolution": r.get::<Option<String>, _>("resolution_note"),
+                "resolved_by": r.get::<Option<Uuid>, _>("resolved_by"),
+                "resolved_at": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at"),
+                "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                "age_secs": r.get::<i64, _>("age_secs"),
             })
         })
         .collect();
-    Ok(Json(json!({ "contradictions": out })))
+    Ok(Json(json!({
+        "contradictions": out,
+        "counts": counts.iter().map(|r| json!({
+            "status": r.get::<String, _>("status"),
+            "count": r.get::<i64, _>("n"),
+        })).collect::<Vec<_>>(),
+    })))
 }
 
 #[derive(Deserialize)]
@@ -295,6 +347,68 @@ async fn resolve_contradiction(
     .map_err(internal)?;
     tx.commit().await.map_err(internal)?;
     Ok(Json(json!({ "contradiction_id": id, "status": status })))
+}
+
+// ── audit trail ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AuditQuery {
+    limit: Option<i64>,
+}
+
+/// Reverse-chronological feed of governance actions: promotion reviews
+/// (human and policy) and contradiction resolutions. Reuses the reviewer /
+/// resolved-by columns both tables already carry; rows resolve under the
+/// caller's RLS transaction so members see their org slice only.
+async fn audit(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<AuditQuery>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers)?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let rows = sqlx::query(
+        "SELECT * FROM (
+            SELECT 'promotion_review' AS kind, p.id, p.memory_id,
+                   NULL::uuid AS memory_b,
+                   p.policy_decision AS outcome, p.policy_rule AS detail,
+                   p.reviewer_id AS actor_id,
+                   COALESCE(p.reviewed_at, p.created_at) AS at
+            FROM promotions p
+            WHERE p.reviewed_at IS NOT NULL OR p.policy_decision = 'auto_approved'
+            UNION ALL
+            SELECT 'contradiction_resolution' AS kind, c.id, c.memory_a AS memory_id,
+                   c.memory_b,
+                   c.status AS outcome, c.resolution_note AS detail,
+                   c.resolved_by AS actor_id,
+                   c.resolved_at AS at
+            FROM contradictions c
+            WHERE c.resolved_at IS NOT NULL
+         ) audit
+         ORDER BY at DESC
+         LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let out: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "kind": r.get::<String, _>("kind"),
+                "id": r.get::<Uuid, _>("id"),
+                "memory_id": r.get::<Uuid, _>("memory_id"),
+                "memory_b": r.get::<Option<Uuid>, _>("memory_b"),
+                "outcome": r.get::<String, _>("outcome"),
+                "detail": r.get::<Option<String>, _>("detail"),
+                "actor_id": r.get::<Option<Uuid>, _>("actor_id"),
+                "at": r.get::<chrono::DateTime<chrono::Utc>, _>("at"),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "events": out })))
 }
 
 // ── graph ───────────────────────────────────────────────────────────────
