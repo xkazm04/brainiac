@@ -69,6 +69,26 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface ObservatoryPayload {
+  totals: { status: string; count: number }[];
+  weekly: {
+    captured: { week: string; count: number }[];
+    promoted: { week: string; count: number }[];
+  };
+  by_kind: { kind: string; team: string; count: number }[];
+  top_entities: { name: string; kind: string; memories: number; teams: number }[];
+  review: {
+    pending: number;
+    oldest_pending_secs: number;
+    reviewed: number;
+    avg_latency_secs: number;
+    auto_promoted: number;
+  };
+  contradictions: { status: string; count: number }[];
+  queue: { ingest_depth: number };
+  embedding_model: string;
+}
+
 export interface Analytics {
   memories_by_status: { status: string; count: number }[];
   reviews: {

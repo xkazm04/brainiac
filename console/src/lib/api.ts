@@ -10,6 +10,7 @@ import type {
   Contradiction,
   ContradictionResolution,
   Graph,
+  ObservatoryPayload,
   PendingPromotion,
   ReviewedPromotion,
   SearchHit,
@@ -122,4 +123,8 @@ export async function getGraph(cfg: ApiConfig): Promise<Graph> {
 
 export async function getAnalytics(cfg: ApiConfig): Promise<Analytics> {
   return call(cfg, "GET", "/v1/analytics");
+}
+
+export async function getObservatory(cfg: ApiConfig): Promise<ObservatoryPayload> {
+  return call(cfg, "GET", "/v1/analytics/observatory");
 }
