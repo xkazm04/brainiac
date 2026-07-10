@@ -9,31 +9,39 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-import CortexVariant from "./variants/CortexVariant";
+import EegVariant from "./variants/EegVariant";
+import InterferenceVariant from "./variants/InterferenceVariant";
+import SpectrumVariant from "./variants/SpectrumVariant";
 import SynapseVariant from "./variants/SynapseVariant";
-import VaultVariant from "./variants/VaultVariant";
 
 const VARIANTS = [
   {
+    id: "eeg",
+    name: "EEG",
+    blurb: "the page is the instrument · cursor injects spikes · fire a stimulus",
+    Component: EegVariant,
+    chip: "#6ef3c5",
+  },
+  {
+    id: "spectrum",
+    name: "Spectrum",
+    blurb: "drag the dial δ→γ · wave, light and story tune together",
+    Component: SpectrumVariant,
+    chip: "#f5c451",
+  },
+  {
+    id: "interference",
+    name: "Interference",
+    blurb: "teams as wave sources · drag emitters · phase-lock the contradiction",
+    Component: InterferenceVariant,
+    chip: "#ff5da2",
+  },
+  {
     id: "synapse",
-    name: "Synapse",
-    blurb: "dark neural-electric · aurora glass · signals firing",
+    name: "Synapse (v1)",
+    blurb: "round-1 reference · aurora glass",
     Component: SynapseVariant,
     chip: "#22d3ee",
-  },
-  {
-    id: "cortex",
-    name: "Cortex",
-    blurb: "editorial lab notebook · paper & ink · cobalt",
-    Component: CortexVariant,
-    chip: "#1f3fbf",
-  },
-  {
-    id: "vault",
-    name: "Vault",
-    blurb: "terminal archive · phosphor on graphite · git-native",
-    Component: VaultVariant,
-    chip: "#4ade80",
   },
 ] as const;
 
@@ -42,7 +50,7 @@ type VariantId = (typeof VARIANTS)[number]["id"];
 const STORAGE_KEY = "brainiac-design-variant";
 
 export default function DesignLab() {
-  const [active, setActive] = useState<VariantId>("synapse");
+  const [active, setActive] = useState<VariantId>("eeg");
 
   useEffect(() => {
     const fromUrl = new URLSearchParams(window.location.search).get("variant");
