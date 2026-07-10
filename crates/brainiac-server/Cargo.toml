@@ -4,14 +4,37 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "brainiac_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "brainiac"
 path = "src/main.rs"
 
 [dependencies]
 brainiac-core = { workspace = true }
+brainiac-fixtures = { workspace = true }
+brainiac-store = { workspace = true }
+brainiac-gateway = { workspace = true }
+brainiac-pipeline = { workspace = true }
+brainiac-eval = { workspace = true }
 anyhow = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sqlx = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+brainiac-fixtures = { workspace = true }
+brainiac-eval = { workspace = true }
 
 [lints]
 workspace = true

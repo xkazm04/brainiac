@@ -61,11 +61,11 @@ crates/
 
 ## Status log
 
-- [ ] P0 scaffold
-- [ ] P1 core domain
-- [ ] P2 fixtures v1 seed + loader
-- [ ] P3 store (schema, RLS, queue)
-- [ ] P4 retrieval + eval `retrieval` profile
-- [ ] P5 gateway (Qwen + mock) + pipeline workers + `pipeline` profile
-- [ ] P6 server binary + REST
+- [x] P0 scaffold
+- [x] P1 core domain
+- [x] P2 fixtures v1 seed + loader
+- [x] P3 store (schema, RLS, queue)
+- [x] P4 retrieval + eval `retrieval` profile
+- [x] P5 gateway (Qwen + mock) + pipeline workers + `pipeline` profile
+- [x] P6 server binary + REST
 - [ ] P7 CI eval gates wired to thresholds
