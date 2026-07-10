@@ -11,6 +11,7 @@
  */
 
 import { motion } from "framer-motion";
+import Link from "next/link";
 import {
   Area,
   AreaChart,
@@ -77,24 +78,35 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
 
   return (
     <motion.div initial="hidden" animate="visible" variants={stagger} className="mx-auto max-w-7xl px-6 py-8">
-      {/* headline gauges */}
+      {/* headline gauges — live gauges with a queue behind them drill down */}
       <motion.div variants={rise} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {[
           { label: "canonical", value: data.totals.canonical ?? 0, tone: MINT },
           { label: "total memories", value: totalMemories, tone: "#fff" },
-          { label: "pending review", value: data.review.pending, tone: data.review.pending > 5 ? MAGENTA : "#fff" },
-          { label: "oldest pending", value: age(data.review.oldestSecs), tone: "#fff" },
+          { label: "pending review", value: data.review.pending, tone: data.review.pending > 5 ? MAGENTA : "#fff", href: "/reviews#promotions-h" },
+          { label: "oldest pending", value: age(data.review.oldestSecs), tone: "#fff", href: "/reviews#promotions-h" },
           { label: "queue depth", value: data.queueDepth, tone: data.queueDepth > 0 ? MAGENTA : MINT },
-        ].map((g) => (
-          <div key={g.label} className={TILE}>
-            <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
-              {g.label}
+        ].map((g) => {
+          const body = (
+            <>
+              <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
+                {g.label}
+              </div>
+              <div className={`${FONT_DISPLAY} mt-1 text-3xl font-semibold tracking-tight`} style={{ color: g.tone }}>
+                {g.value}
+              </div>
+            </>
+          );
+          return data.live && g.href ? (
+            <Link key={g.label} href={g.href} className={`${TILE} block transition hover:border-white/25`}>
+              {body}
+            </Link>
+          ) : (
+            <div key={g.label} className={TILE}>
+              {body}
             </div>
-            <div className={`${FONT_DISPLAY} mt-1 text-3xl font-semibold tracking-tight`} style={{ color: g.tone }}>
-              {g.value}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </motion.div>
 
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
@@ -144,17 +156,37 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
             <div className="flex justify-between border-t border-white/10 pt-2.5">
               <dt className="text-white/45">contradictions open</dt>
               <dd style={{ color: (data.contradictions.open ?? 0) > 0 ? MAGENTA : MINT }}>
-                {data.contradictions.open ?? 0}
+                {data.live ? (
+                  <Link href="/reviews?cstatus=open#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
+                    {data.contradictions.open ?? 0}
+                  </Link>
+                ) : (
+                  data.contradictions.open ?? 0
+                )}
               </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-white/45">superseded</dt>
-              <dd className="text-white/85">{data.contradictions.resolved_supersede ?? 0}</dd>
+              <dd className="text-white/85">
+                {data.live ? (
+                  <Link href="/reviews?cstatus=resolved_supersede#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
+                    {data.contradictions.resolved_supersede ?? 0}
+                  </Link>
+                ) : (
+                  data.contradictions.resolved_supersede ?? 0
+                )}
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-white/45">coexist / dismissed</dt>
               <dd className="text-white/85">
-                {(data.contradictions.resolved_coexist ?? 0) + (data.contradictions.dismissed ?? 0)}
+                {data.live ? (
+                  <Link href="/reviews?cstatus=all#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
+                    {(data.contradictions.resolved_coexist ?? 0) + (data.contradictions.dismissed ?? 0)}
+                  </Link>
+                ) : (
+                  (data.contradictions.resolved_coexist ?? 0) + (data.contradictions.dismissed ?? 0)
+                )}
               </dd>
             </div>
           </dl>
@@ -171,6 +203,14 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
             <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>Loudest themes</h2>
             <span className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
               canonical entities · anchored memories · team spread
+              {data.live && (
+                <>
+                  {" · "}
+                  <Link href="/graph" className="transition hover:text-white" style={{ color: MINT }}>
+                    explore graph →
+                  </Link>
+                </>
+              )}
             </span>
           </div>
           <div className="mt-3 h-64">
