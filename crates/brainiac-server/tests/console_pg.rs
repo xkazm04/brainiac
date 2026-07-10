@@ -250,4 +250,34 @@ async fn console_reviews_graph_analytics() {
     assert_eq!(body["reviews"]["open_contradictions"], 0);
     assert!(body["graph"]["canonicals"].as_i64().expect("n") > 0);
     assert!(body["memories_by_status"].as_array().expect("arr").len() >= 2);
+
+    // ── observatory ───────────────────────────────────────────────────────
+    let r = http
+        .get(format!("{base}/v1/analytics/observatory"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("observatory");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert!(!body["totals"].as_array().expect("totals").is_empty());
+    assert!(!body["weekly"]["captured"].as_array().expect("cap").is_empty());
+    assert!(!body["by_kind"].as_array().expect("kinds").is_empty());
+    // kafka is the flagship theme: 3 team-scoped surface forms, memories > 0.
+    let kafka = body["top_entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .find(|e| e["name"] == "kafka")
+        .expect("kafka canonical present");
+    assert_eq!(kafka["teams"], 3);
+    assert!(kafka["memories"].as_i64().expect("n") > 0);
+    // The reviews earlier in this test are reflected in the ledger stats.
+    assert!(body["review"]["reviewed"].as_i64().expect("n") >= 2);
+    assert!(body["review"]["avg_latency_secs"].as_i64().expect("n") >= 0);
+    assert!(body["contradictions"]
+        .as_array()
+        .expect("contradictions")
+        .iter()
+        .any(|c| c["status"] == "resolved_supersede"));
 }

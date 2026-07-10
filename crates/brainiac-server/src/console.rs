@@ -36,6 +36,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/v1/graph", get(graph))
         .route("/v1/analytics", get(analytics))
+        .route("/v1/analytics/observatory", get(observatory))
 }
 
 type HttpError = (StatusCode, String);
@@ -412,6 +413,134 @@ async fn analytics(
             "open_contradictions": contradictions_open,
         },
         "graph": { "entities": entities, "canonicals": canonicals },
+        "queue": { "ingest_depth": queue_depth },
+        "embedding_model": state.embedder.model_name(),
+    })))
+}
+
+// ── observatory (the dashboard module's richer payload) ─────────────────
+
+async fn observatory(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers)?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let by_status = sqlx::query(
+        "SELECT status::text AS status, count(*) AS n FROM memories GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // Weekly flow: captured = memory rows created; promoted = human/auto
+    // approvals. ISO week labels keep the two series joinable client-side.
+    let captured = sqlx::query(
+        "SELECT to_char(date_trunc('week', created_at), 'IYYY\"-W\"IW') AS week, count(*) AS n
+         FROM memories GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let promoted = sqlx::query(
+        "SELECT to_char(date_trunc('week', created_at), 'IYYY\"-W\"IW') AS week, count(*) AS n
+         FROM promotions
+         WHERE policy_decision IN ('auto_approved', 'approved')
+         GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let by_kind = sqlx::query(
+        "SELECT m.kind, t.name AS team, count(*) AS n
+         FROM memories m JOIN teams t ON t.id = m.team_id
+         GROUP BY 1, 2 ORDER BY 1, 2",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // Themes: canonical entities ranked by anchored memories + team spread.
+    // Counts only — no memory content crosses RLS here.
+    let top_entities = sqlx::query(
+        "SELECT ce.name, ce.kind,
+                count(DISTINCT me.memory_id) AS memories,
+                count(DISTINCT e.team_id) AS teams
+         FROM canonical_entities ce
+         JOIN entity_links l ON l.canonical_id = ce.id
+         JOIN entities e ON e.id = l.entity_id
+         LEFT JOIN memory_entities me ON me.entity_id = e.id
+         GROUP BY ce.id, ce.name, ce.kind
+         ORDER BY memories DESC, teams DESC, ce.name
+         LIMIT 12",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let review = sqlx::query(
+        "SELECT count(*) FILTER (WHERE policy_decision = 'needs_review' AND reviewed_at IS NULL) AS pending,
+                COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)
+                    FILTER (WHERE policy_decision = 'needs_review' AND reviewed_at IS NULL)), 0)::bigint AS oldest_secs,
+                count(*) FILTER (WHERE reviewed_at IS NOT NULL) AS reviewed,
+                COALESCE(EXTRACT(EPOCH FROM avg(reviewed_at - created_at)), 0)::bigint AS avg_latency_secs,
+                count(*) FILTER (WHERE policy_decision = 'auto_approved') AS auto_promoted
+         FROM promotions",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let contradictions = sqlx::query(
+        "SELECT status, count(*) AS n FROM contradictions GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    drop(tx);
+    let queue_depth =
+        brainiac_store::queue::depth(state.store.pool(), brainiac_pipeline::worker::INGEST_QUEUE)
+            .await
+            .map_err(internal)?;
+
+    Ok(Json(json!({
+        "totals": by_status.iter().map(|r| json!({
+            "status": r.get::<String, _>("status"),
+            "count": r.get::<i64, _>("n"),
+        })).collect::<Vec<_>>(),
+        "weekly": {
+            "captured": captured.iter().map(|r| json!({
+                "week": r.get::<String, _>("week"), "count": r.get::<i64, _>("n"),
+            })).collect::<Vec<_>>(),
+            "promoted": promoted.iter().map(|r| json!({
+                "week": r.get::<String, _>("week"), "count": r.get::<i64, _>("n"),
+            })).collect::<Vec<_>>(),
+        },
+        "by_kind": by_kind.iter().map(|r| json!({
+            "kind": r.get::<String, _>("kind"),
+            "team": r.get::<String, _>("team"),
+            "count": r.get::<i64, _>("n"),
+        })).collect::<Vec<_>>(),
+        "top_entities": top_entities.iter().map(|r| json!({
+            "name": r.get::<String, _>("name"),
+            "kind": r.get::<String, _>("kind"),
+            "memories": r.get::<i64, _>("memories"),
+            "teams": r.get::<i64, _>("teams"),
+        })).collect::<Vec<_>>(),
+        "review": {
+            "pending": review.get::<i64, _>("pending"),
+            "oldest_pending_secs": review.get::<i64, _>("oldest_secs"),
+            "reviewed": review.get::<i64, _>("reviewed"),
+            "avg_latency_secs": review.get::<i64, _>("avg_latency_secs"),
+            "auto_promoted": review.get::<i64, _>("auto_promoted"),
+        },
+        "contradictions": contradictions.iter().map(|r| json!({
+            "status": r.get::<String, _>("status"),
+            "count": r.get::<i64, _>("n"),
+        })).collect::<Vec<_>>(),
         "queue": { "ingest_depth": queue_depth },
         "embedding_model": state.embedder.model_name(),
     })))
