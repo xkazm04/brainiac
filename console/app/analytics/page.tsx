@@ -1,3 +1,4 @@
+import ApiOffline from "@/components/ApiOffline";
 import { configFromEnv, getAnalytics } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +11,12 @@ function age(secs: number): string {
 }
 
 export default async function AnalyticsPage() {
-  const a = await getAnalytics(configFromEnv());
+  let a;
+  try {
+    a = await getAnalytics(configFromEnv());
+  } catch (e) {
+    return <ApiOffline error={e instanceof Error ? e.message : String(e)} />;
+  }
   return (
     <>
       <section aria-labelledby="reviews-h">

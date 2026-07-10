@@ -1,3 +1,4 @@
+import ApiOffline from "@/components/ApiOffline";
 import { configFromEnv, getGraph } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -6,7 +7,12 @@ export const dynamic = "force-dynamic";
 // consume in the visual pass. Canonical hubs listed with their linked
 // team-scoped surface forms; edges shown with their evidence memory.
 export default async function GraphPage() {
-  const graph = await getGraph(configFromEnv());
+  let graph;
+  try {
+    graph = await getGraph(configFromEnv());
+  } catch (e) {
+    return <ApiOffline error={e instanceof Error ? e.message : String(e)} />;
+  }
   const byCanonical = new Map<string, string[]>();
   for (const e of graph.entities) {
     if (e.canonical_id) {

@@ -1,3 +1,4 @@
+import ApiOffline from "@/components/ApiOffline";
 import { configFromEnv, listContradictions, pendingPromotions } from "@/lib/api";
 
 import { ContradictionButtons, PromotionButtons } from "./review-buttons";
@@ -6,10 +7,15 @@ export const dynamic = "force-dynamic";
 
 export default async function ReviewsPage() {
   const cfg = configFromEnv();
-  const [promotions, contradictions] = await Promise.all([
-    pendingPromotions(cfg),
-    listContradictions(cfg),
-  ]);
+  let promotions, contradictions;
+  try {
+    [promotions, contradictions] = await Promise.all([
+      pendingPromotions(cfg),
+      listContradictions(cfg),
+    ]);
+  } catch (e) {
+    return <ApiOffline error={e instanceof Error ? e.message : String(e)} />;
+  }
 
   return (
     <>
