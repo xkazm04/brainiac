@@ -23,7 +23,7 @@ use serde_json::json;
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
-use crate::http::{internal, principal_of, AppState};
+use crate::http::{auth_of, internal, principal_of, AppState};
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -101,7 +101,7 @@ async fn review_promotion(
     id: Uuid,
     approve: bool,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(state, headers)?;
+    let principal = auth_of(state, headers, "write").await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let pending = actionable_promotion(&mut tx, id).await?;
     if !is_maintainer(&mut tx, &principal, pending.team_id).await? {
@@ -178,7 +178,7 @@ async fn list_contradictions(
     Query(q): Query<ContradictionsQuery>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let status = q.status.as_deref().unwrap_or("open");
     if !matches!(
         status,
@@ -263,7 +263,7 @@ async fn resolve_contradiction(
     headers: HeaderMap,
     Json(body): Json<ResolveBody>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = auth_of(&state, &headers, "write").await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let row = sqlx::query(
@@ -365,7 +365,7 @@ async fn audit(
     Query(q): Query<AuditQuery>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let rows = sqlx::query(
@@ -417,7 +417,7 @@ async fn graph(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let canonicals =
@@ -476,7 +476,7 @@ async fn analytics(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     // Counts are the CALLER's view (RLS) — a member sees their slice of the
@@ -540,7 +540,7 @@ async fn observatory(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let by_status = sqlx::query(
@@ -609,12 +609,11 @@ async fn observatory(
     .await
     .map_err(internal)?;
 
-    let contradictions = sqlx::query(
-        "SELECT status, count(*) AS n FROM contradictions GROUP BY 1 ORDER BY 1",
-    )
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(internal)?;
+    let contradictions =
+        sqlx::query("SELECT status, count(*) AS n FROM contradictions GROUP BY 1 ORDER BY 1")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(internal)?;
 
     drop(tx);
     let queue_depth =
@@ -670,7 +669,7 @@ async fn graph_overview(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let teams = sqlx::query(
@@ -745,7 +744,7 @@ async fn graph_canonical(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let principal = principal_of(&state, &headers)?;
+    let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let canonical =

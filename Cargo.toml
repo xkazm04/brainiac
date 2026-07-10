@@ -33,6 +33,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 async-trait = "0.1"
+sha2 = "0.10"
 
 # Internal crates
 brainiac-core = { path = "crates/brainiac-core" }
