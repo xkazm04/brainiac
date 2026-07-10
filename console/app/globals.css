@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Fused identity base (console/src/design/theme.ts) */
+body {
+  background: #08070c;
+  color: #e9edff;
+}
+
 /* ── Design-lab keyframes (shared by the three variants) ────────────── */
 
 @keyframes shimmer {
