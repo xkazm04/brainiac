@@ -1,3 +1,4 @@
+import DemoBanner from "@/components/DemoBanner";
 import Observatory from "@/observatory/Observatory";
 import {
   DEMO_OBSERVATORY,
@@ -23,5 +24,11 @@ async function observatoryData(): Promise<ObservatoryData> {
 }
 
 export default async function AnalyticsPage() {
-  return <Observatory data={await observatoryData()} />;
+  const data = await observatoryData();
+  return (
+    <>
+      {!data.live && <DemoBanner />}
+      <Observatory data={data} />
+    </>
+  );
 }
