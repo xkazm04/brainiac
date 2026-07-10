@@ -63,6 +63,82 @@ export const DEMO_CORTEX: CortexData = {
   },
 };
 
+// ── large-org stress mock (~50 canonicals, 7 teams) ─────────────────────
+// Deterministic (hash-seeded, no randomness) so layouts are stable across
+// reloads. Used by the lab's scale toggle to sanity-check density handling.
+
+const LARGE_TEAMS = [
+  "payments",
+  "platform",
+  "data",
+  "mobile",
+  "security",
+  "ml",
+  "support",
+] as const;
+
+const LARGE_NAMES = [
+  "kafka", "psp-gateway", "checkout-feature", "argocd", "refund-worker",
+  "fraud scoring", "event-lake", "opa", "std-retry policy", "ledger-service",
+  "feast", "grafana", "auth-service", "session-store", "rate-limiter",
+  "feature-flags", "terraform-modules", "k8s-base", "vault", "cdn-config",
+  "mobile-shell", "push-gateway", "notification-hub", "email-templates",
+  "billing-engine", "invoice-service", "tax-calculator", "currency-rates",
+  "kyc-pipeline", "sanctions-screening", "chargeback-svc", "settlement-recon",
+  "dbt-models", "airflow", "schema-registry", "ml-serving", "model-registry",
+  "ab-testing", "experiment-tracker", "data-catalog", "pii-scrubber",
+  "audit-log", "incident-runbooks", "oncall-rotation", "slo-definitions",
+  "api-gateway", "service-mesh", "observability-stack", "design-system",
+  "search-index",
+] as const;
+
+const KINDS = ["tech", "service", "concept", "repo", "feature"] as const;
+
+export function makeLargeCortex(): CortexData {
+  const teams = LARGE_TEAMS.map((name, i) => ({
+    id: `lt-${name}`,
+    name,
+    memories: 14 + Math.round(hash01(name, 2) * 40),
+    entities: 8 + Math.round(hash01(name, 4) * 20),
+  }));
+
+  const canonicals = LARGE_NAMES.map((name) => {
+    // Team spread: ~14% three-team, ~34% two-team, rest single-team.
+    const spreadRoll = hash01(name, 13);
+    const teamCount = spreadRoll > 0.86 ? 3 : spreadRoll > 0.52 ? 2 : 1;
+    const start = Math.floor(hash01(name, 17) * teams.length);
+    const team_ids = Array.from(
+      { length: teamCount },
+      (_, k) => teams[(start + k * (1 + Math.floor(hash01(name, 19) * 3))) % teams.length].id,
+    );
+    return {
+      id: `lc-${name.replace(/\s+/g, "-")}`,
+      name,
+      kind: KINDS[Math.floor(hash01(name, 23) * KINDS.length)],
+      memories: 2 + Math.round(hash01(name, 29) * 18),
+      teams: new Set(team_ids).size,
+      team_ids: [...new Set(team_ids)],
+    };
+  });
+
+  const pairCounts = new Map<string, number>();
+  for (const c of canonicals) {
+    const ids = [...c.team_ids].sort();
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const key = `${ids[i]}|${ids[j]}`;
+        pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  const team_links = [...pairCounts.entries()].map(([key, shared]) => {
+    const [a, b] = key.split("|");
+    return { a, b, shared };
+  });
+
+  return { live: false, overview: { teams, canonicals, team_links } };
+}
+
 export function demoDetail(id: string, overview: GraphOverview): CanonicalDetail {
   const c = overview.canonicals.find((x) => x.id === id) ?? overview.canonicals[0];
   const teamName = (tid: string) => overview.teams.find((t) => t.id === tid)?.name ?? "team";

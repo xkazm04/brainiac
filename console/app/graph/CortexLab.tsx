@@ -5,12 +5,12 @@
  * over the same multi-level graph data. Removed at consolidation.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { band } from "@/design/theme";
 
-import type { CortexData } from "./cortex-data";
+import { makeLargeCortex, type CortexData } from "./cortex-data";
 import DepthOfFieldVariant from "./variants/DepthOfFieldVariant";
 import HemisphereVariant from "./variants/HemisphereVariant";
 import StarChartVariant from "./variants/StarChartVariant";
@@ -42,15 +42,30 @@ const STORAGE_KEY = "brainiac-cortex-variant";
 
 export default function CortexLab({ data }: { data: CortexData }) {
   const [active, setActive] = useState<VariantId>("hemisphere");
+  // Scale stress-toggle: swap the real org for a deterministic 50-node,
+  // 7-team mock to evaluate how each metaphor degrades with density.
+  const [large, setLarge] = useState(false);
+  const largeData = useMemo(() => makeLargeCortex(), []);
+  const shown = large ? largeData : data;
 
   useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("variant");
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("variant");
     const stored = window.localStorage.getItem(STORAGE_KEY);
     const initial = fromUrl ?? stored;
     if (initial && VARIANTS.some((v) => v.id === initial)) {
       setActive(initial as VariantId);
     }
+    if (params.get("scale") === "large") setLarge(true);
   }, []);
+
+  const pickScale = (next: boolean) => {
+    setLarge(next);
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("scale", "large");
+    else url.searchParams.delete("scale");
+    window.history.replaceState(null, "", url.toString());
+  };
 
   const pick = (id: VariantId) => {
     setActive(id);
@@ -66,13 +81,13 @@ export default function CortexLab({ data }: { data: CortexData }) {
     <div className="relative pb-24">
       <AnimatePresence mode="wait">
         <motion.div
-          key={current.id}
+          key={`${current.id}-${large ? "l" : "s"}`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
         >
-          <current.Component data={data} />
+          <current.Component data={shown} />
         </motion.div>
       </AnimatePresence>
 
@@ -109,8 +124,16 @@ export default function CortexLab({ data }: { data: CortexData }) {
             );
           })}
         </div>
-        <div className="mt-1.5 text-center text-[11px] text-white/60 [text-shadow:0_1px_4px_rgba(0,0,0,0.9)]">
-          {current.blurb}
+        <div className="mt-1.5 flex items-center justify-center gap-3 text-[11px] text-white/60 [text-shadow:0_1px_4px_rgba(0,0,0,0.9)]">
+          <span>{current.blurb}</span>
+          <span className="text-white/25">·</span>
+          <button
+            onClick={() => pickScale(!large)}
+            className="rounded-full border border-white/20 bg-black/50 px-2.5 py-0.5 transition hover:border-white/50 hover:text-white"
+            aria-pressed={large}
+          >
+            scale: {large ? "50 hubs · 7 teams (mock)" : `${data.overview.canonicals.length} hubs · ${data.overview.teams.length} teams`}
+          </button>
         </div>
       </div>
     </div>

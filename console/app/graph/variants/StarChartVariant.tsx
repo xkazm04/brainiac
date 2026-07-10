@@ -46,6 +46,16 @@ export default function StarChartVariant({ data }: { data: CortexData }) {
   const match = query.trim().toLowerCase();
   const matched = match ? stars.filter((s) => s.name.toLowerCase().includes(match)) : [];
 
+  // Density mode: at large-org scale only bound/loud stars keep permanent
+  // labels — the rest identify on hover (title) / selection / search.
+  const dense = stars.length > 24;
+  const maxTeams = Math.max(1, ...stars.map((s) => s.teams));
+  const labelCutoff = useMemo(() => {
+    if (!dense) return 0;
+    const sorted = [...stars].sort((a, b) => b.memories - a.memories);
+    return sorted[Math.min(17, sorted.length - 1)]?.memories ?? 0;
+  }, [stars, dense]);
+
   const dimmed = (s: (typeof stars)[number]) => {
     if (hoverTeam && !s.team_ids.includes(hoverTeam)) return true;
     if (match && !s.name.toLowerCase().includes(match)) return true;
@@ -110,10 +120,14 @@ export default function StarChartVariant({ data }: { data: CortexData }) {
           {stars.map((s) => {
             const isSel = selected === s.id;
             const dim = dimmed(s);
-            const tone = s.teams === 3 ? GOLD : s.teams === 2 ? band("gamma", 74, 0.8) : "rgba(233,237,255,0.55)";
+            const bound = s.teams >= Math.max(3, maxTeams);
+            const tone = bound ? GOLD : s.teams >= 2 ? band("gamma", 74, 0.8) : "rgba(233,237,255,0.55)";
+            const showLabel =
+              !dense || isSel || bound || s.memories >= labelCutoff || (!!match && !dim);
             return (
               <g key={s.id} onClick={() => setSelected(isSel ? null : s.id)} className="cursor-pointer" opacity={dim ? 0.18 : 1}>
-                {s.teams === 3 && !dim && (
+                <title>{`${s.name} · ${s.memories} memories · ${s.teams} team${s.teams > 1 ? "s" : ""}`}</title>
+                {bound && !dim && (
                   <circle cx={s.x} cy={s.y} r={s.r + 5} fill="none" stroke={GOLD} strokeOpacity="0.25" />
                 )}
                 {isSel && <circle cx={s.x} cy={s.y} r={s.r + 9} fill="none" stroke={GOLD} strokeWidth="1.2" strokeDasharray="3 4" />}
@@ -126,9 +140,11 @@ export default function StarChartVariant({ data }: { data: CortexData }) {
                   animate={{ opacity: dim ? 0.2 : 1 }}
                   transition={{ duration: 0.3, delay: hash01(s.id, 5) * 0.5 }}
                 />
-                <text x={s.x} y={s.y - s.r - 5} textAnchor="middle" fontSize="10.5" fill={isSel ? GOLD : "rgba(233,237,255,0.55)"}>
-                  {s.name}
-                </text>
+                {showLabel && (
+                  <text x={s.x} y={s.y - s.r - 5} textAnchor="middle" fontSize={dense ? 10 : 10.5} fill={isSel ? GOLD : "rgba(233,237,255,0.55)"}>
+                    {s.name}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -148,7 +164,8 @@ export default function StarChartVariant({ data }: { data: CortexData }) {
             </button>
           ))}
           <span className={LABEL} style={{ color: "rgba(233,237,255,0.3)" }}>
-            hover a team to light its stars{!data.live && " · demo data"}
+            hover a team to light its stars{dense && " · faint stars name themselves on hover"}
+            {!data.live && " · demo data"}
           </span>
         </div>
         {match && matched.length === 0 && (

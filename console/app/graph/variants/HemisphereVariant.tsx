@@ -32,14 +32,18 @@ export default function HemisphereVariant({ data }: { data: CortexData }) {
 
   const teamIndex = (teamId: string) => overview.teams.findIndex((t) => t.id === teamId);
 
-  const poles = useMemo(
-    () =>
-      overview.teams.map((t, i) => {
-        const a = (-90 + i * 120) * (Math.PI / 180);
-        return { ...t, x: CX + Math.cos(a) * R, y: CY + Math.sin(a) * R, i };
-      }),
-    [overview.teams],
-  );
+  // Density mode: at large-org scale shrink nodes, widen jitter and label
+  // selectively — the metaphor must survive 50+ hubs.
+  const dense = overview.canonicals.length > 24;
+  const maxTeams = Math.max(1, ...overview.canonicals.map((c) => c.teams));
+
+  const poles = useMemo(() => {
+    const step = 360 / Math.max(1, overview.teams.length);
+    return overview.teams.map((t, i) => {
+      const a = (-90 + i * step) * (Math.PI / 180);
+      return { ...t, x: CX + Math.cos(a) * R, y: CY + Math.sin(a) * R, i };
+    });
+  }, [overview.teams]);
 
   const hubs = useMemo(
     () =>
@@ -49,19 +53,29 @@ export default function HemisphereVariant({ data }: { data: CortexData }) {
           .filter(Boolean) as typeof poles;
         const mx = members.reduce((s, p) => s + p.x, 0) / Math.max(1, members.length);
         const my = members.reduce((s, p) => s + p.y, 0) / Math.max(1, members.length);
-        // pull toward center with team count; deterministic jitter breaks overlaps
-        const pull = c.teams === 3 ? 0.85 : c.teams === 2 ? 0.55 : 0.28;
-        const jx = (hash01(c.name) - 0.5) * 90;
-        const jy = (hash01(c.name, 7) - 0.5) * 90;
+        // pull toward center with binding ratio; jitter widens with density
+        const ratio = (c.teams - 1) / Math.max(1, maxTeams - 1);
+        const pull = 0.25 + ratio * 0.6;
+        const spread = dense ? 170 : 90;
+        const jx = (hash01(c.name) - 0.5) * spread;
+        const jy = (hash01(c.name, 7) - 0.5) * spread;
         return {
           ...c,
+          bound: c.teams >= Math.max(3, maxTeams),
           x: CX * pull + mx * (1 - pull) + jx * (1 - pull),
           y: CY * pull + my * (1 - pull) + jy * (1 - pull),
-          r: 6 + Math.sqrt(c.memories) * 2.6,
+          r: (dense ? 4 : 6) + Math.sqrt(c.memories) * (dense ? 1.7 : 2.6),
         };
       }),
-    [overview.canonicals, poles],
+    [overview.canonicals, poles, dense, maxTeams],
   );
+
+  // In dense mode, only the loudest hubs keep permanent labels.
+  const labelCutoff = useMemo(() => {
+    if (!dense) return 0;
+    const sorted = [...hubs].sort((a, b) => b.memories - a.memories);
+    return sorted[Math.min(14, sorted.length - 1)]?.memories ?? 0;
+  }, [hubs, dense]);
 
   const maxShared = Math.max(1, ...overview.team_links.map((l) => l.shared));
 
@@ -121,15 +135,17 @@ export default function HemisphereVariant({ data }: { data: CortexData }) {
             {/* canonical hubs */}
             {hubs.map((c) => {
               const isSel = selected === c.id;
-              const tone = c.teams === 3 ? GOLD : c.teams === 2 ? band("gamma", 68, 0.65) : "rgba(233,237,255,0.35)";
+              const tone = c.bound ? GOLD : c.teams >= 2 ? band("gamma", 68, 0.65) : "rgba(233,237,255,0.35)";
+              const showLabel = !dense || isSel || c.bound || c.memories >= labelCutoff;
               return (
                 <g key={c.id} onClick={() => setSelected(isSel ? null : c.id)} className="cursor-pointer">
+                  <title>{`${c.name} · ${c.memories} memories · ${c.teams} team${c.teams > 1 ? "s" : ""}`}</title>
                   {isSel && <circle cx={c.x} cy={c.y} r={c.r + 8} fill="none" stroke={GOLD} strokeWidth="1.4" strokeDasharray="3 4" />}
                   <motion.circle
                     cx={c.x}
                     cy={c.y}
                     r={c.r}
-                    fill={c.teams === 3 ? "hsla(46,90%,60%,0.16)" : "rgba(233,237,255,0.04)"}
+                    fill={c.bound ? "hsla(46,90%,60%,0.16)" : "rgba(233,237,255,0.04)"}
                     stroke={tone}
                     strokeWidth={isSel ? 2 : 1.2}
                     initial={{ scale: 0, opacity: 0 }}
@@ -137,15 +153,18 @@ export default function HemisphereVariant({ data }: { data: CortexData }) {
                     transition={{ duration: 0.4, delay: hash01(c.id) * 0.4 }}
                     style={{ transformOrigin: `${c.x}px ${c.y}px` }}
                   />
-                  <text x={c.x} y={c.y - c.r - 6} textAnchor="middle" fontSize="11" fill={isSel ? GOLD : "rgba(233,237,255,0.65)"}>
-                    {c.name}
-                  </text>
+                  {showLabel && (
+                    <text x={c.x} y={c.y - c.r - 6} textAnchor="middle" fontSize={dense ? 10 : 11} fill={isSel ? GOLD : "rgba(233,237,255,0.65)"}>
+                      {c.name}
+                    </text>
+                  )}
                 </g>
               );
             })}
           </svg>
           <div className={`${LABEL} absolute bottom-3 left-4`} style={{ color: "rgba(233,237,255,0.3)" }}>
             click a hub · size = anchored memories · position = team pull
+            {dense && " · quiet hubs unlabeled — hover to identify"}
           </div>
         </div>
 
