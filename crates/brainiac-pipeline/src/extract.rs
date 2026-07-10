@@ -244,7 +244,7 @@ pub async fn run_extract(
             conn,
             memory_id,
             embedding_version,
-            &embedder.embed(m.content.trim()),
+            &embedder.embed(m.content.trim()).await?,
         )
         .await?;
 

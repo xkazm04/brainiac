@@ -7,15 +7,27 @@
 //! hybrid-retrieval + eval plumbing. Its metric numbers are plumbing numbers,
 //! not quality claims (PLAN.md §Deviations #4).
 
-/// Text → unit-length vector. Implementations must be deterministic for the
-/// same input (retrieval tests and fixture replay depend on it).
+use anyhow::Result;
+use async_trait::async_trait;
+
+/// Text → unit-length vector. Async + fallible because real embedders are
+/// remote (DashScope) or model-runtime calls; the deterministic local
+/// implementation is trivially `Ok`. Implementations should be deterministic
+/// for the same input (fixture replay and test stability depend on it).
+#[async_trait]
 pub trait Embedder: Send + Sync {
     fn model_name(&self) -> &str;
     fn dim(&self) -> usize;
-    fn embed(&self, text: &str) -> Vec<f32>;
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
 
-    fn embed_batch(&self, texts: &[&str]) -> Vec<Vec<f32>> {
-        texts.iter().map(|t| self.embed(t)).collect()
+    /// Default: sequential single embeds. Remote implementations override
+    /// with true batch requests.
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let mut out = Vec::with_capacity(texts.len());
+        for t in texts {
+            out.push(self.embed(t).await?);
+        }
+        Ok(out)
     }
 }
 
@@ -54,16 +66,9 @@ impl Default for DeterministicEmbedder {
     }
 }
 
-impl Embedder for DeterministicEmbedder {
-    fn model_name(&self) -> &str {
-        "deterministic-bow-v1"
-    }
-
-    fn dim(&self) -> usize {
-        self.dim
-    }
-
-    fn embed(&self, text: &str) -> Vec<f32> {
+impl DeterministicEmbedder {
+    /// Pure synchronous core — usable without a runtime (unit tests, tools).
+    pub fn embed_sync(&self, text: &str) -> Vec<f32> {
         let mut v = vec![0f32; self.dim];
         for token in text
             .to_lowercase()
@@ -82,6 +87,21 @@ impl Embedder for DeterministicEmbedder {
             }
         }
         v
+    }
+}
+
+#[async_trait]
+impl Embedder for DeterministicEmbedder {
+    fn model_name(&self) -> &str {
+        "deterministic-bow-v1"
+    }
+
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        Ok(self.embed_sync(text))
     }
 }
 
@@ -105,15 +125,15 @@ mod tests {
     fn deterministic_across_calls() {
         let e = DeterministicEmbedder::default();
         assert_eq!(
-            e.embed("retry backoff for psp-gateway"),
-            e.embed("retry backoff for psp-gateway")
+            e.embed_sync("retry backoff for psp-gateway"),
+            e.embed_sync("retry backoff for psp-gateway")
         );
     }
 
     #[test]
     fn unit_length() {
         let e = DeterministicEmbedder::default();
-        let v = e.embed("kafka consumer lag");
+        let v = e.embed_sync("kafka consumer lag");
         let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((norm - 1.0).abs() < 1e-5);
     }
@@ -121,16 +141,16 @@ mod tests {
     #[test]
     fn overlapping_text_is_more_similar_than_disjoint() {
         let e = DeterministicEmbedder::default();
-        let a = e.embed("refund-worker retry cap causes timeout storms against psp-gateway");
-        let b = e.embed("raise the refund-worker retry cap against psp-gateway latency");
-        let c = e.embed("sigma webgl graph layout rendering in the browser console");
+        let a = e.embed_sync("refund-worker retry cap causes timeout storms against psp-gateway");
+        let b = e.embed_sync("raise the refund-worker retry cap against psp-gateway latency");
+        let c = e.embed_sync("sigma webgl graph layout rendering in the browser console");
         assert!(cosine(&a, &b) > cosine(&a, &c));
     }
 
     #[test]
     fn empty_text_is_zero_vector() {
         let e = DeterministicEmbedder::default();
-        let v = e.embed("   ");
+        let v = e.embed_sync("   ");
         assert!(v.iter().all(|x| *x == 0.0));
     }
 }

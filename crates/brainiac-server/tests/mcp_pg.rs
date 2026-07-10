@@ -50,7 +50,7 @@ async fn mcp_handshake_and_tools() {
     // Principal: the data analyst (team-data only) — the leak-sensitive case.
     let state = Arc::new(McpState {
         store,
-        embedder: DeterministicEmbedder::default(),
+        embedder: Arc::new(DeterministicEmbedder::default()),
         embedding_version: seeded.embedding_version,
         principal: Principal {
             org_id: stable_uuid(&fx.org.org),

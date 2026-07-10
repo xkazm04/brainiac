@@ -119,7 +119,7 @@ pub async fn seed_gold(store: &Store, fx: &Fixtures, embedder: &dyn Embedder) ->
             )
             .await?;
         }
-        memories::upsert_embedding(c, id, version, &embedder.embed(&m.content)).await?;
+        memories::upsert_embedding(c, id, version, &embedder.embed(&m.content).await?).await?;
     }
 
     tx.commit().await?;

@@ -55,7 +55,7 @@ pub async fn search(
     let as_of = req.as_of.unwrap_or_else(Utc::now);
 
     // Stage 2: candidate lists (ranked best-first).
-    let query_vec = embedder.embed(&req.query);
+    let query_vec = embedder.embed(&req.query).await?;
     let vector_hits =
         memories::search_vector(tx, embedding_version, &query_vec, CANDIDATES_PER_RETRIEVER)
             .await?;

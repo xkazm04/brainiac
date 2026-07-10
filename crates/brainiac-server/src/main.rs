@@ -3,8 +3,11 @@
 
 use brainiac_server::http;
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+use brainiac_gateway::QwenEmbedder;
 use brainiac_store::Store;
 use clap::{Parser, Subcommand};
 
@@ -37,6 +40,10 @@ enum Command {
         fixtures: String,
         #[arg(long, default_value = "retrieval")]
         profile: String,
+        /// Embedding backend: `deterministic` (default) or `qwen`
+        /// (DashScope text-embedding-v4; needs QWEN_API_KEY/DASHSCOPE_API_KEY).
+        #[arg(long)]
+        embedder: Option<String>,
         #[arg(long)]
         out: Option<String>,
     },
@@ -46,8 +53,28 @@ fn database_url() -> Result<String> {
     std::env::var("DATABASE_URL").context("DATABASE_URL must be set")
 }
 
+/// Pick the embedding backend. `name` (CLI) wins over BRAINIAC_EMBEDDER (env);
+/// default is the zero-dependency deterministic embedder.
+fn embedder_select(name: Option<&str>) -> Result<Arc<dyn Embedder>> {
+    let choice = match name {
+        Some(n) => n.to_string(),
+        None => std::env::var("BRAINIAC_EMBEDDER").unwrap_or_else(|_| "deterministic".into()),
+    };
+    match choice.as_str() {
+        "deterministic" => Ok(Arc::new(DeterministicEmbedder::default())),
+        "qwen" => {
+            let e = QwenEmbedder::from_env()
+                .context("embedder=qwen needs QWEN_API_KEY or DASHSCOPE_API_KEY")?;
+            Ok(Arc::new(e))
+        }
+        other => anyhow::bail!("unknown embedder `{other}` (deterministic|qwen)"),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Local dev convenience: pick up DATABASE_URL / QWEN_API_KEY from .env.
+    let _ = dotenvy::dotenv();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -62,8 +89,9 @@ async fn main() -> Result<()> {
         Command::Eval {
             fixtures,
             profile,
+            embedder,
             out,
-        } => eval(&fixtures, &profile, out.as_deref()).await,
+        } => eval(&fixtures, &profile, embedder.as_deref(), out.as_deref()).await,
     }
 }
 
@@ -71,7 +99,7 @@ async fn serve(bind: &str) -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
-    let embedder = DeterministicEmbedder::default();
+    let embedder = embedder_select(None)?;
     let app = http::router(store, embedder).await?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "brainiac REST listening");
@@ -83,7 +111,7 @@ async fn mcp() -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
-    let embedder = DeterministicEmbedder::default();
+    let embedder = embedder_select(None)?;
     let state = brainiac_server::mcp::McpState::from_env(store, embedder).await?;
     brainiac_server::mcp::serve_stdio(std::sync::Arc::new(state)).await
 }
@@ -92,7 +120,7 @@ async fn worker(mock: bool) -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
-    let embedder = DeterministicEmbedder::default();
+    let embedder = embedder_select(None)?;
 
     let provider: Box<dyn brainiac_gateway::ChatProvider> = if mock {
         tracing::warn!("worker running with the MOCK provider — dev/demo only");
@@ -119,11 +147,16 @@ async fn worker(mock: bool) -> Result<()> {
         v
     };
 
-    tracing::info!(provider = %provider.model_ref(), "brainiac worker started");
+    tracing::info!(provider = %provider.model_ref(), embedder = embedder.model_name(), "brainiac worker started");
     loop {
-        let stats =
-            brainiac_pipeline::worker::tick(&store, provider.as_ref(), &embedder, version, 8)
-                .await?;
+        let stats = brainiac_pipeline::worker::tick(
+            &store,
+            provider.as_ref(),
+            embedder.as_ref(),
+            version,
+            8,
+        )
+        .await?;
         if stats.jobs == 0 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         } else {
@@ -132,7 +165,12 @@ async fn worker(mock: bool) -> Result<()> {
     }
 }
 
-async fn eval(fixtures_dir: &str, profile: &str, out: Option<&str>) -> Result<()> {
+async fn eval(
+    fixtures_dir: &str,
+    profile: &str,
+    embedder_name: Option<&str>,
+    out: Option<&str>,
+) -> Result<()> {
     anyhow::ensure!(profile == "retrieval", "v0 CLI supports profile=retrieval");
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
@@ -149,11 +187,19 @@ async fn eval(fixtures_dir: &str, profile: &str, out: Option<&str>) -> Result<()
 
     let store = Store::connect(&url).await?;
     let fx = brainiac_fixtures::load(fixtures_dir).context("loading fixtures")?;
-    let embedder = DeterministicEmbedder::default();
-    let seeded = brainiac_eval::seed::seed_gold(&store, &fx, &embedder).await?;
-    let report =
-        brainiac_eval::retrieval_profile::run(&store, &fx, &embedder, seeded.embedding_version)
-            .await?;
+    let embedder = embedder_select(embedder_name)?;
+    tracing::info!(
+        embedder = embedder.model_name(),
+        "running retrieval profile"
+    );
+    let seeded = brainiac_eval::seed::seed_gold(&store, &fx, embedder.as_ref()).await?;
+    let report = brainiac_eval::retrieval_profile::run(
+        &store,
+        &fx,
+        embedder.as_ref(),
+        seeded.embedding_version,
+    )
+    .await?;
 
     let json = serde_json::to_string_pretty(&report)?;
     match out {

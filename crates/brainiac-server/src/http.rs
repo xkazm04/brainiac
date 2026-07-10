@@ -14,7 +14,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+use brainiac_core::embed::Embedder;
 use brainiac_core::Principal;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
@@ -26,12 +26,12 @@ use crate::auth::TokenMap;
 
 pub struct AppState {
     pub store: Store,
-    pub embedder: DeterministicEmbedder,
+    pub embedder: Arc<dyn Embedder>,
     pub embedding_version: i32,
     pub tokens: TokenMap,
 }
 
-pub async fn router(store: Store, embedder: DeterministicEmbedder) -> Result<Router> {
+pub async fn router(store: Store, embedder: Arc<dyn Embedder>) -> Result<Router> {
     let tokens = TokenMap::from_env()?;
     if tokens.is_empty() {
         tracing::warn!("BRAINIAC_TOKENS is empty — every request will be 401");
@@ -112,7 +112,7 @@ async fn search(
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
-        &state.embedder,
+        state.embedder.as_ref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
             query: body.query,

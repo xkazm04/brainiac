@@ -26,8 +26,8 @@ async fn serve_health_auth_and_scoped_search() {
 
     let store = Store::connect(&url).await.expect("connect");
     let fx = brainiac_fixtures::load(brainiac_fixtures::loader::default_root()).expect("fixtures");
-    let embedder = DeterministicEmbedder::default();
-    brainiac_eval::seed::seed_gold(&store, &fx, &embedder)
+    let embedder = std::sync::Arc::new(DeterministicEmbedder::default());
+    brainiac_eval::seed::seed_gold(&store, &fx, embedder.as_ref())
         .await
         .expect("seed");
 
@@ -101,7 +101,10 @@ async fn serve_health_auth_and_scoped_search() {
     assert_eq!(r.status(), reqwest::StatusCode::ACCEPTED);
 }
 
-async fn brainiac_server_router(store: Store, embedder: DeterministicEmbedder) -> axum::Router {
+async fn brainiac_server_router(
+    store: Store,
+    embedder: std::sync::Arc<DeterministicEmbedder>,
+) -> axum::Router {
     brainiac_server::http::router(store, embedder)
         .await
         .expect("router")

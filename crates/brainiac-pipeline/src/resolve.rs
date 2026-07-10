@@ -57,11 +57,11 @@ pub async fn resolve_entity(
     entity_kind: &str,
 ) -> Result<ResolveOutcome> {
     let canonicals = brainiac_store::entities::list_canonicals(conn, org_id).await?;
-    let query_vec = embedder.embed(entity_name);
+    let query_vec = embedder.embed(entity_name).await?;
 
     let mut best: Option<(Uuid, String, f32)> = None;
     for (id, name, _kind) in &canonicals {
-        let sim = cosine(&query_vec, &embedder.embed(name));
+        let sim = cosine(&query_vec, &embedder.embed(name).await?);
         if best.as_ref().is_none_or(|(_, _, s)| sim > *s) {
             best = Some((*id, name.clone(), sim));
         }

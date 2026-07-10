@@ -58,15 +58,22 @@ impl QwenProvider {
         }
     }
 
-    /// Construct from environment (DASHSCOPE_API_KEY, QWEN_MODEL, QWEN_BASE_URL).
+    /// Construct from environment (DASHSCOPE_API_KEY or QWEN_API_KEY,
+    /// QWEN_MODEL, QWEN_BASE_URL).
     pub fn from_env() -> Option<Self> {
-        let key = std::env::var("DASHSCOPE_API_KEY").ok()?;
         Some(Self::new(
-            key,
+            dashscope_key_from_env()?,
             std::env::var("QWEN_MODEL").ok(),
             std::env::var("QWEN_BASE_URL").ok(),
         ))
     }
+}
+
+fn dashscope_key_from_env() -> Option<String> {
+    std::env::var("DASHSCOPE_API_KEY")
+        .or_else(|_| std::env::var("QWEN_API_KEY"))
+        .ok()
+        .filter(|k| !k.trim().is_empty())
 }
 
 #[derive(Deserialize)]
@@ -141,6 +148,153 @@ impl ChatProvider for QwenProvider {
             input_tokens: usage.prompt_tokens,
             output_tokens: usage.completion_tokens,
         })
+    }
+}
+
+// ── Qwen embeddings via DashScope (OpenAI-compatible /embeddings) ───────
+
+/// DashScope `text-embedding-v4` (served Qwen3-Embedding) behind the
+/// [`brainiac_core::embed::Embedder`] seam. Matryoshka dims 64–2048; we pin
+/// 1024 (the model default) unless overridden. DashScope caps this model at
+/// 10 texts per request, so `embed_batch` chunks accordingly.
+///
+/// The API key is an env/vault reference only — never persisted to Postgres.
+pub struct QwenEmbedder {
+    http: reqwest::Client,
+    base_url: String,
+    api_key: String,
+    model: String,
+    dim: usize,
+}
+
+impl QwenEmbedder {
+    pub const DEFAULT_MODEL: &'static str = "text-embedding-v4";
+    pub const DEFAULT_DIM: usize = 1024;
+    const MAX_BATCH: usize = 10;
+
+    pub fn new(api_key: String, base_url: Option<String>, dim: Option<usize>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base_url: base_url.unwrap_or_else(|| QwenProvider::DEFAULT_BASE.to_string()),
+            api_key,
+            model: Self::DEFAULT_MODEL.to_string(),
+            dim: dim.unwrap_or(Self::DEFAULT_DIM),
+        }
+    }
+
+    /// Construct from environment (DASHSCOPE_API_KEY or QWEN_API_KEY,
+    /// QWEN_BASE_URL, QWEN_EMBED_DIM).
+    pub fn from_env() -> Option<Self> {
+        Some(Self::new(
+            dashscope_key_from_env()?,
+            std::env::var("QWEN_BASE_URL").ok(),
+            std::env::var("QWEN_EMBED_DIM")
+                .ok()
+                .and_then(|d| d.parse().ok()),
+        ))
+    }
+
+    async fn request(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        #[derive(Deserialize)]
+        struct EmbeddingRow {
+            index: usize,
+            embedding: Vec<f32>,
+        }
+        #[derive(Deserialize)]
+        struct EmbeddingResponse {
+            data: Vec<EmbeddingRow>,
+        }
+        let resp = self
+            .http
+            .post(format!("{}/embeddings", self.base_url))
+            .bearer_auth(&self.api_key)
+            .json(&json!({
+                "model": self.model,
+                "input": texts,
+                "dimensions": self.dim,
+                "encoding_format": "float",
+            }))
+            .send()
+            .await
+            .context("dashscope embeddings request")?;
+        let status = resp.status();
+        let body = resp.text().await.context("dashscope embeddings body")?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "dashscope embeddings {status}: {}",
+                body.chars().take(400).collect::<String>()
+            );
+        }
+        let parsed: EmbeddingResponse =
+            serde_json::from_str(&body).context("dashscope embeddings parse")?;
+        anyhow::ensure!(
+            parsed.data.len() == texts.len(),
+            "dashscope returned {} embeddings for {} inputs",
+            parsed.data.len(),
+            texts.len()
+        );
+        let mut rows = parsed.data;
+        rows.sort_by_key(|r| r.index);
+        for r in &rows {
+            anyhow::ensure!(
+                r.embedding.len() == self.dim,
+                "dashscope returned dim {} (expected {})",
+                r.embedding.len(),
+                self.dim
+            );
+        }
+        Ok(rows.into_iter().map(|r| r.embedding).collect())
+    }
+}
+
+#[async_trait]
+impl brainiac_core::embed::Embedder for QwenEmbedder {
+    fn model_name(&self) -> &str {
+        "qwen:text-embedding-v4"
+    }
+
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        // DashScope rejects empty input — degrade to a zero vector, matching
+        // the deterministic embedder's behavior for blank text.
+        if text.trim().is_empty() {
+            return Ok(vec![0.0; self.dim]);
+        }
+        Ok(self
+            .request(&[text])
+            .await?
+            .into_iter()
+            .next()
+            .expect("length checked"))
+    }
+
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(Self::MAX_BATCH) {
+            // Blank inputs are filtered per-chunk and re-inserted as zeros.
+            let live: Vec<&str> = chunk
+                .iter()
+                .copied()
+                .filter(|t| !t.trim().is_empty())
+                .collect();
+            let mut embedded = if live.is_empty() {
+                Vec::new()
+            } else {
+                self.request(&live).await?
+            }
+            .into_iter();
+            for t in chunk {
+                if t.trim().is_empty() {
+                    out.push(vec![0.0; self.dim]);
+                } else {
+                    out.push(embedded.next().expect("length checked"));
+                }
+            }
+        }
+        Ok(out)
     }
 }
 

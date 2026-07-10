@@ -1,0 +1,53 @@
+{
+  "fixture_version": "v1",
+  "embedding_model": "qwen:text-embedding-v4",
+  "overall": {
+    "queries": 54,
+    "ndcg_at_10": 0.8764784766839026,
+    "mrr": 0.8565972222222222,
+    "recall_at_5": 0.9270833333333334
+  },
+  "per_stratum": {
+    "cross_team_graph": {
+      "queries": 9,
+      "ndcg_at_10": 0.9261559743639318,
+      "mrr": 0.9444444444444444,
+      "recall_at_5": 0.8888888888888888
+    },
+    "czech": {
+      "queries": 6,
+      "ndcg_at_10": 0.7849092799331471,
+      "mrr": 0.7222222222222222,
+      "recall_at_5": 0.9166666666666666
+    },
+    "exact_identifier": {
+      "queries": 11,
+      "ndcg_at_10": 0.9648883619525634,
+      "mrr": 0.9545454545454546,
+      "recall_at_5": 1.0
+    },
+    "negative": {
+      "queries": 6,
+      "ndcg_at_10": null,
+      "mrr": 0.0,
+      "recall_at_5": null
+    },
+    "semantic": {
+      "queries": 16,
+      "ndcg_at_10": 0.8113536807750917,
+      "mrr": 0.7833333333333333,
+      "recall_at_5": 0.875
+    },
+    "temporal": {
+      "queries": 6,
+      "ndcg_at_10": 0.9051127596788988,
+      "mrr": 0.875,
+      "recall_at_5": 1.0
+    }
+  },
+  "temporal_rank1_accuracy": 0.9285714285714286,
+  "superseded_in_top3": 0,
+  "negative_empty_rate": 0.0,
+  "rls_leaks": [],
+  "queries_run": 83
+}

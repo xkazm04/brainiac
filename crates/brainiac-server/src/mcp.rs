@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+use brainiac_core::embed::Embedder;
 use brainiac_core::Principal;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
@@ -29,13 +29,13 @@ const CONTEXT_CHAR_BUDGET: usize = 6000;
 
 pub struct McpState {
     pub store: Store,
-    pub embedder: DeterministicEmbedder,
+    pub embedder: Arc<dyn Embedder>,
     pub embedding_version: i32,
     pub principal: Principal,
 }
 
 impl McpState {
-    pub async fn from_env(store: Store, embedder: DeterministicEmbedder) -> Result<Self> {
+    pub async fn from_env(store: Store, embedder: Arc<dyn Embedder>) -> Result<Self> {
         let tokens = crate::auth::TokenMap::from_env()?;
         let token = std::env::var("BRAINIAC_MCP_TOKEN")
             .context("BRAINIAC_MCP_TOKEN must be set for the MCP surface")?;
@@ -218,7 +218,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
-        &state.embedder,
+        state.embedder.as_ref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
             query: query.to_string(),
@@ -247,7 +247,7 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value> {
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
-        &state.embedder,
+        state.embedder.as_ref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
             query: hint.to_string(),
