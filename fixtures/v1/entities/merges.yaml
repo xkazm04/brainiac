@@ -1,0 +1,62 @@
+# Entity-resolution gold (EVAL.md §2.2): 12 collision sets + 6 near-miss
+# traps. Members reference raw entity ids from entities.yaml. False merges of
+# negative pairs are a zero-tolerance CI gate.
+merge_sets:
+  - canonical: payment-service
+    kind: service
+    difficulty: medium
+    members: [ent-pay-payment-service, ent-plat-payments-api, ent-data-payments-backend]
+  - canonical: kafka
+    kind: tech
+    difficulty: hard # metonymy: product name vs managed deployment vs role
+    members: [ent-pay-kafka, ent-plat-msk, ent-data-event-bus]
+  - canonical: argocd
+    kind: tech
+    difficulty: easy
+    members: [ent-pay-argo, ent-plat-argocd]
+  - canonical: checkout-feature
+    kind: feature
+    difficulty: medium
+    members: [ent-pay-checkout-v2, ent-data-checkout-funnel]
+  - canonical: retry-policy-std
+    kind: concept
+    difficulty: hard # a concept, not an artifact
+    members: [ent-pay-retry-rules, ent-plat-std-retry]
+  - canonical: otel-collector
+    kind: service
+    difficulty: medium
+    members: [ent-plat-otel-config, ent-pay-tracing-collector]
+  - canonical: opa
+    kind: tech
+    difficulty: medium
+    members: [ent-plat-opa, ent-data-policy-checks]
+  - canonical: psp-gateway
+    kind: service
+    difficulty: medium
+    members: [ent-pay-psp-gateway, ent-pay-psp-adapter, ent-plat-psp-egress]
+  - canonical: event-lake
+    kind: repo
+    difficulty: medium
+    members: [ent-data-event-lake, ent-pay-analytics-lake]
+  - canonical: feature-store
+    kind: repo
+    difficulty: medium
+    members: [ent-data-feature-store, ent-data-feast]
+  - canonical: refund-worker
+    kind: service
+    difficulty: medium
+    members: [ent-pay-refund-worker, ent-plat-refunds-cron]
+  - canonical: deploy-tools
+    kind: repo
+    difficulty: medium
+    members: [ent-plat-deploy-tools, ent-pay-deploy-cli]
+
+# Pairs that LOOK mergeable but must NOT merge. Wrong merges silently corrupt
+# the graph → CI gate: false_merge_count == 0 at auto-link confidence.
+negative_pairs:
+  - [ent-data-fraud-model-repo, ent-data-fraud-scoring]   # repo vs ML artifact
+  - [ent-pay-checkout-v2, ent-pay-checkout-v1]            # successor vs deprecated
+  - [ent-pay-payment-service, ent-pay-payments-team]      # service vs team
+  - [ent-pay-kafka, ent-plat-kafka-streams]               # infra vs app jobs
+  - [ent-plat-std-retry, ent-plat-opa-retry-rule]         # concept vs policy artifact
+  - [ent-data-event-lake, ent-data-schema-registry]       # lake vs registry

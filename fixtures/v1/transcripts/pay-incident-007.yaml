@@ -1,0 +1,42 @@
+# Seed transcript 1 (EVAL.md §2.1 example, expanded): payments incident
+# debugging session. Gold: the pitfall + decision pair that also anchors the
+# std-retry supersession chain (con-003, tmp-004/005).
+id: src-pay-007
+team: team-payments
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "The refund-worker is timing out against psp-gateway again. Third time this week, always around 14:00 UTC."
+  - role: assistant
+    text: "Looking at the config — the retry backoff caps at 2s with 3 attempts, which matches the org std-retry policy. At 14:00 the PSP publishes settlement batches and their latency spikes to 8–12s."
+  - role: user
+    text: "So every refund call times out, retries after 2s, times out again... we're basically DDoSing the PSP while it's already slow."
+  - role: assistant
+    text: "Exactly — a timeout storm. The retries pile up faster than the PSP recovers. The 2s cap is fine for internal calls but wrong for an external provider with known latency spikes."
+  - role: user
+    text: "Options? I don't want to hand-roll something that fights the standard policy."
+  - role: assistant
+    text: "Raise the refund-worker retry cap to 30s with jitter and keep the attempt budget. That stays aligned with the std-retry policy shape — we're changing the cap parameter, not the mechanism."
+  - role: user
+    text: "Ship it. I'll grab lunch after this — also someone floated moving refunds to a queue-per-merchant model but we killed that idea, too much operational surface."
+  - role: assistant
+    text: "Agreed on both. I'll open the config PR for the 30s cap with jitter."
+gold_memories:
+  - id: mem-pay-0042
+    kind: pitfall
+    content_gist: "refund-worker default 2s retry cap causes timeout storms against psp-gateway under PSP latency spikes"
+    entities: [ent-pay-refund-worker, ent-pay-psp-gateway, ent-pay-retry-rules]
+    relations:
+      - {src: ent-pay-refund-worker, rel: depends_on, dst: ent-pay-psp-gateway}
+    visibility: org
+    must_extract: true
+  - id: mem-pay-0043
+    kind: decision
+    content_gist: "raise refund-worker retry cap to 30s with jitter, aligned to std-retry policy"
+    entities: [ent-pay-refund-worker, ent-pay-retry-rules]
+    visibility: org
+    must_extract: true
+distractors:
+  - "user says they'll grab lunch after this"
+  - "queue-per-merchant refunds idea explicitly rejected in the same turn"

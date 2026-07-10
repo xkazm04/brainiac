@@ -1,0 +1,44 @@
+# RLS leak tests (EVAL.md §2.5, hard invariant). The asker LACKS access to
+# every id in `forbidden`; those memories must never appear at ANY rank.
+# Any leak = build failure, not a score deduction.
+queries:
+  - id: leak-001
+    query: "psp webhook signing secret rotation"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    forbidden: [mem-pay-0055]        # payments team-visible
+  - id: leak-002
+    query: "how often does the webhook signing secret rotate?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    forbidden: [mem-pay-0055]
+  - id: leak-003
+    query: "where is the Stripe sandbox key stored locally?"
+    asking_as: {team: team-payments, user: user-pay-lead}
+    forbidden: [mem-pay-0065]        # PRIVATE to user-pay-dev1 — even the team lead can't see it
+  - id: leak-004
+    query: "when does the nightly refunds job run?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    forbidden: [mem-plat-0118]       # platform team-visible
+  - id: leak-005
+    query: "feature store online serving latency"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    forbidden: [mem-data-0094]       # data team-visible
+  - id: leak-006
+    query: "why were the fraud features inflated 100x?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    forbidden: [mem-data-0091]
+  - id: leak-007
+    query: "how do I replay a failed PSP webhook?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    forbidden: [mem-pay-0060]
+  - id: leak-008
+    query: "what compatibility rules does the schema registry enforce?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    forbidden: [mem-data-0096]
+  - id: leak-009
+    query: "how does OPA gate production deploys?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    forbidden: [mem-plat-0114]
+  - id: leak-010
+    query: "which dashboards are the source of truth for conversion?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    forbidden: [mem-data-0095]

@@ -1,0 +1,298 @@
+# Gold memories (seed slice of the ~450 target corpus — sized to exercise
+# every code path: all kinds, all visibility tiers, supersession chains,
+# cross-team org-visible knowledge, a Czech slice, and private leak targets).
+#
+# Conventions: visibility defaults to `team`; status defaults to `canonical`;
+# language defaults to `en`. Timestamps are RFC3339. `source` ties a memory to
+# the transcript it was distilled from (extraction gold lives in the
+# transcript files; this file is the retrieval substrate).
+memories:
+  # ── payments ──────────────────────────────────────────────────────────
+  - id: mem-pay-0042
+    team: team-payments
+    visibility: org
+    kind: pitfall
+    content: "refund-worker's default 2s retry cap causes timeout storms against psp-gateway under PSP latency spikes — retries pile up faster than the PSP recovers"
+    entities: [ent-pay-refund-worker, ent-pay-psp-gateway, ent-pay-retry-rules]
+    relations:
+      - {src: ent-pay-refund-worker, rel: depends_on, dst: ent-pay-psp-gateway}
+    source: src-pay-007
+  - id: mem-pay-0043
+    team: team-payments
+    visibility: org
+    kind: decision
+    content: "raise refund-worker retry cap to 30s with jitter, aligned to std-retry policy"
+    entities: [ent-pay-refund-worker, ent-pay-retry-rules]
+    valid_from: "2026-04-01T00:00:00Z"
+    source: src-pay-007
+  - id: mem-pay-0021
+    team: team-payments
+    visibility: org
+    kind: fact
+    content: "checkout v1 is the live checkout flow for all merchants"
+    entities: [ent-pay-checkout-v1]
+    valid_from: "2025-06-01T00:00:00Z"
+    valid_to: "2026-02-01T00:00:00Z"
+    superseded_by: mem-pay-0022
+    status: deprecated
+  - id: mem-pay-0022
+    team: team-payments
+    visibility: org
+    kind: decision
+    content: "checkout v2 replaced checkout v1 as the live checkout flow in February 2026; v1 endpoints are frozen"
+    entities: [ent-pay-checkout-v2, ent-pay-checkout-v1]
+    relations:
+      - {src: ent-pay-checkout-v2, rel: deprecates, dst: ent-pay-checkout-v1}
+    valid_from: "2026-02-01T00:00:00Z"
+  - id: mem-pay-0055
+    team: team-payments
+    visibility: team
+    kind: fact
+    content: "psp-gateway webhook signing secret rotates monthly via the payments vault job; the manual rotation runbook lives in payments/private-runbooks"
+    entities: [ent-pay-psp-gateway]
+  - id: mem-pay-0060
+    team: team-payments
+    visibility: team
+    kind: howto
+    content: "to replay a failed PSP webhook, run the deploy CLI replay-webhook command against payment-service staging first, then production"
+    entities: [ent-pay-deploy-cli, ent-pay-payment-service, ent-pay-psp-gateway]
+  - id: mem-pay-0061
+    team: team-payments
+    visibility: team
+    kind: fact
+    content: "payment-service consumes checkout v2 events from Kafka topic checkout.events.v2; the v1 topic is frozen and must not gain new consumers"
+    entities: [ent-pay-payment-service, ent-pay-kafka, ent-pay-checkout-v2]
+  - id: mem-pay-0062
+    team: team-payments
+    visibility: team
+    kind: decision
+    content: "refunds flow exclusively through refund-worker; direct database writes to payment state are forbidden"
+    entities: [ent-pay-payment-service, ent-pay-refund-worker]
+  - id: mem-pay-0063
+    team: team-payments
+    visibility: org
+    kind: fact
+    content: "psp-gateway client timeout is 10 seconds"
+    entities: [ent-pay-psp-gateway]
+    valid_from: "2025-09-01T00:00:00Z"
+    valid_to: "2026-05-01T00:00:00Z"
+    superseded_by: mem-pay-0064
+    status: deprecated
+  - id: mem-pay-0064
+    team: team-payments
+    visibility: org
+    kind: decision
+    content: "psp-gateway client timeout raised to 30 seconds after the PSP incident review"
+    entities: [ent-pay-psp-gateway]
+    valid_from: "2026-05-01T00:00:00Z"
+  - id: mem-pay-0065
+    team: team-payments
+    visibility: private
+    owner: user-pay-dev1
+    kind: fact
+    content: "my local Stripe sandbox key lives in .env.paydev1 — never commit it; regenerate via the Stripe dashboard when it expires"
+    entities: [ent-pay-psp-gateway]
+  - id: mem-pay-0066
+    team: team-payments
+    visibility: team
+    kind: fact
+    content: "checkout v2 rollout completed for all EU merchants in March 2026"
+    entities: [ent-pay-checkout-v2]
+  - id: mem-pay-0067
+    team: team-payments
+    visibility: team
+    kind: howto
+    content: "trace payment declines end-to-end via the tracing collector dashboards; filter on span attribute psp.decline_code"
+    entities: [ent-pay-tracing-collector, ent-pay-psp-gateway]
+  - id: mem-pay-0068
+    team: team-payments
+    visibility: org
+    kind: fact
+    content: "payment-service is the system of record for payment state across Meridian"
+    entities: [ent-pay-payment-service]
+  - id: mem-pay-0069
+    team: team-payments
+    visibility: team
+    kind: pitfall
+    content: "an Argo rollback of payment-service must pause refund-worker first, otherwise in-flight refunds double-apply"
+    entities: [ent-pay-argo, ent-pay-payment-service, ent-pay-refund-worker]
+    relations:
+      - {src: ent-pay-refund-worker, rel: depends_on, dst: ent-pay-payment-service}
+  - id: mem-pay-0070
+    team: team-payments
+    visibility: team
+    kind: pitfall
+    language: cs
+    content: "refund-worker při špičkách latence PSP zahlcuje psp-gateway opakovanými pokusy; retry limit je nutné držet podle std-retry policy"
+    entities: [ent-pay-refund-worker, ent-pay-psp-gateway, ent-pay-retry-rules]
+
+  # ── platform ──────────────────────────────────────────────────────────
+  - id: mem-plat-0107
+    team: team-platform
+    visibility: org
+    kind: fact
+    content: "std-retry policy: retry cap 2 seconds, 3 attempts, for all internal service calls"
+    entities: [ent-plat-std-retry]
+    valid_from: "2026-01-01T00:00:00Z"
+    valid_to: "2026-04-01T00:00:00Z"
+    superseded_by: mem-pay-0043
+    status: deprecated
+    source: src-plat-001
+  - id: mem-plat-0110
+    team: team-platform
+    visibility: org
+    kind: fact
+    content: "production deploys go through the Jenkins pipelines in deploy-tools"
+    entities: [ent-plat-deploy-tools]
+    valid_from: "2025-01-01T00:00:00Z"
+    valid_to: "2026-03-01T00:00:00Z"
+    superseded_by: mem-plat-0111
+    status: deprecated
+  - id: mem-plat-0111
+    team: team-platform
+    visibility: org
+    kind: decision
+    content: "ArgoCD is the only supported production deploy path since March 2026; deploy-tools wraps the app-of-apps pattern"
+    entities: [ent-plat-argocd, ent-plat-deploy-tools]
+    relations:
+      - {src: ent-plat-deploy-tools, rel: uses, dst: ent-plat-argocd}
+    valid_from: "2026-03-01T00:00:00Z"
+  - id: mem-plat-0112
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "the MSK cluster runs Kafka 3.7 across 3 availability zones; topic creation is gitops-managed in infra-live"
+    entities: [ent-plat-msk, ent-plat-infra-live]
+  - id: mem-plat-0113
+    team: team-platform
+    visibility: org
+    kind: pitfall
+    content: "otel-collector-config drops spans when the batch processor queue exceeds 5k; raise send_batch_size before scaling ingest"
+    entities: [ent-plat-otel-config]
+  - id: mem-plat-0114
+    team: team-platform
+    visibility: team
+    kind: decision
+    content: "OPA gates every production deploy; the policies live in infra-live/policies and ArgoCD evaluates them pre-sync"
+    entities: [ent-plat-opa, ent-plat-infra-live, ent-plat-argocd]
+    relations:
+      - {src: ent-plat-argocd, rel: uses, dst: ent-plat-opa}
+    source: src-plat-001
+  - id: mem-plat-0115
+    team: team-platform
+    visibility: org
+    kind: howto
+    content: "grant a service access to a Kafka topic by PR-ing a topic manifest into infra-live; ArgoCD syncs the MSK ACLs on merge"
+    entities: [ent-plat-msk, ent-plat-infra-live, ent-plat-argocd]
+  - id: mem-plat-0116
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "psp gateway egress is allow-listed through the platform NAT; adding a new PSP endpoint requires an infra-live change"
+    entities: [ent-plat-psp-egress, ent-plat-infra-live]
+  - id: mem-plat-0117
+    team: team-platform
+    visibility: team
+    kind: pitfall
+    content: "Kafka Streams jobs must not share consumer groups with raw consumers — the offsets clash and rebalance loops follow"
+    entities: [ent-plat-kafka-streams, ent-plat-msk]
+  - id: mem-plat-0118
+    team: team-platform
+    visibility: team
+    kind: fact
+    content: "the refunds cron triggers refund-worker nightly at 02:00 UTC via an ArgoCD workflow"
+    entities: [ent-plat-refunds-cron, ent-plat-argocd]
+  - id: mem-plat-0119
+    team: team-platform
+    visibility: team
+    kind: howto
+    language: cs
+    content: "nové Kafka topicy se zakládají přes manifest v infra-live; ArgoCD je po merži synchronizuje do MSK clusteru"
+    entities: [ent-plat-msk, ent-plat-infra-live, ent-plat-argocd]
+  - id: mem-plat-0120
+    team: team-platform
+    visibility: org
+    kind: fact
+    content: "Meridian standard: every service must emit OpenTelemetry traces; the otel collector is the single ingestion point"
+    entities: [ent-plat-otel-config]
+  - id: mem-plat-0121
+    team: team-platform
+    visibility: org
+    kind: fact
+    content: "the std-retry policy applies to every Kafka consumer org-wide"
+    entities: [ent-plat-std-retry, ent-plat-msk]
+
+  # ── data ──────────────────────────────────────────────────────────────
+  - id: mem-data-0071
+    team: team-data
+    visibility: org
+    kind: decision
+    content: "use bge-m3 for search embeddings in event-lake semantic search"
+    entities: [ent-data-embedding-models, ent-data-event-lake]
+  - id: mem-data-0088
+    team: team-data
+    visibility: org
+    kind: decision
+    content: "use nomic-embed for the clustering experiments in the feature store"
+    entities: [ent-data-embedding-models, ent-data-feature-store]
+  - id: mem-data-0090
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "checkout funnel analytics reads checkout.events.v2 from the event bus into event-lake hourly"
+    entities: [ent-data-checkout-funnel, ent-data-event-bus, ent-data-event-lake]
+    relations:
+      - {src: ent-data-checkout-funnel, rel: uses, dst: ent-data-event-bus}
+    source: src-data-012
+  - id: mem-data-0091
+    team: team-data
+    visibility: team
+    kind: pitfall
+    content: "the payments backend emits refund events with amounts in minor units; converting twice inflated the fraud features 100x"
+    entities: [ent-data-payments-backend, ent-data-fraud-scoring]
+  - id: mem-data-0092
+    team: team-data
+    visibility: org
+    kind: fact
+    content: "the fraud-model repo trains the fraud scoring model weekly from feature-store snapshots"
+    entities: [ent-data-fraud-model-repo, ent-data-fraud-scoring, ent-data-feature-store]
+    relations:
+      - {src: ent-data-fraud-model-repo, rel: owns, dst: ent-data-fraud-scoring}
+  - id: mem-data-0093
+    team: team-data
+    visibility: team
+    kind: howto
+    content: "backfill event-lake partitions with the replay job; always respect the event schema registry version pinning"
+    entities: [ent-data-event-lake, ent-data-schema-registry]
+  - id: mem-data-0094
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "the feast deployment serves online features for the fraud scoring model at 50ms p99"
+    entities: [ent-data-feast, ent-data-fraud-scoring]
+  - id: mem-data-0095
+    team: team-data
+    visibility: team
+    kind: decision
+    content: "checkout funnel dashboards are the source of truth for conversion; product reviews them weekly"
+    entities: [ent-data-checkout-funnel]
+    source: src-data-012
+  - id: mem-data-0096
+    team: team-data
+    visibility: team
+    kind: fact
+    content: "the event schema registry enforces backward compatibility on all payment topics"
+    entities: [ent-data-schema-registry, ent-data-event-bus]
+  - id: mem-data-0097
+    team: team-data
+    visibility: team
+    kind: fact
+    language: cs
+    content: "checkout funnel měří konverzi od košíku po zaplacení; data tečou přes event bus do event-lake"
+    entities: [ent-data-checkout-funnel, ent-data-event-bus, ent-data-event-lake]
+  - id: mem-data-0098
+    team: team-data
+    visibility: team
+    kind: decision
+    content: "event-lake retention: raw payment events 400 days, aggregated tables indefinitely"
+    entities: [ent-data-event-lake]

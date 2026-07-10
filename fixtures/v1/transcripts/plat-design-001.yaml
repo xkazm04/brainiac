@@ -1,0 +1,37 @@
+# Seed transcript 2: platform design discussion (January) that set the
+# original std-retry policy and the OPA deploy gate. mem-plat-0107 is the
+# OLDER chain member later superseded by mem-pay-0043.
+id: src-plat-001
+team: team-platform
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We keep seeing every team invent its own retry loop. Can we standardize before it gets worse?"
+  - role: assistant
+    text: "Proposal: a std-retry policy — cap 2 seconds, 3 attempts, applied to all internal service calls. Simple enough that nobody needs a library decision meeting."
+  - role: user
+    text: "Fine as a default. Separate topic: deploy governance. Security wants a policy gate."
+  - role: assistant
+    text: "We can run OPA in front of every production deploy. Policies live in infra-live/policies, and ArgoCD evaluates them pre-sync, so a violating manifest never reaches the cluster."
+  - role: user
+    text: "Someone suggested we also gate dev deploys but honestly that felt like overkill and we dropped it."
+  - role: assistant
+    text: "Agreed — production only. I'll write both up: std-retry cap 2s/3 attempts, and the OPA pre-sync gate."
+gold_memories:
+  - id: mem-plat-0107
+    kind: fact
+    content_gist: "std-retry policy: cap 2s, 3 attempts for all internal service calls"
+    entities: [ent-plat-std-retry]
+    visibility: org
+    must_extract: true
+  - id: mem-plat-0114
+    kind: decision
+    content_gist: "OPA gates every production deploy; policies in infra-live/policies, evaluated by ArgoCD pre-sync"
+    entities: [ent-plat-opa, ent-plat-infra-live, ent-plat-argocd]
+    relations:
+      - {src: ent-plat-argocd, rel: uses, dst: ent-plat-opa}
+    visibility: team
+    must_extract: true
+distractors:
+  - "gating dev deploys was suggested and explicitly dropped as overkill"

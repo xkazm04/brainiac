@@ -1,0 +1,44 @@
+# Raw, team-scoped entities (immutable nodes). Surface forms deliberately
+# diverge across teams — resolution gold lives in merges.yaml.
+entities:
+  # ── payments ──────────────────────────────────────────────────────────
+  - {id: ent-pay-payment-service, team: team-payments, name: "payment-service", kind: service}
+  - {id: ent-pay-kafka, team: team-payments, name: "Kafka", kind: tech}
+  - {id: ent-pay-argo, team: team-payments, name: "Argo", kind: tech}
+  - {id: ent-pay-checkout-v2, team: team-payments, name: "checkout v2", kind: feature}
+  - {id: ent-pay-checkout-v1, team: team-payments, name: "checkout v1", kind: feature}
+  - {id: ent-pay-retry-rules, team: team-payments, name: "retry backoff rules", kind: concept}
+  - {id: ent-pay-tracing-collector, team: team-payments, name: "the tracing collector", kind: service}
+  - {id: ent-pay-psp-gateway, team: team-payments, name: "psp-gateway", kind: service}
+  - {id: ent-pay-psp-adapter, team: team-payments, name: "PSP adapter", kind: service}
+  - {id: ent-pay-analytics-lake, team: team-payments, name: "the analytics lake", kind: service}
+  - {id: ent-pay-refund-worker, team: team-payments, name: "refund-worker", kind: service}
+  - {id: ent-pay-deploy-cli, team: team-payments, name: "the deploy CLI", kind: tech}
+  - {id: ent-pay-payments-team, team: team-payments, name: "payments team", kind: team}
+
+  # ── platform ──────────────────────────────────────────────────────────
+  - {id: ent-plat-payments-api, team: team-platform, name: "payments API", kind: service}
+  - {id: ent-plat-msk, team: team-platform, name: "MSK cluster", kind: tech}
+  - {id: ent-plat-argocd, team: team-platform, name: "ArgoCD", kind: tech}
+  - {id: ent-plat-std-retry, team: team-platform, name: "std-retry policy", kind: concept}
+  - {id: ent-plat-otel-config, team: team-platform, name: "otel-collector-config", kind: repo}
+  - {id: ent-plat-opa, team: team-platform, name: "OPA", kind: tech}
+  - {id: ent-plat-psp-egress, team: team-platform, name: "psp gateway egress", kind: concept}
+  - {id: ent-plat-refunds-cron, team: team-platform, name: "refunds cron", kind: service}
+  - {id: ent-plat-deploy-tools, team: team-platform, name: "deploy-tools", kind: repo}
+  - {id: ent-plat-infra-live, team: team-platform, name: "infra-live", kind: repo}
+  - {id: ent-plat-kafka-streams, team: team-platform, name: "Kafka Streams jobs", kind: service}
+  - {id: ent-plat-opa-retry-rule, team: team-platform, name: "OPA retry rule", kind: concept}
+
+  # ── data ──────────────────────────────────────────────────────────────
+  - {id: ent-data-payments-backend, team: team-data, name: "the payments backend", kind: service}
+  - {id: ent-data-event-bus, team: team-data, name: "the event bus", kind: tech}
+  - {id: ent-data-checkout-funnel, team: team-data, name: "checkout funnel", kind: feature}
+  - {id: ent-data-policy-checks, team: team-data, name: "the policy checks", kind: concept}
+  - {id: ent-data-event-lake, team: team-data, name: "event-lake", kind: repo}
+  - {id: ent-data-feature-store, team: team-data, name: "feature-store", kind: repo}
+  - {id: ent-data-feast, team: team-data, name: "feast deployment", kind: service}
+  - {id: ent-data-fraud-model-repo, team: team-data, name: "fraud-model", kind: repo}
+  - {id: ent-data-fraud-scoring, team: team-data, name: "fraud scoring model", kind: concept}
+  - {id: ent-data-schema-registry, team: team-data, name: "event schema registry", kind: service}
+  - {id: ent-data-embedding-models, team: team-data, name: "embedding models", kind: concept}

@@ -1,0 +1,34 @@
+# Meridian — the synthetic fintech (EVAL.md §1). All ids are stable strings.
+org: meridian
+teams:
+  - id: team-payments
+    name: payments
+  - id: team-platform
+    name: platform
+  - id: team-data
+    name: data
+users:
+  - id: user-pay-dev1
+    email: dev1@meridian.example
+    teams: [team-payments]
+    role: member
+  - id: user-pay-lead
+    email: paylead@meridian.example
+    teams: [team-payments]
+    role: maintainer
+  - id: user-plat-dev1
+    email: platdev@meridian.example
+    teams: [team-platform]
+    role: member
+  - id: user-plat-lead
+    email: platlead@meridian.example
+    teams: [team-platform]
+    role: maintainer
+  - id: user-data-analyst1
+    email: analyst1@meridian.example
+    teams: [team-data]
+    role: member
+  - id: user-data-lead
+    email: datalead@meridian.example
+    teams: [team-data]
+    role: maintainer
