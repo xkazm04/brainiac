@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import NavStatus from "@/components/NavStatus";
 import { band, FONT_MONO, MODULE_BAND, type BandKey } from "@/design/theme";
 
 // Transitional shell for the feature pages awaiting their /prototype pass.
@@ -28,6 +29,7 @@ export default function Chrome() {
         </span>
       </div>
       <nav aria-label="Primary" className="flex items-center gap-5 text-[#e9edff]/45">
+        <NavStatus />
         <Link href="/reviews" className="transition hover:text-white">
           reviews
         </Link>
