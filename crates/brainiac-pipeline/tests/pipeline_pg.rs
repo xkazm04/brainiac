@@ -274,6 +274,7 @@ async fn full_pipeline_over_seed_transcripts() {
 }
 
 #[tokio::test]
+#[allow(clippy::assertions_on_constants)] // deliberate: tuning-coherence guard
 async fn resolve_thresholds_are_ordered() {
     // Pure sanity: the band boundaries stay coherent if someone tunes them.
     assert!(resolve::ADJUDICATION_FLOOR < resolve::AUTO_LINK_SIMILARITY);
