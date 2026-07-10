@@ -68,4 +68,10 @@ crates/
 - [x] P4 retrieval + eval `retrieval` profile
 - [x] P5 gateway (Qwen + mock) + pipeline workers + `pipeline` profile
 - [x] P6 server binary + REST
+- [x] MCP agent surface (`brainiac mcp`): stdio JSON-RPC server, tools
+      `memory_search` / `memory_context` / `memory_add` / `entity_lookup`;
+      identity via `BRAINIAC_MCP_TOKEN` resolved through the same token map as
+      REST — an agent can never read more than its operator. Tested in
+      `crates/brainiac-server/tests/mcp_pg.rs` (handshake, tool list, RLS leak
+      check, entity resolution, ingest).
 - [ ] P7 CI eval gates wired to thresholds

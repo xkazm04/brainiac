@@ -22,6 +22,8 @@ enum Command {
         #[arg(long, default_value = "127.0.0.1:8600")]
         bind: String,
     },
+    /// Run the MCP server on stdio (agent surface).
+    Mcp,
     /// Run the pipeline worker loop.
     Worker {
         /// Use the deterministic mock provider (demo/dev only).
@@ -55,6 +57,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Serve { bind } => serve(&bind).await,
+        Command::Mcp => mcp().await,
         Command::Worker { mock } => worker(mock).await,
         Command::Eval {
             fixtures,
@@ -74,6 +77,15 @@ async fn serve(bind: &str) -> Result<()> {
     tracing::info!(%bind, "brainiac REST listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn mcp() -> Result<()> {
+    let url = database_url()?;
+    brainiac_store::migrate(&url).await?;
+    let store = Store::connect(&url).await?;
+    let embedder = DeterministicEmbedder::default();
+    let state = brainiac_server::mcp::McpState::from_env(store, embedder).await?;
+    brainiac_server::mcp::serve_stdio(std::sync::Arc::new(state)).await
 }
 
 async fn worker(mock: bool) -> Result<()> {
