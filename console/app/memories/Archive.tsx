@@ -1,11 +1,13 @@
 "use client";
 
 /*
- * Archive variant A — "Time Scrubber". Mental model: the corpus as a
- * playhead. One hero control — the as-of timeline — and the whole archive
- * re-renders to what the org KNEW at that instant: superseded memories
- * come back to life, newer decisions vanish. The unique power of the
- * temporal schema, made physical. Client-side filtering = zero latency.
+ * Archive — consolidated from the 2026-07-10 prototype round ("Time
+ * Scrubber" won over Card Catalog and Core Sample). Mental model: the
+ * corpus as a playhead. One hero control — the as-of timeline — and the
+ * whole archive re-renders to what the org KNEW at that instant:
+ * superseded memories come back to life, newer decisions vanish. The
+ * unique power of the temporal schema, made physical. Client-side
+ * filtering over one fetched corpus = zero-latency scrubbing.
  */
 
 import { useMemo, useState } from "react";
@@ -13,14 +15,14 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import { band, FONT_DISPLAY, FONT_MONO, LABEL } from "@/design/theme";
 
-import { timeBounds, validAt, type ArchiveData } from "../archive-data";
-import MemoryInspector, { fmtDate, statusTone } from "../MemoryInspector";
-import { useMemoryDetail } from "../useMemoryDetail";
+import { timeBounds, validAt, type ArchiveData } from "./archive-data";
+import MemoryInspector, { fmtDate, statusTone } from "./MemoryInspector";
+import { useMemoryDetail } from "./useMemoryDetail";
 
 const VIOLET = band("delta");
 const VIOLET_GLOW = band("delta", 60, 0.35);
 
-export default function TimeScrubberVariant({ data }: { data: ArchiveData }) {
+export default function Archive({ data }: { data: ArchiveData }) {
   const { min, max } = useMemo(() => timeBounds(data.rows), [data.rows]);
   const [frac, setFrac] = useState(1); // 1 = now
   const [selected, setSelected] = useState<string | null>(null);
