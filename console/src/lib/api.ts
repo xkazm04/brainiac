@@ -7,9 +7,11 @@ import "server-only";
 
 import type {
   Analytics,
+  CanonicalDetail,
   Contradiction,
   ContradictionResolution,
   Graph,
+  GraphOverview,
   ObservatoryPayload,
   PendingPromotion,
   ReviewedPromotion,
@@ -127,4 +129,15 @@ export async function getAnalytics(cfg: ApiConfig): Promise<Analytics> {
 
 export async function getObservatory(cfg: ApiConfig): Promise<ObservatoryPayload> {
   return call(cfg, "GET", "/v1/analytics/observatory");
+}
+
+export async function getGraphOverview(cfg: ApiConfig): Promise<GraphOverview> {
+  return call(cfg, "GET", "/v1/graph/overview");
+}
+
+export async function getGraphCanonical(
+  cfg: ApiConfig,
+  id: string,
+): Promise<CanonicalDetail> {
+  return call(cfg, "GET", `/v1/graph/canonical/${id}`);
 }

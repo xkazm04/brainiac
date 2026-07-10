@@ -69,6 +69,43 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface GraphOverview {
+  teams: { id: string; name: string; memories: number; entities: number }[];
+  canonicals: {
+    id: string;
+    name: string;
+    kind: string;
+    memories: number;
+    teams: number;
+    team_ids: string[];
+  }[];
+  team_links: { a: string; b: string; shared: number }[];
+}
+
+export interface CanonicalDetail {
+  canonical: { id: string; name: string; kind: string; summary: string | null };
+  surface_forms: {
+    entity_id: string;
+    name: string;
+    kind: string;
+    team_id: string;
+    team: string;
+    confidence: number | null;
+    method: string | null;
+  }[];
+  edges: {
+    src: string;
+    src_name: string;
+    dst: string;
+    dst_name: string;
+    relation: string;
+    memory_id: string | null;
+    evidence: string | null;
+  }[];
+  neighbors: { id: string; name: string; kind: string; shared_edges: number }[];
+  memories: { id: string; content: string; kind: string; status: string; team: string }[];
+}
+
 export interface ObservatoryPayload {
   totals: { status: string; count: number }[];
   weekly: {
