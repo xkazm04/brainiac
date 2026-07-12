@@ -437,4 +437,52 @@ async fn console_reviews_graph_analytics() {
         .await
         .expect("runs");
     assert!(r.status().is_success(), "pipeline runs endpoint answers");
+
+    // ── keys: org directory + blast-radius preview ────────────────────────
+    let r = http
+        .get(format!("{base}/v1/org/users"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("org users");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["users"].as_array().expect("users").len(), 6);
+
+    // The analyst's radius: sees her own private note, org rows, data-team
+    // rows — and materially less than the payments lead.
+    let analyst_id = stable_uuid("user-data-analyst1").to_string();
+    let r = http
+        .post(format!("{base}/v1/tokens/preview"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({ "user_id": analyst_id }))
+        .send()
+        .await
+        .expect("preview analyst");
+    assert!(r.status().is_success());
+    let analyst: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(analyst["teams"], serde_json::json!(["data"]));
+    assert!(analyst["visible"]["private"].as_i64().expect("n") >= 1);
+    assert!(analyst["visible"]["org"].as_i64().expect("n") >= 20);
+
+    let lead_id = stable_uuid("user-pay-lead").to_string();
+    let r = http
+        .post(format!("{base}/v1/tokens/preview"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({ "user_id": lead_id }))
+        .send()
+        .await
+        .expect("preview lead");
+    let lead: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(lead["teams"], serde_json::json!(["payments"]));
+    // Different principals → different radii; both bounded below by the org
+    // tier and above by the corpus (the two team shares are near-equal in
+    // this fixture, so no strict ordering is asserted).
+    let lead_total = lead["visible"]["total"].as_i64().expect("n");
+    let analyst_total = analyst["visible"]["total"].as_i64().expect("n");
+    assert!(lead_total >= 35 && analyst_total >= 35);
+    assert_ne!(
+        lead["visible"]["team"], analyst["visible"]["team"],
+        "team tiers must reflect each principal's own membership"
+    );
 }

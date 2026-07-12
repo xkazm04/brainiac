@@ -44,6 +44,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/memories/{id}", get(memory_detail))
         .route("/v1/sources", get(sources_list))
         .route("/v1/pipeline/runs", get(pipeline_runs))
+        .route("/v1/org/users", get(org_users))
+        .route("/v1/tokens/preview", post(token_preview))
 }
 
 type HttpError = (StatusCode, String);
@@ -1236,5 +1238,133 @@ async fn pipeline_runs(
             "started_at": r.get::<chrono::DateTime<chrono::Utc>, _>("started_at").to_rfc3339(),
             "duration_secs": r.get::<i64, _>("secs"),
         })).collect::<Vec<_>>(),
+    })))
+}
+
+// ── keys (ground): blast-radius preview + the principal picker ───────────
+
+/// Org directory for the key-mint picker (admin scope — it feeds token
+/// management). Users/teams carry no RLS; org scoping is explicit.
+async fn org_users(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let ctx = crate::http::auth_of(&state, &headers, "admin").await?;
+    // Scoped tx: team_members RLS needs app.org_id set; org filter stays
+    // explicit for users/teams (no RLS there).
+    let mut tx = state
+        .store
+        .scoped_tx(&ctx.principal)
+        .await
+        .map_err(internal)?;
+    let rows = sqlx::query(
+        "SELECT u.id, u.email,
+                COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'role', tm.role)
+                         ORDER BY t.name) FILTER (WHERE t.id IS NOT NULL), '[]'::json) AS teams
+         FROM users u
+         LEFT JOIN team_members tm ON tm.user_id = u.id
+         LEFT JOIN teams t ON t.id = tm.team_id
+         WHERE u.org_id = $1
+         GROUP BY u.id, u.email
+         ORDER BY u.email",
+    )
+    .bind(ctx.principal.org_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    Ok(Json(json!({
+        "users": rows.iter().map(|r| json!({
+            "id": r.get::<Uuid, _>("id"),
+            "email": r.get::<String, _>("email"),
+            "teams": r.get::<serde_json::Value, _>("teams"),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {
+    user_id: Uuid,
+}
+
+/// Blast radius: exactly what a key minted for this principal could read,
+/// computed by opening a transaction AS that principal — the same RLS path
+/// the runtime uses, so the preview can't drift from enforcement.
+async fn token_preview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<PreviewBody>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let ctx = crate::http::auth_of(&state, &headers, "admin").await?;
+    let org_id = ctx.principal.org_id;
+
+    // The candidate must belong to the caller's org. Resolve identity and
+    // team memberships under the CALLER's scope (team_members RLS needs
+    // app.org_id), then re-open as the candidate for the radius itself.
+    let (user_email, team_ids) = {
+        let mut tx = state
+            .store
+            .scoped_tx(&ctx.principal)
+            .await
+            .map_err(internal)?;
+        let user = sqlx::query("SELECT email FROM users WHERE id = $1 AND org_id = $2")
+            .bind(body.user_id)
+            .bind(org_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(internal)?
+            .ok_or((StatusCode::NOT_FOUND, "user not found in this org".into()))?;
+        let teams = sqlx::query(
+            "SELECT tm.team_id FROM team_members tm
+             JOIN teams t ON t.id = tm.team_id
+             WHERE tm.user_id = $1 AND t.org_id = $2",
+        )
+        .bind(body.user_id)
+        .bind(org_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(internal)?;
+        (
+            user.get::<String, _>("email"),
+            teams
+                .iter()
+                .map(|r| r.get::<Uuid, _>("team_id"))
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    let candidate = brainiac_core::Principal {
+        org_id,
+        user_id: body.user_id,
+        team_ids: team_ids.clone(),
+    };
+    let mut tx = state.store.scoped_tx(&candidate).await.map_err(internal)?;
+    let counts = sqlx::query(
+        "SELECT count(*) AS total,
+                count(*) FILTER (WHERE visibility = 'org') AS org_tier,
+                count(*) FILTER (WHERE visibility = 'team') AS team_tier,
+                count(*) FILTER (WHERE visibility = 'private') AS private_tier,
+                count(*) FILTER (WHERE status = 'canonical') AS canonical
+         FROM memories",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let team_names = sqlx::query("SELECT t.name FROM teams t WHERE t.id = ANY($1) ORDER BY t.name")
+        .bind(&team_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(internal)?;
+
+    Ok(Json(json!({
+        "user_id": body.user_id,
+        "email": user_email,
+        "teams": team_names.iter().map(|r| r.get::<String, _>("name")).collect::<Vec<_>>(),
+        "visible": {
+            "total": counts.get::<i64, _>("total"),
+            "org": counts.get::<i64, _>("org_tier"),
+            "team": counts.get::<i64, _>("team_tier"),
+            "private": counts.get::<i64, _>("private_tier"),
+            "canonical": counts.get::<i64, _>("canonical"),
+        },
     })))
 }
