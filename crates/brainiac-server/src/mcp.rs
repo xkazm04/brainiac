@@ -11,7 +11,8 @@
 //! `BRAINIAC_TOKENS` map as REST). RLS therefore applies transparently to
 //! every tool call: an agent can never retrieve what its operator can't.
 //!
-//! v0 tools: memory_search, memory_context, memory_add, entity_lookup.
+//! v0 tools: memory_search, memory_context, memory_add, entity_lookup,
+//! memory_feedback.
 
 use std::sync::Arc;
 
@@ -170,6 +171,19 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["name"]
             }
+        },
+        {
+            "name": "memory_feedback",
+            "description": "Report how a retrieved memory held up in practice: helpful (it was right and useful), wrong (factually incorrect), or outdated (was true, no longer is). This closes the retrieval loop — verdicts drive ranking and re-verification.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memory_id": { "type": "string", "description": "The memory id you were given (memory:<uuid> citations or search results)" },
+                    "verdict": { "type": "string", "enum": ["helpful", "wrong", "outdated"] },
+                    "note": { "type": "string", "description": "Optional: what happened (especially for wrong/outdated)" }
+                },
+                "required": ["memory_id", "verdict"]
+            }
         }
     ])
 }
@@ -189,6 +203,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, String> {
         "memory_context" => memory_context(state, &args).await,
         "memory_add" => memory_add(state, &args).await,
         "entity_lookup" => entity_lookup(state, &args).await,
+        "memory_feedback" => memory_feedback(state, &args).await,
         other => return Err(format!("unknown tool: {other}")),
     };
 
@@ -315,6 +330,58 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value> {
         "source_id": source_id,
         "job_id": job_id,
         "note": "queued for extraction; it becomes searchable after the pipeline runs and is subject to review before promotion"
+    }))
+}
+
+async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value> {
+    let memory_id: Uuid = args
+        .get("memory_id")
+        .and_then(|v| v.as_str())
+        .context("memory_id is required")?
+        .parse()
+        .context("memory_id must be a UUID")?;
+    let verdict = args
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .context("verdict is required")?;
+    anyhow::ensure!(
+        brainiac_store::feedback::VERDICTS.contains(&verdict),
+        "verdict must be one of helpful|wrong|outdated"
+    );
+    let note = args
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    // Visibility gate under the caller's RLS: feedback on a memory you can't
+    // read is refused as not-found (FK checks alone would bypass RLS and
+    // leak existence).
+    let visible = sqlx::query("SELECT 1 FROM memories WHERE id = $1")
+        .bind(memory_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    anyhow::ensure!(visible.is_some(), "memory not found");
+    brainiac_store::feedback::insert(
+        &mut tx,
+        Uuid::new_v4(),
+        state.principal.org_id,
+        memory_id,
+        state.principal.user_id,
+        verdict,
+        note,
+    )
+    .await?;
+    let summary = brainiac_store::feedback::summary(&mut tx, memory_id).await?;
+    tx.commit().await?;
+    Ok(json!({
+        "recorded": true,
+        "memory_id": memory_id,
+        "verdict": verdict,
+        "feedback_totals": summary.iter().map(|(v, n)| json!({
+            "verdict": v, "count": n,
+        })).collect::<Vec<_>>(),
     }))
 }
 

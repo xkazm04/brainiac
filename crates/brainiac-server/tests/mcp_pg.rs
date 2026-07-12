@@ -90,7 +90,8 @@ async fn mcp_handshake_and_tools() {
             "memory_search",
             "memory_context",
             "memory_add",
-            "entity_lookup"
+            "entity_lookup",
+            "memory_feedback"
         ]
     );
 
@@ -180,8 +181,81 @@ async fn mcp_handshake_and_tools() {
     let payload = tool_payload(&r);
     assert_eq!(payload["accepted"], true);
 
+    // memory_feedback: closes the loop on a memory this principal CAN read.
+    // Grab a visible id from a search first (data-team memories are seeded).
+    let r = handle_message(
+        &state,
+        &rpc(
+            7,
+            "tools/call",
+            json!({
+                "name": "memory_search",
+                "arguments": { "query": "feature store", "k": 5 }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let visible_id = tool_payload(&r)["memories"][0]["id"]
+        .as_str()
+        .expect("a visible memory to rate")
+        .to_string();
+    let r = handle_message(
+        &state,
+        &rpc(
+            8,
+            "tools/call",
+            json!({
+                "name": "memory_feedback",
+                "arguments": { "memory_id": visible_id, "verdict": "outdated", "note": "superseded by the new ingestion path" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["recorded"], true);
+    assert_eq!(payload["feedback_totals"][0]["verdict"], "outdated");
+    assert_eq!(payload["feedback_totals"][0]["count"], 1);
+
+    // Invalid verdict is refused.
+    let r = handle_message(
+        &state,
+        &rpc(
+            9,
+            "tools/call",
+            json!({
+                "name": "memory_feedback",
+                "arguments": { "memory_id": visible_id, "verdict": "meh" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], true);
+
+    // Feedback on an RLS-invisible memory reads as not-found (no oracle).
+    let r = handle_message(
+        &state,
+        &rpc(
+            10,
+            "tools/call",
+            json!({
+                "name": "memory_feedback",
+                "arguments": { "memory_id": stable_uuid("mem-pay-0055").to_string(), "verdict": "helpful" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], true);
+    assert!(r["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .contains("not found"));
+
     // unknown method → error
-    let r = handle_message(&state, &rpc(7, "resources/list", json!({})))
+    let r = handle_message(&state, &rpc(11, "resources/list", json!({})))
         .await
         .expect("response");
     assert!(r["error"]["message"]

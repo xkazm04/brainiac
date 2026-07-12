@@ -11,6 +11,7 @@
 //!   goes through such a transaction; there is no unscoped query path.
 
 pub mod entities;
+pub mod feedback;
 pub mod governance;
 pub mod memories;
 pub mod orgs;
