@@ -401,4 +401,40 @@ async fn console_reviews_graph_analytics() {
         preds.iter().any(|p| p["id"] == old_id),
         "10s timeout must appear as the predecessor of the 30s decision"
     );
+
+    // ── ingest monitor: submit → feed shows it queued ─────────────────────
+    let r = http
+        .post(format!("{base}/v1/memories"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({"content": "manual note: chargeback evidence window is 14 days"}))
+        .send()
+        .await
+        .expect("memory add");
+    assert_eq!(r.status(), reqwest::StatusCode::ACCEPTED);
+    let submitted: serde_json::Value = r.json().await.expect("json");
+    let source_id = submitted["source_id"].as_str().expect("source_id");
+
+    let r = http
+        .get(format!("{base}/v1/sources?limit=10"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("sources feed");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    let feed = body["sources"].as_array().expect("sources");
+    let mine = feed
+        .iter()
+        .find(|s| s["id"].as_str() == Some(source_id))
+        .expect("submitted source in feed");
+    assert_eq!(mine["status"], "queued");
+    assert_eq!(mine["memories"], 0);
+
+    let r = http
+        .get(format!("{base}/v1/pipeline/runs?limit=20"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("runs");
+    assert!(r.status().is_success(), "pipeline runs endpoint answers");
 }

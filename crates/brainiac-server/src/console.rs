@@ -42,6 +42,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/graph/canonical/{id}", get(graph_canonical))
         .route("/v1/memories", get(memories_list))
         .route("/v1/memories/{id}", get(memory_detail))
+        .route("/v1/sources", get(sources_list))
+        .route("/v1/pipeline/runs", get(pipeline_runs))
 }
 
 type HttpError = (StatusCode, String);
@@ -1089,5 +1091,150 @@ async fn memory_detail(
             "predecessors": predecessors.iter().map(|r| chain_json(r, -1)).collect::<Vec<_>>(),
             "successors": successors.iter().map(|r| chain_json(r, 1)).collect::<Vec<_>>(),
         },
+    })))
+}
+
+// ── ingest monitor (recent sources + pipeline runs, list form) ───────────
+
+#[derive(Deserialize)]
+struct RecentParams {
+    #[serde(default = "default_recent_limit")]
+    limit: i64,
+}
+
+fn default_recent_limit() -> i64 {
+    30
+}
+
+/// Recent sources with their pipeline rollup — the monitor's feed. Queue
+/// state joins outside RLS (queue schema is org-blind); org membership is
+/// proven by the RLS read of `sources` itself.
+async fn sources_list(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(p): axum::extract::Query<RecentParams>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let limit = p.limit.clamp(1, 100);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let rows = sqlx::query(
+        "SELECT s.id, s.kind, s.external_ref, s.created_at, t.name AS team,
+                COALESCE(p.memories, 0) AS memories,
+                COALESCE(p.promoted, 0) AS promoted,
+                COALESCE(p.pending, 0) AS pending
+         FROM sources s
+         LEFT JOIN teams t ON t.id = s.team_id
+         LEFT JOIN LATERAL (
+             SELECT count(*) AS memories,
+                    count(*) FILTER (WHERE m.status IN ('candidate','canonical')) AS promoted,
+                    count(pr.id) FILTER (WHERE pr.policy_decision = 'needs_review'
+                                           AND pr.reviewed_at IS NULL) AS pending
+             FROM memories m
+             JOIN provenance pv ON pv.id = m.provenance_id
+             LEFT JOIN promotions pr ON pr.memory_id = m.id
+             WHERE pv.source_id = s.id
+         ) p ON true
+         ORDER BY s.created_at DESC
+         LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    drop(tx);
+
+    let ids: Vec<String> = rows
+        .iter()
+        .map(|r| r.get::<Uuid, _>("id").to_string())
+        .collect();
+    let jobs = sqlx::query(
+        "SELECT payload->>'source_id' AS sid, 'queued' AS state, attempts, NULL::text AS outcome
+         FROM queue.jobs WHERE payload->>'source_id' = ANY($1)
+         UNION ALL
+         SELECT payload->>'source_id' AS sid, 'archived' AS state, attempts, outcome
+         FROM queue.archive WHERE payload->>'source_id' = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(state.store.pool())
+    .await
+    .map_err(internal)?;
+    let job_of = |sid: &str| {
+        jobs.iter()
+            .filter(|j| j.get::<Option<String>, _>("sid").as_deref() == Some(sid))
+            .last()
+    };
+
+    let out: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            let id = r.get::<Uuid, _>("id");
+            let memories: i64 = r.get("memories");
+            let promoted: i64 = r.get("promoted");
+            let pending: i64 = r.get("pending");
+            let job = job_of(&id.to_string());
+            let (job_state, attempts, outcome) = match job {
+                Some(j) => (
+                    Some(j.get::<String, _>("state")),
+                    Some(j.get::<i32, _>("attempts")),
+                    j.get::<Option<String>, _>("outcome"),
+                ),
+                None => (None, None, None),
+            };
+            let status = match (&job_state, &outcome, memories) {
+                (Some(s), _, _) if s == "queued" && attempts == Some(0) => "queued",
+                (Some(s), _, _) if s == "queued" => "retrying",
+                (Some(s), Some(o), _) if s == "archived" && o == "ok" => "processed",
+                (Some(_), _, _) => "failed",
+                (None, _, 0) => "unknown",
+                (None, _, _) => "processed",
+            };
+            json!({
+                "id": id,
+                "kind": r.get::<String, _>("kind"),
+                "external_ref": r.get::<Option<String>, _>("external_ref"),
+                "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+                "team": r.get::<Option<String>, _>("team"),
+                "status": status,
+                "attempts": attempts,
+                "memories": memories,
+                "promoted": promoted,
+                "pending_review": pending,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "sources": out })))
+}
+
+/// Recent pipeline runs — the worker's own audit trail, org-scoped by RLS.
+async fn pipeline_runs(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(p): axum::extract::Query<RecentParams>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let limit = p.limit.clamp(1, 200);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let rows = sqlx::query(
+        "SELECT id, stage, status, detail, started_at, finished_at,
+                EXTRACT(EPOCH FROM (COALESCE(finished_at, now()) - started_at))::bigint AS secs
+         FROM pipeline_runs
+         ORDER BY started_at DESC
+         LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    Ok(Json(json!({
+        "runs": rows.iter().map(|r| json!({
+            "id": r.get::<Uuid, _>("id"),
+            "stage": r.get::<String, _>("stage"),
+            "status": r.get::<String, _>("status"),
+            "detail": r.get::<Option<String>, _>("detail"),
+            "started_at": r.get::<chrono::DateTime<chrono::Utc>, _>("started_at").to_rfc3339(),
+            "duration_secs": r.get::<i64, _>("secs"),
+        })).collect::<Vec<_>>(),
     })))
 }
