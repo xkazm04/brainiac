@@ -32,6 +32,66 @@ pub struct RetrievalReport {
     pub queries_run: usize,
 }
 
+// ── per-query drill-down (the aggregate says THAT a score moved; this says
+// WHICH queries moved it) ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagExpected {
+    /// Fixture memory id.
+    pub memory: String,
+    pub grade: u8,
+    /// 1-based rank where it actually surfaced; None = missing from results.
+    pub rank: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagHit {
+    pub rank: usize,
+    /// Fixture memory id when resolvable, else the raw UUID.
+    pub memory: String,
+    /// Truncated content so the file reads without a DB at hand.
+    pub content: String,
+    pub score: f64,
+    pub via_graph: bool,
+    /// Relevance grade from the gold set; None = ungraded hit.
+    pub grade: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryDiagnostic {
+    /// qa | temporal | leak
+    pub suite: String,
+    pub id: String,
+    pub stratum: Option<String>,
+    pub asker: Option<String>,
+    pub query: String,
+    pub as_of: Option<chrono::DateTime<chrono::Utc>>,
+    pub ndcg_at_10: Option<f64>,
+    pub reciprocal_rank: Option<f64>,
+    pub recall_at_5: Option<f64>,
+    pub expected: Vec<DiagExpected>,
+    pub got: Vec<DiagHit>,
+    /// Human-readable rule breaches (leaked memory, superseded in top-3,
+    /// temporal rank-1 miss, …). Empty + pass=false = soft miss only.
+    pub violations: Vec<String>,
+    pub pass: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RetrievalDiagnostics {
+    pub fixture_version: String,
+    pub embedding_model: String,
+    pub queries: Vec<QueryDiagnostic>,
+}
+
+impl RetrievalDiagnostics {
+    /// Failures first (the reason this artifact exists), then by suite/id.
+    pub fn sort_failures_first(&mut self) {
+        self.queries
+            .sort_by_key(|q| (q.pass, q.suite.clone(), q.id.clone()));
+    }
+}
+
 impl RetrievalReport {
     /// Evaluate the hard gates (EVAL.md §3.2). Returns human-readable
     /// failures; empty = pass.

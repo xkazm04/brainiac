@@ -46,6 +46,10 @@ enum Command {
         embedder: Option<String>,
         #[arg(long)]
         out: Option<String>,
+        /// Also write the per-query drill-down (expected vs got per QA/
+        /// temporal/leak item, failures first) to this path.
+        #[arg(long)]
+        diagnostics: Option<String>,
     },
 }
 
@@ -91,7 +95,17 @@ async fn main() -> Result<()> {
             profile,
             embedder,
             out,
-        } => eval(&fixtures, &profile, embedder.as_deref(), out.as_deref()).await,
+            diagnostics,
+        } => {
+            eval(
+                &fixtures,
+                &profile,
+                embedder.as_deref(),
+                out.as_deref(),
+                diagnostics.as_deref(),
+            )
+            .await
+        }
     }
 }
 
@@ -168,6 +182,7 @@ async fn eval(
     profile: &str,
     embedder_name: Option<&str>,
     out: Option<&str>,
+    diagnostics_out: Option<&str>,
 ) -> Result<()> {
     anyhow::ensure!(profile == "retrieval", "v0 CLI supports profile=retrieval");
     let url = database_url()?;
@@ -191,7 +206,7 @@ async fn eval(
         "running retrieval profile"
     );
     let seeded = brainiac_eval::seed::seed_gold(&store, &fx, embedder.as_ref()).await?;
-    let report = brainiac_eval::retrieval_profile::run(
+    let (report, diagnostics) = brainiac_eval::retrieval_profile::run(
         &store,
         &fx,
         embedder.as_ref(),
@@ -209,6 +224,19 @@ async fn eval(
             tracing::info!(path, "report written");
         }
         None => println!("{json}"),
+    }
+    if let Some(path) = diagnostics_out {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&diagnostics)?)?;
+        let failing = diagnostics.queries.iter().filter(|q| !q.pass).count();
+        tracing::info!(
+            path,
+            queries = diagnostics.queries.len(),
+            failing,
+            "per-query diagnostics written (failures first)"
+        );
     }
 
     let failures = report.gate_failures();

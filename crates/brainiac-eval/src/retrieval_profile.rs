@@ -2,6 +2,10 @@
 //! already seeded; run every QA query under its asker's principal, score
 //! rankings against graded relevance, check temporal correctness, and treat
 //! any RLS leak as a hard failure.
+//!
+//! Alongside the aggregate report, the run collects a per-query diagnostic
+//! (expected vs got, with fixture ids and content) so a score regression is
+//! attributable to specific queries without re-running anything.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -10,14 +14,17 @@ use brainiac_core::embed::Embedder;
 use brainiac_core::metrics::{ndcg_at_k, recall_at_k, reciprocal_rank};
 use brainiac_fixtures::ids::stable_uuid;
 use brainiac_fixtures::Fixtures;
-use brainiac_store::retrieval::{search, RetrievalRequest};
+use brainiac_store::retrieval::{search, RetrievalHit, RetrievalRequest};
 use brainiac_store::Store;
 use uuid::Uuid;
 
-use crate::report::{RetrievalReport, StratumScores};
+use crate::report::{
+    DiagExpected, DiagHit, QueryDiagnostic, RetrievalDiagnostics, RetrievalReport, StratumScores,
+};
 use crate::seed::principal_for_user;
 
 const K: usize = 10;
+const DIAG_CONTENT_CHARS: usize = 140;
 
 struct PerQuery {
     stratum: String,
@@ -27,17 +34,49 @@ struct PerQuery {
     empty: bool,
 }
 
+/// Fixture-id lookup for hits: uuid → fixture memory id.
+fn fixture_id_map(fx: &Fixtures) -> HashMap<Uuid, String> {
+    fx.memories
+        .memories
+        .iter()
+        .map(|m| (stable_uuid(&m.id), m.id.clone()))
+        .collect()
+}
+
+fn diag_hits(
+    hits: &[RetrievalHit],
+    names: &HashMap<Uuid, String>,
+    grades: &HashMap<Uuid, u8>,
+) -> Vec<DiagHit> {
+    hits.iter()
+        .enumerate()
+        .map(|(i, h)| DiagHit {
+            rank: i + 1,
+            memory: names
+                .get(&h.memory.id)
+                .cloned()
+                .unwrap_or_else(|| h.memory.id.to_string()),
+            content: h.memory.content.chars().take(DIAG_CONTENT_CHARS).collect(),
+            score: h.score,
+            via_graph: h.via_graph,
+            grade: grades.get(&h.memory.id).copied(),
+        })
+        .collect()
+}
+
 pub async fn run(
     store: &Store,
     fx: &Fixtures,
     embedder: &dyn Embedder,
     embedding_version: i32,
-) -> Result<RetrievalReport> {
+) -> Result<(RetrievalReport, RetrievalDiagnostics)> {
     let mut per_query: Vec<PerQuery> = Vec::new();
+    let mut diagnostics: Vec<QueryDiagnostic> = Vec::new();
     let mut leaks: Vec<String> = Vec::new();
     let mut temporal_hits = 0usize;
     let mut temporal_total = 0usize;
     let mut superseded_in_top3 = 0usize;
+    let names = fixture_id_map(fx);
 
     // ── QA suite ─────────────────────────────────────────────────────────
     for q in &fx.qa.queries {
@@ -65,19 +104,63 @@ pub async fn run(
             .map(|g| (stable_uuid(&g.memory), g.grade))
             .collect();
 
+        let mut violations: Vec<String> = Vec::new();
         // Temporal sub-checks folded into QA items.
         for forbidden in &q.forbidden_top3 {
             let fid = stable_uuid(forbidden);
-            if ranked.iter().take(3).any(|id| *id == fid) {
+            if let Some(pos) = ranked.iter().take(3).position(|id| *id == fid) {
                 superseded_in_top3 += 1;
+                violations.push(format!(
+                    "superseded memory {forbidden} in top-3 (rank {})",
+                    pos + 1
+                ));
             }
         }
+        let is_negative = q.stratum == "negative";
+        if is_negative && !ranked.is_empty() {
+            violations.push(format!(
+                "negative query returned {} hits (expected none)",
+                ranked.len()
+            ));
+        }
+        if !is_negative && !q.relevant.is_empty() && ranked.is_empty() {
+            violations.push("graded query returned zero hits".into());
+        }
 
+        let ndcg = ndcg_at_k(&ranked, &grades, K);
+        let rr = reciprocal_rank(&ranked, &grades);
+        let recall5 = recall_at_k(&ranked, &grades, 5);
+        diagnostics.push(QueryDiagnostic {
+            suite: "qa".into(),
+            id: q.id.clone(),
+            stratum: Some(q.stratum.clone()),
+            asker: Some(q.asking_as.user.clone()),
+            query: q.query.clone(),
+            as_of: q.as_of,
+            ndcg_at_10: ndcg,
+            reciprocal_rank: if q.relevant.is_empty() { None } else { Some(rr) },
+            recall_at_5: recall5,
+            expected: q
+                .relevant
+                .iter()
+                .map(|g| DiagExpected {
+                    memory: g.memory.clone(),
+                    grade: g.grade,
+                    rank: ranked
+                        .iter()
+                        .position(|id| *id == stable_uuid(&g.memory))
+                        .map(|p| p + 1),
+                })
+                .collect(),
+            got: diag_hits(&hits, &names, &grades),
+            pass: violations.is_empty(),
+            violations,
+        });
         per_query.push(PerQuery {
             stratum: q.stratum.clone(),
-            ndcg: ndcg_at_k(&ranked, &grades, K),
-            rr: reciprocal_rank(&ranked, &grades),
-            recall5: recall_at_k(&ranked, &grades, 5),
+            ndcg,
+            rr,
+            recall5,
             empty: ranked.is_empty(),
         });
     }
@@ -115,9 +198,41 @@ pub async fn run(
         .await?;
         drop(tx);
         temporal_total += 1;
-        if hits.first().map(|h| h.memory.id) == Some(stable_uuid(&t.expected_memory)) {
+        let expected_uuid = stable_uuid(&t.expected_memory);
+        let rank1_hit = hits.first().map(|h| h.memory.id) == Some(expected_uuid);
+        if rank1_hit {
             temporal_hits += 1;
         }
+        let expected_rank = hits
+            .iter()
+            .position(|h| h.memory.id == expected_uuid)
+            .map(|p| p + 1);
+        diagnostics.push(QueryDiagnostic {
+            suite: "temporal".into(),
+            id: t.id.clone(),
+            stratum: None,
+            asker: Some(asker.id.clone()),
+            query: t.question.clone(),
+            as_of: Some(t.as_of),
+            ndcg_at_10: None,
+            reciprocal_rank: None,
+            recall_at_5: None,
+            expected: vec![DiagExpected {
+                memory: t.expected_memory.clone(),
+                grade: 3,
+                rank: expected_rank,
+            }],
+            got: diag_hits(&hits, &names, &HashMap::new()),
+            violations: if rank1_hit {
+                vec![]
+            } else {
+                vec![match expected_rank {
+                    Some(r) => format!("expected {} at rank 1, found at rank {r}", t.expected_memory),
+                    None => format!("expected {} at rank 1, absent from results", t.expected_memory),
+                }]
+            },
+            pass: rank1_hit,
+        });
     }
 
     // ── leak suite (hard invariant) ──────────────────────────────────────
@@ -138,12 +253,43 @@ pub async fn run(
         )
         .await?;
         drop(tx);
+        let mut violations: Vec<String> = Vec::new();
         for forbidden in &q.forbidden {
             let fid = stable_uuid(forbidden);
-            if hits.iter().any(|h| h.memory.id == fid) {
+            if let Some(pos) = hits.iter().position(|h| h.memory.id == fid) {
                 leaks.push(format!("{}:{forbidden}", q.id));
+                violations.push(format!(
+                    "forbidden memory {forbidden} surfaced at rank {}",
+                    pos + 1
+                ));
             }
         }
+        diagnostics.push(QueryDiagnostic {
+            suite: "leak".into(),
+            id: q.id.clone(),
+            stratum: None,
+            asker: Some(q.asking_as.user.clone()),
+            query: q.query.clone(),
+            as_of: None,
+            ndcg_at_10: None,
+            reciprocal_rank: None,
+            recall_at_5: None,
+            expected: q
+                .forbidden
+                .iter()
+                .map(|f| DiagExpected {
+                    memory: f.clone(),
+                    grade: 0,
+                    rank: hits
+                        .iter()
+                        .position(|h| h.memory.id == stable_uuid(f))
+                        .map(|p| p + 1),
+                })
+                .collect(),
+            got: diag_hits(&hits, &names, &HashMap::new()),
+            pass: violations.is_empty(),
+            violations,
+        });
     }
 
     // ── aggregate ────────────────────────────────────────────────────────
@@ -166,7 +312,7 @@ pub async fn run(
     }
     let all: Vec<&PerQuery> = per_query.iter().collect();
 
-    Ok(RetrievalReport {
+    let report = RetrievalReport {
         fixture_version: "v1".into(),
         embedding_model: embedder.model_name().to_string(),
         overall: aggregate(&all),
@@ -180,7 +326,14 @@ pub async fn run(
         negative_empty_rate,
         rls_leaks: leaks,
         queries_run: per_query.len() + temporal_total + fx.leak.queries.len(),
-    })
+    };
+    let mut diagnostics = RetrievalDiagnostics {
+        fixture_version: report.fixture_version.clone(),
+        embedding_model: report.embedding_model.clone(),
+        queries: diagnostics,
+    };
+    diagnostics.sort_failures_first();
+    Ok((report, diagnostics))
 }
 
 fn aggregate(queries: &[&PerQuery]) -> StratumScores {

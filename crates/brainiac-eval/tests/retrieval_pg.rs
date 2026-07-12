@@ -34,14 +34,41 @@ async fn retrieval_profile_end_to_end() {
     let embedder = DeterministicEmbedder::default();
 
     let seeded = seed::seed_gold(&store, &fx, &embedder).await.expect("seed");
-    let report = retrieval_profile::run(&store, &fx, &embedder, seeded.embedding_version)
-        .await
-        .expect("profile");
+    let (report, diagnostics) =
+        retrieval_profile::run(&store, &fx, &embedder, seeded.embedding_version)
+            .await
+            .expect("profile");
 
     println!(
         "retrieval report: {}",
         serde_json::to_string_pretty(&report).expect("json")
     );
+
+    // ── diagnostics mirror the run ───────────────────────────────────────
+    assert_eq!(
+        diagnostics.queries.len(),
+        report.queries_run,
+        "one diagnostic per executed query"
+    );
+    // Failures sort first, and every hard-gate breach names its query.
+    let first_pass_idx = diagnostics.queries.iter().position(|q| q.pass);
+    if let Some(i) = first_pass_idx {
+        assert!(
+            diagnostics.queries[i..].iter().all(|q| q.pass),
+            "diagnostics must be ordered failures-first"
+        );
+    }
+    for q in &diagnostics.queries {
+        assert_eq!(
+            q.pass,
+            q.violations.is_empty(),
+            "pass flag must match violations for {}",
+            q.id
+        );
+        if q.suite == "qa" {
+            assert!(q.stratum.is_some(), "qa diagnostics carry a stratum");
+        }
+    }
 
     // ── HARD GATES (EVAL.md §3.2) ────────────────────────────────────────
     let gate_failures = report.gate_failures();
