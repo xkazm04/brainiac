@@ -5,6 +5,7 @@
 //! vacuous leak test is a loader error, so fixture bugs die in CI before they
 //! corrupt a benchmark run.
 
+pub mod export;
 pub mod ids;
 pub mod loader;
 pub mod schema;

@@ -51,6 +51,31 @@ enum Command {
         #[arg(long)]
         diagnostics: Option<String>,
     },
+    /// Fixture-corpus tooling (lint, schema export). Pure filesystem — no
+    /// database needed.
+    Fixtures {
+        #[command(subcommand)]
+        cmd: FixturesCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum FixturesCmd {
+    /// Validate a fixture tree; emit structured diagnostics. Exit 1 on any
+    /// error-severity finding.
+    Lint {
+        #[arg(long, default_value = "fixtures/v1")]
+        fixtures: String,
+        /// Output format: text | json | github (workflow annotations).
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Export JSON Schemas for the fixture YAML files (editor validation)
+    /// from the loader's own serde structs.
+    Schema {
+        #[arg(long, default_value = "fixtures/schema")]
+        out: String,
+    },
 }
 
 fn database_url() -> Result<String> {
@@ -106,7 +131,73 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Command::Fixtures { cmd } => match cmd {
+            FixturesCmd::Lint { fixtures, format } => fixtures_lint(&fixtures, &format),
+            FixturesCmd::Schema { out } => fixtures_schema(&out),
+        },
     }
+}
+
+fn fixtures_lint(root: &str, format: &str) -> Result<()> {
+    use brainiac_fixtures::validate::{Diagnostic, Severity};
+    anyhow::ensure!(
+        matches!(format, "text" | "json" | "github"),
+        "unknown format `{format}` (text|json|github)"
+    );
+    let diags: Vec<Diagnostic> = match brainiac_fixtures::loader::load_unvalidated(root) {
+        Ok(fx) => brainiac_fixtures::validate::lint(&fx),
+        // A parse/IO failure is itself one diagnostic — lint output stays
+        // machine-readable even when the tree doesn't deserialize.
+        Err(e) => vec![Diagnostic {
+            rule: "parse",
+            severity: Severity::Error,
+            file: String::new(),
+            item: "(load)".into(),
+            message: format!("{e:#}"),
+        }],
+    };
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&diags)?),
+        "github" => {
+            for d in &diags {
+                let file = if d.file.is_empty() {
+                    root.to_string()
+                } else {
+                    format!("{root}/{}", d.file)
+                };
+                println!(
+                    "::error title=fixtures {}::{} {}: {}",
+                    d.rule, file, d.item, d.message
+                );
+            }
+        }
+        _ => {
+            for d in &diags {
+                println!("{d}");
+            }
+        }
+    }
+    let errors = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    eprintln!(
+        "fixtures lint: {} finding(s), {errors} error(s) in {root}",
+        diags.len()
+    );
+    if errors > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn fixtures_schema(out: &str) -> Result<()> {
+    let written = brainiac_fixtures::export::export_schemas(std::path::Path::new(out))?;
+    eprintln!("fixtures schema: wrote {} file(s) to {out}", written.len());
+    for f in written {
+        eprintln!("  {f}");
+    }
+    Ok(())
 }
 
 async fn serve(bind: &str) -> Result<()> {

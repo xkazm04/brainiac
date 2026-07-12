@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QaFile",
+  "type": "object",
+  "properties": {
+    "queries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QaQueryFx"
+      }
+    }
+  },
+  "required": [
+    "queries"
+  ],
+  "$defs": {
+    "AskingAsFx": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "user"
+      ]
+    },
+    "GradedFx": {
+      "type": "object",
+      "properties": {
+        "grade": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "memory": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory",
+        "grade"
+      ]
+    },
+    "QaQueryFx": {
+      "type": "object",
+      "properties": {
+        "as_of": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "default": null
+        },
+        "asking_as": {
+          "$ref": "#/$defs/AskingAsFx"
+        },
+        "forbidden_top3": {
+          "description": "Superseded memories that must not appear in the top 3.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "relevant": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GradedFx"
+          }
+        },
+        "stratum": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "stratum",
+        "query",
+        "asking_as"
+      ]
+    }
+  }
+}

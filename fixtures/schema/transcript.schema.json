@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranscriptFx",
+  "type": "object",
+  "properties": {
+    "distractors": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "gold_memories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TranscriptGoldFx"
+      }
+    },
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string",
+      "default": "en"
+    },
+    "team": {
+      "type": "string"
+    },
+    "turns": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TurnFx"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "team",
+    "kind",
+    "turns",
+    "gold_memories"
+  ],
+  "$defs": {
+    "RelationFx": {
+      "type": "object",
+      "properties": {
+        "dst": {
+          "type": "string"
+        },
+        "rel": {
+          "type": "string"
+        },
+        "src": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "src",
+        "rel",
+        "dst"
+      ]
+    },
+    "TranscriptGoldFx": {
+      "type": "object",
+      "properties": {
+        "content_gist": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "must_extract": {
+          "type": "boolean",
+          "default": false
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RelationFx"
+          }
+        },
+        "visibility": {
+          "type": "string",
+          "default": "team"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "content_gist"
+      ]
+    },
+    "TurnFx": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "text"
+      ]
+    }
+  }
+}

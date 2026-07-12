@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LeakFile",
+  "type": "object",
+  "properties": {
+    "queries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LeakQueryFx"
+      }
+    }
+  },
+  "required": [
+    "queries"
+  ],
+  "$defs": {
+    "AskingAsFx": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "team",
+        "user"
+      ]
+    },
+    "LeakQueryFx": {
+      "type": "object",
+      "properties": {
+        "asking_as": {
+          "$ref": "#/$defs/AskingAsFx"
+        },
+        "forbidden": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "query",
+        "asking_as",
+        "forbidden"
+      ]
+    }
+  }
+}

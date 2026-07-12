@@ -31,6 +31,21 @@ fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 
 /// Load and validate a fixture tree (e.g. `fixtures/v1`).
 pub fn load(root: impl AsRef<Path>) -> Result<Fixtures> {
+    let fixtures = load_unvalidated(root)?;
+    let issues = validate::validate(&fixtures);
+    if !issues.is_empty() {
+        bail!(
+            "fixture tree failed integrity validation ({} issue(s)):\n  - {}",
+            issues.len(),
+            issues.join("\n  - ")
+        );
+    }
+    Ok(fixtures)
+}
+
+/// Parse a fixture tree WITHOUT the integrity bail — the `fixtures lint`
+/// CLI wants every finding as a structured diagnostic, not one big error.
+pub fn load_unvalidated(root: impl AsRef<Path>) -> Result<Fixtures> {
     let root = root.as_ref().to_path_buf();
 
     let transcripts_dir = root.join("transcripts");
@@ -58,15 +73,6 @@ pub fn load(root: impl AsRef<Path>) -> Result<Fixtures> {
         leak: read_yaml(&root.join("retrieval/leak.yaml"))?,
         root,
     };
-
-    let issues = validate::validate(&fixtures);
-    if !issues.is_empty() {
-        bail!(
-            "fixture tree failed integrity validation ({} issue(s)):\n  - {}",
-            issues.len(),
-            issues.join("\n  - ")
-        );
-    }
     Ok(fixtures)
 }
 

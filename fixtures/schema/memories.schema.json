@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoriesFile",
+  "type": "object",
+  "properties": {
+    "memories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MemoryFx"
+      }
+    }
+  },
+  "required": [
+    "memories"
+  ],
+  "$defs": {
+    "MemoryFx": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string",
+          "default": "en"
+        },
+        "owner": {
+          "description": "Required when visibility == private.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RelationFx"
+          }
+        },
+        "source": {
+          "description": "Transcript this memory was distilled from.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "status": {
+          "type": "string",
+          "default": "canonical"
+        },
+        "superseded_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "team": {
+          "type": "string"
+        },
+        "valid_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "default": null
+        },
+        "valid_to": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "default": null
+        },
+        "visibility": {
+          "type": "string",
+          "default": "team"
+        }
+      },
+      "required": [
+        "id",
+        "team",
+        "kind",
+        "content"
+      ]
+    },
+    "RelationFx": {
+      "type": "object",
+      "properties": {
+        "dst": {
+          "type": "string"
+        },
+        "rel": {
+          "type": "string"
+        },
+        "src": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "src",
+        "rel",
+        "dst"
+      ]
+    }
+  }
+}

@@ -3,6 +3,7 @@
 //! header (visibility=team, status=canonical, language=en).
 
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 fn default_visibility() -> String {
@@ -17,20 +18,20 @@ fn default_language() -> String {
 
 // ── org.yaml ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct OrgFile {
     pub org: String,
     pub teams: Vec<TeamFx>,
     pub users: Vec<UserFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TeamFx {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct UserFx {
     pub id: String,
     pub email: String,
@@ -40,12 +41,12 @@ pub struct UserFx {
 
 // ── entities/entities.yaml ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct EntitiesFile {
     pub entities: Vec<EntityFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct EntityFx {
     pub id: String,
     pub team: String,
@@ -57,13 +58,13 @@ pub struct EntityFx {
 
 // ── entities/merges.yaml ────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct MergesFile {
     pub merge_sets: Vec<MergeSetFx>,
     pub negative_pairs: Vec<[String; 2]>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct MergeSetFx {
     pub canonical: String,
     pub kind: String,
@@ -73,12 +74,12 @@ pub struct MergeSetFx {
 
 // ── memories/gold.yaml ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct MemoriesFile {
     pub memories: Vec<MemoryFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct MemoryFx {
     pub id: String,
     pub team: String,
@@ -108,7 +109,7 @@ pub struct MemoryFx {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct RelationFx {
     pub src: String,
     pub rel: String,
@@ -117,7 +118,7 @@ pub struct RelationFx {
 
 // ── transcripts/*.yaml ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TranscriptFx {
     pub id: String,
     pub team: String,
@@ -130,13 +131,13 @@ pub struct TranscriptFx {
     pub distractors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TurnFx {
     pub role: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TranscriptGoldFx {
     pub id: String,
     pub kind: String,
@@ -153,12 +154,12 @@ pub struct TranscriptGoldFx {
 
 // ── contradictions/cases.yaml ───────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ContradictionsFile {
     pub cases: Vec<ContradictionFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ContradictionFx {
     pub id: String,
     pub memory_a: String,
@@ -171,12 +172,12 @@ pub struct ContradictionFx {
 
 // ── temporal/asof.yaml ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TemporalFile {
     pub cases: Vec<TemporalCaseFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TemporalCaseFx {
     pub id: String,
     pub question: String,
@@ -186,12 +187,12 @@ pub struct TemporalCaseFx {
 
 // ── retrieval/qa.yaml + leak.yaml ───────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct QaFile {
     pub queries: Vec<QaQueryFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct QaQueryFx {
     pub id: String,
     pub stratum: String,
@@ -206,24 +207,24 @@ pub struct QaQueryFx {
     pub forbidden_top3: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct AskingAsFx {
     pub team: String,
     pub user: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct GradedFx {
     pub memory: String,
     pub grade: u8,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct LeakFile {
     pub queries: Vec<LeakQueryFx>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct LeakQueryFx {
     pub id: String,
     pub query: String,

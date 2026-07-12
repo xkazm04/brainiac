@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MergesFile",
+  "type": "object",
+  "properties": {
+    "merge_sets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MergeSetFx"
+      }
+    },
+    "negative_pairs": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 2,
+        "minItems": 2
+      }
+    }
+  },
+  "required": [
+    "merge_sets",
+    "negative_pairs"
+  ],
+  "$defs": {
+    "MergeSetFx": {
+      "type": "object",
+      "properties": {
+        "canonical": {
+          "type": "string"
+        },
+        "difficulty": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "canonical",
+        "kind",
+        "difficulty",
+        "members"
+      ]
+    }
+  }
+}

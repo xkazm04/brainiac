@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContradictionsFile",
+  "type": "object",
+  "properties": {
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContradictionFx"
+      }
+    }
+  },
+  "required": [
+    "cases"
+  ],
+  "$defs": {
+    "ContradictionFx": {
+      "type": "object",
+      "properties": {
+        "expected": {
+          "description": "resolved_supersede | resolved_coexist | dismissed",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "memory_a": {
+          "type": "string"
+        },
+        "memory_b": {
+          "type": "string"
+        },
+        "supersede_direction": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "memory_a",
+        "memory_b",
+        "expected"
+      ]
+    }
+  }
+}

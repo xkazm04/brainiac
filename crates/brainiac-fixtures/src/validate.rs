@@ -10,18 +10,86 @@
 //!
 //! Visibility checks reuse `brainiac_core::Principal::can_read` — the same
 //! rule the runtime enforces — so fixtures and product can't drift apart.
+//!
+//! Findings are structured [`Diagnostic`]s (rule id, file, item, message) so
+//! the `fixtures lint` CLI can emit machine-readable / CI-annotated output;
+//! [`validate`] keeps the original flat-string shape for the loader.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use brainiac_core::{Principal, Visibility};
+use serde::Serialize;
 
 use crate::ids::stable_uuid;
 use crate::loader::Fixtures;
 use crate::schema::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// One lint finding, addressable enough to jump to: the fixture file, the
+/// offending item (YAML-path-ish, e.g. `memories[m-003]`), a stable rule id
+/// for suppression/tracking, and the human message.
+#[derive(Debug, Clone, Serialize)]
+pub struct Diagnostic {
+    pub rule: &'static str,
+    pub severity: Severity,
+    /// Fixture-root-relative file the item lives in.
+    pub file: String,
+    /// YAML-path-ish locator, e.g. `memories[m-003].team`.
+    pub item: String,
+    pub message: String,
+}
+
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {} [{}] {}",
+            self.file, self.item, self.rule, self.message
+        )
+    }
+}
+
+struct Emitter {
+    out: Vec<Diagnostic>,
+}
+
+impl Emitter {
+    fn err(&mut self, rule: &'static str, file: impl Into<String>, item: String, message: String) {
+        self.out.push(Diagnostic {
+            rule,
+            severity: Severity::Error,
+            file: file.into(),
+            item,
+            message,
+        });
+    }
+}
+
+const F_ORG: &str = "org.yaml";
+const F_ENTITIES: &str = "entities/entities.yaml";
+const F_MERGES: &str = "entities/merges.yaml";
+const F_MEMORIES: &str = "memories/gold.yaml";
+const F_TRANSCRIPTS: &str = "transcripts/";
+const F_CONTRADICTIONS: &str = "contradictions/cases.yaml";
+const F_TEMPORAL: &str = "temporal/asof.yaml";
+const F_QA: &str = "retrieval/qa.yaml";
+const F_LEAK: &str = "retrieval/leak.yaml";
+
+/// Flat-string view of [`lint`] — the loader's bail-on-invalid contract.
 pub fn validate(fx: &Fixtures) -> Vec<String> {
-    let mut issues: Vec<String> = Vec::new();
-    let mut push = |msg: String| issues.push(msg);
+    lint(fx).iter().map(|d| d.to_string()).collect()
+}
+
+/// Structured integrity findings; empty = healthy tree.
+pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
+    let mut e = Emitter { out: Vec::new() };
 
     // ── index definitions ────────────────────────────────────────────────
     let team_ids: HashSet<&str> = fx.org.teams.iter().map(|t| t.id.as_str()).collect();
@@ -43,47 +111,56 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
     check_unique(
         fx.org.teams.iter().map(|t| t.id.as_str()),
         "team",
-        &mut push,
+        F_ORG,
+        &mut e,
     );
     check_unique(
         fx.org.users.iter().map(|u| u.id.as_str()),
         "user",
-        &mut push,
+        F_ORG,
+        &mut e,
     );
     check_unique(
-        fx.entities.entities.iter().map(|e| e.id.as_str()),
+        fx.entities.entities.iter().map(|x| x.id.as_str()),
         "entity",
-        &mut push,
+        F_ENTITIES,
+        &mut e,
     );
     check_unique(
         fx.memories.memories.iter().map(|m| m.id.as_str()),
         "memory",
-        &mut push,
+        F_MEMORIES,
+        &mut e,
     );
     check_unique(
         fx.contradictions.cases.iter().map(|c| c.id.as_str()),
         "contradiction",
-        &mut push,
+        F_CONTRADICTIONS,
+        &mut e,
     );
     check_unique(
         fx.temporal.cases.iter().map(|c| c.id.as_str()),
         "temporal case",
-        &mut push,
+        F_TEMPORAL,
+        &mut e,
     );
     check_unique(
         fx.qa.queries.iter().map(|q| q.id.as_str()),
         "qa query",
-        &mut push,
+        F_QA,
+        &mut e,
     );
     check_unique(
         fx.leak.queries.iter().map(|q| q.id.as_str()),
         "leak query",
-        &mut push,
+        F_LEAK,
+        &mut e,
     );
     check_unique(
         fx.transcripts.iter().map(|t| t.id.as_str()),
         "transcript",
-        &mut push,
+        F_TRANSCRIPTS,
+        &mut e,
     );
 
     // Stable-uuid collision check across every id namespace we persist.
@@ -99,7 +176,12 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
             .chain(memories.keys().copied())
         {
             if let Some(prev) = seen.insert(stable_uuid(id), id) {
-                push(format!("stable_uuid collision between `{prev}` and `{id}`"));
+                e.err(
+                    "uuid-collision",
+                    F_ORG,
+                    format!("ids[{id}]"),
+                    format!("stable_uuid collision between `{prev}` and `{id}`"),
+                );
             }
         }
     }
@@ -108,18 +190,25 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
     for u in &fx.org.users {
         for t in &u.teams {
             if !team_ids.contains(t.as_str()) {
-                push(format!("user `{}` references unknown team `{t}`", u.id));
+                e.err(
+                    "unknown-team",
+                    F_ORG,
+                    format!("users[{}].teams", u.id),
+                    format!("user `{}` references unknown team `{t}`", u.id),
+                );
             }
         }
     }
 
     // ── entities reference teams ─────────────────────────────────────────
-    for e in &fx.entities.entities {
-        if !team_ids.contains(e.team.as_str()) {
-            push(format!(
-                "entity `{}` references unknown team `{}`",
-                e.id, e.team
-            ));
+    for x in &fx.entities.entities {
+        if !team_ids.contains(x.team.as_str()) {
+            e.err(
+                "unknown-team",
+                F_ENTITIES,
+                format!("entities[{}].team", x.id),
+                format!("entity `{}` references unknown team `{}`", x.id, x.team),
+            );
         }
     }
 
@@ -128,23 +217,35 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
     for set in &fx.merges.merge_sets {
         for m in &set.members {
             if !entities.contains_key(m.as_str()) {
-                push(format!(
-                    "merge set `{}` references unknown entity `{m}`",
-                    set.canonical
-                ));
+                e.err(
+                    "unknown-entity",
+                    F_MERGES,
+                    format!("merge_sets[{}].members", set.canonical),
+                    format!("merge set `{}` references unknown entity `{m}`", set.canonical),
+                );
             }
             if let Some(other) = member_of.insert(m.as_str(), set.canonical.as_str()) {
-                push(format!(
-                    "entity `{m}` appears in two merge sets: `{other}` and `{}`",
-                    set.canonical
-                ));
+                e.err(
+                    "merge-overlap",
+                    F_MERGES,
+                    format!("merge_sets[{}].members[{m}]", set.canonical),
+                    format!(
+                        "entity `{m}` appears in two merge sets: `{other}` and `{}`",
+                        set.canonical
+                    ),
+                );
             }
         }
     }
     for pair in &fx.merges.negative_pairs {
         for m in pair {
             if !entities.contains_key(m.as_str()) {
-                push(format!("negative pair references unknown entity `{m}`"));
+                e.err(
+                    "unknown-entity",
+                    F_MERGES,
+                    format!("negative_pairs[{},{}]", pair[0], pair[1]),
+                    format!("negative pair references unknown entity `{m}`"),
+                );
             }
         }
         if let (Some(a), Some(b)) = (
@@ -152,10 +253,15 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
             member_of.get(pair[1].as_str()),
         ) {
             if a == b {
-                push(format!(
-                    "negative pair ({}, {}) is contradicted by merge set `{a}` — gold is inconsistent",
-                    pair[0], pair[1]
-                ));
+                e.err(
+                    "negative-pair-conflict",
+                    F_MERGES,
+                    format!("negative_pairs[{},{}]", pair[0], pair[1]),
+                    format!(
+                        "negative pair ({}, {}) is contradicted by merge set `{a}` — gold is inconsistent",
+                        pair[0], pair[1]
+                    ),
+                );
             }
         }
     }
@@ -163,120 +269,185 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
     // ── memories ─────────────────────────────────────────────────────────
     let transcript_ids: HashSet<&str> = fx.transcripts.iter().map(|t| t.id.as_str()).collect();
     for m in &fx.memories.memories {
+        let at = |field: &str| format!("memories[{}].{field}", m.id);
         if !team_ids.contains(m.team.as_str()) {
-            push(format!(
-                "memory `{}` references unknown team `{}`",
-                m.id, m.team
-            ));
+            e.err(
+                "unknown-team",
+                F_MEMORIES,
+                at("team"),
+                format!("memory `{}` references unknown team `{}`", m.id, m.team),
+            );
         }
         if Visibility::parse(&m.visibility).is_none() {
-            push(format!(
-                "memory `{}` has invalid visibility `{}`",
-                m.id, m.visibility
-            ));
+            e.err(
+                "invalid-enum",
+                F_MEMORIES,
+                at("visibility"),
+                format!("memory `{}` has invalid visibility `{}`", m.id, m.visibility),
+            );
         }
         if brainiac_core::MemoryKind::parse(&m.kind).is_none() {
-            push(format!("memory `{}` has invalid kind `{}`", m.id, m.kind));
+            e.err(
+                "invalid-enum",
+                F_MEMORIES,
+                at("kind"),
+                format!("memory `{}` has invalid kind `{}`", m.id, m.kind),
+            );
         }
         if brainiac_core::MemoryStatus::parse(&m.status).is_none() {
-            push(format!(
-                "memory `{}` has invalid status `{}`",
-                m.id, m.status
-            ));
+            e.err(
+                "invalid-enum",
+                F_MEMORIES,
+                at("status"),
+                format!("memory `{}` has invalid status `{}`", m.id, m.status),
+            );
         }
         if m.visibility == "private" && m.owner.is_none() {
-            push(format!("private memory `{}` has no owner", m.id));
+            e.err(
+                "missing-owner",
+                F_MEMORIES,
+                at("owner"),
+                format!("private memory `{}` has no owner", m.id),
+            );
         }
         if let Some(owner) = &m.owner {
             if !users.contains_key(owner.as_str()) {
-                push(format!(
-                    "memory `{}` owner `{owner}` is not a defined user",
-                    m.id
-                ));
+                e.err(
+                    "unknown-user",
+                    F_MEMORIES,
+                    at("owner"),
+                    format!("memory `{}` owner `{owner}` is not a defined user", m.id),
+                );
             }
         }
-        for e in &m.entities {
-            if !entities.contains_key(e.as_str()) {
-                push(format!("memory `{}` references unknown entity `{e}`", m.id));
+        for x in &m.entities {
+            if !entities.contains_key(x.as_str()) {
+                e.err(
+                    "unknown-entity",
+                    F_MEMORIES,
+                    at("entities"),
+                    format!("memory `{}` references unknown entity `{x}`", m.id),
+                );
             }
         }
         for r in &m.relations {
             for end in [&r.src, &r.dst] {
                 if !entities.contains_key(end.as_str()) {
-                    push(format!(
-                        "memory `{}` relation references unknown entity `{end}`",
-                        m.id
-                    ));
+                    e.err(
+                        "unknown-entity",
+                        F_MEMORIES,
+                        at("relations"),
+                        format!("memory `{}` relation references unknown entity `{end}`", m.id),
+                    );
                 }
             }
         }
         if let Some(sup) = &m.superseded_by {
             if !memories.contains_key(sup.as_str()) {
-                push(format!(
-                    "memory `{}` superseded_by unknown memory `{sup}`",
-                    m.id
-                ));
+                e.err(
+                    "unknown-memory",
+                    F_MEMORIES,
+                    at("superseded_by"),
+                    format!("memory `{}` superseded_by unknown memory `{sup}`", m.id),
+                );
             }
             if m.valid_to.is_none() {
-                push(format!(
-                    "memory `{}` is superseded but has no valid_to",
-                    m.id
-                ));
+                e.err(
+                    "supersession",
+                    F_MEMORIES,
+                    at("valid_to"),
+                    format!("memory `{}` is superseded but has no valid_to", m.id),
+                );
             }
         }
         if let (Some(from), Some(to)) = (m.valid_from, m.valid_to) {
             if from >= to {
-                push(format!("memory `{}` has valid_from >= valid_to", m.id));
+                e.err(
+                    "temporal-window",
+                    F_MEMORIES,
+                    at("valid_from"),
+                    format!("memory `{}` has valid_from >= valid_to", m.id),
+                );
             }
         }
         if let Some(src) = &m.source {
             if !transcript_ids.contains(src.as_str()) {
-                push(format!(
-                    "memory `{}` references unknown transcript `{src}`",
-                    m.id
-                ));
+                e.err(
+                    "unknown-transcript",
+                    F_MEMORIES,
+                    at("source"),
+                    format!("memory `{}` references unknown transcript `{src}`", m.id),
+                );
             }
         }
     }
 
     // ── transcripts ──────────────────────────────────────────────────────
     for t in &fx.transcripts {
+        let at = |field: &str| format!("transcript[{}].{field}", t.id);
         if !team_ids.contains(t.team.as_str()) {
-            push(format!(
-                "transcript `{}` references unknown team `{}`",
-                t.id, t.team
-            ));
+            e.err(
+                "unknown-team",
+                F_TRANSCRIPTS,
+                at("team"),
+                format!("transcript `{}` references unknown team `{}`", t.id, t.team),
+            );
         }
         if t.turns.is_empty() {
-            push(format!("transcript `{}` has no turns", t.id));
+            e.err(
+                "empty-transcript",
+                F_TRANSCRIPTS,
+                at("turns"),
+                format!("transcript `{}` has no turns", t.id),
+            );
         }
         for g in &t.gold_memories {
             match memories.get(g.id.as_str()) {
-                None => push(format!(
-                    "transcript `{}` gold memory `{}` is not defined in memories/gold.yaml",
-                    t.id, g.id
-                )),
+                None => e.err(
+                    "unknown-memory",
+                    F_TRANSCRIPTS,
+                    at(&format!("gold_memories[{}]", g.id)),
+                    format!(
+                        "transcript `{}` gold memory `{}` is not defined in memories/gold.yaml",
+                        t.id, g.id
+                    ),
+                ),
                 Some(m) => {
                     if m.team != t.team {
-                        push(format!(
-                            "transcript `{}` (team {}) gold memory `{}` belongs to team {}",
-                            t.id, t.team, g.id, m.team
-                        ));
+                        e.err(
+                            "transcript-gold",
+                            F_TRANSCRIPTS,
+                            at(&format!("gold_memories[{}]", g.id)),
+                            format!(
+                                "transcript `{}` (team {}) gold memory `{}` belongs to team {}",
+                                t.id, t.team, g.id, m.team
+                            ),
+                        );
                     }
                     if m.source.as_deref() != Some(t.id.as_str()) {
-                        push(format!(
-                            "gold memory `{}` should declare source `{}` (bidirectional link)",
-                            g.id, t.id
-                        ));
+                        e.err(
+                            "transcript-gold",
+                            F_MEMORIES,
+                            format!("memories[{}].source", g.id),
+                            format!(
+                                "gold memory `{}` should declare source `{}` (bidirectional link)",
+                                g.id, t.id
+                            ),
+                        );
                     }
                 }
             }
-            for e in &g.entities {
-                if !entities.contains_key(e.as_str()) {
-                    push(format!(
-                        "transcript `{}` gold `{}` references unknown entity `{e}`",
-                        t.id, g.id
-                    ));
+            for x in &g.entities {
+                if !entities.contains_key(x.as_str()) {
+                    e.err(
+                        "unknown-entity",
+                        F_TRANSCRIPTS,
+                        at(&format!("gold_memories[{}].entities", g.id)),
+                        format!(
+                            "transcript `{}` gold `{}` references unknown entity `{x}`",
+                            t.id, g.id
+                        ),
+                    );
                 }
             }
         }
@@ -284,22 +455,30 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
 
     // ── contradictions ───────────────────────────────────────────────────
     for c in &fx.contradictions.cases {
+        let at = |field: &str| format!("cases[{}].{field}", c.id);
         for m in [&c.memory_a, &c.memory_b] {
             if !memories.contains_key(m.as_str()) {
-                push(format!(
-                    "contradiction `{}` references unknown memory `{m}`",
-                    c.id
-                ));
+                e.err(
+                    "unknown-memory",
+                    F_CONTRADICTIONS,
+                    at("memory_a/b"),
+                    format!("contradiction `{}` references unknown memory `{m}`", c.id),
+                );
             }
         }
         match c.expected.as_str() {
             "resolved_supersede" => {
                 let dir = c.supersede_direction.as_deref();
                 if dir != Some("a_over_b") && dir != Some("b_over_a") {
-                    push(format!(
-                        "contradiction `{}` supersede case missing/invalid direction",
-                        c.id
-                    ));
+                    e.err(
+                        "contradiction-direction",
+                        F_CONTRADICTIONS,
+                        at("supersede_direction"),
+                        format!(
+                            "contradiction `{}` supersede case missing/invalid direction",
+                            c.id
+                        ),
+                    );
                 } else if let (Some(a), Some(b)) = (
                     memories.get(c.memory_a.as_str()),
                     memories.get(c.memory_b.as_str()),
@@ -311,36 +490,50 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
                         (b, a)
                     };
                     if loser.superseded_by.as_deref() != Some(winner.id.as_str()) {
-                        push(format!(
-                            "contradiction `{}`: `{}` should carry superseded_by `{}` to match direction",
-                            c.id, loser.id, winner.id
-                        ));
+                        e.err(
+                            "contradiction-direction",
+                            F_CONTRADICTIONS,
+                            at("supersede_direction"),
+                            format!(
+                                "contradiction `{}`: `{}` should carry superseded_by `{}` to match direction",
+                                c.id, loser.id, winner.id
+                            ),
+                        );
                     }
                 }
             }
             "resolved_coexist" | "dismissed" => {}
-            other => push(format!(
-                "contradiction `{}` has invalid expected `{other}`",
-                c.id
-            )),
+            other => e.err(
+                "invalid-enum",
+                F_CONTRADICTIONS,
+                at("expected"),
+                format!("contradiction `{}` has invalid expected `{other}`", c.id),
+            ),
         }
     }
 
     // ── temporal ─────────────────────────────────────────────────────────
     for t in &fx.temporal.cases {
         match memories.get(t.expected_memory.as_str()) {
-            None => push(format!(
-                "temporal `{}` expects unknown memory `{}`",
-                t.id, t.expected_memory
-            )),
+            None => e.err(
+                "unknown-memory",
+                F_TEMPORAL,
+                format!("cases[{}].expected_memory", t.id),
+                format!("temporal `{}` expects unknown memory `{}`", t.id, t.expected_memory),
+            ),
             Some(m) => {
                 let from_ok = m.valid_from.is_none_or(|f| f <= t.as_of);
                 let to_ok = m.valid_to.is_none_or(|to| to > t.as_of);
                 if !from_ok || !to_ok {
-                    push(format!(
-                        "temporal `{}`: expected memory `{}` is not valid at {}",
-                        t.id, t.expected_memory, t.as_of
-                    ));
+                    e.err(
+                        "temporal-window",
+                        F_TEMPORAL,
+                        format!("cases[{}].as_of", t.id),
+                        format!(
+                            "temporal `{}`: expected memory `{}` is not valid at {}",
+                            t.id, t.expected_memory, t.as_of
+                        ),
+                    );
                 }
             }
         }
@@ -368,87 +561,134 @@ pub fn validate(fx: &Fixtures) -> Vec<String> {
     };
 
     for q in &fx.qa.queries {
+        let at = |field: &str| format!("queries[{}].{field}", q.id);
         let Some(p) = principal_for(&q.asking_as) else {
-            push(format!(
-                "qa `{}` asking_as is invalid (unknown user or user not in team)",
-                q.id
-            ));
+            e.err(
+                "asking-as",
+                F_QA,
+                at("asking_as"),
+                format!(
+                    "qa `{}` asking_as is invalid (unknown user or user not in team)",
+                    q.id
+                ),
+            );
             continue;
         };
         for g in &q.relevant {
             match memories.get(g.memory.as_str()) {
-                None => push(format!(
-                    "qa `{}` references unknown memory `{}`",
-                    q.id, g.memory
-                )),
+                None => e.err(
+                    "unknown-memory",
+                    F_QA,
+                    at("relevant"),
+                    format!("qa `{}` references unknown memory `{}`", q.id, g.memory),
+                ),
                 Some(m) => {
                     if !(1..=3).contains(&g.grade) {
-                        push(format!(
-                            "qa `{}` grade for `{}` out of range 1..=3",
-                            q.id, g.memory
-                        ));
+                        e.err(
+                            "qa-grade",
+                            F_QA,
+                            at(&format!("relevant[{}].grade", g.memory)),
+                            format!("qa `{}` grade for `{}` out of range 1..=3", q.id, g.memory),
+                        );
                     }
                     let (org, team, owner, vis) = memory_scope(m);
                     if !p.can_read(org, team, owner, vis) {
-                        push(format!(
-                            "qa `{}`: gold memory `{}` is NOT visible to asker `{}` — unanswerable",
-                            q.id, g.memory, q.asking_as.user
-                        ));
+                        e.err(
+                            "qa-visibility",
+                            F_QA,
+                            at(&format!("relevant[{}]", g.memory)),
+                            format!(
+                                "qa `{}`: gold memory `{}` is NOT visible to asker `{}` — unanswerable",
+                                q.id, g.memory, q.asking_as.user
+                            ),
+                        );
                     }
                 }
             }
         }
         for f in &q.forbidden_top3 {
             if !memories.contains_key(f.as_str()) {
-                push(format!(
-                    "qa `{}` forbidden_top3 references unknown memory `{f}`",
-                    q.id
-                ));
+                e.err(
+                    "unknown-memory",
+                    F_QA,
+                    at("forbidden_top3"),
+                    format!("qa `{}` forbidden_top3 references unknown memory `{f}`", q.id),
+                );
             }
         }
         if q.stratum == "negative" && !q.relevant.is_empty() {
-            push(format!(
-                "qa `{}` is negative-stratum but lists relevant memories",
-                q.id
-            ));
+            e.err(
+                "qa-negative",
+                F_QA,
+                at("relevant"),
+                format!("qa `{}` is negative-stratum but lists relevant memories", q.id),
+            );
         }
     }
 
     for q in &fx.leak.queries {
+        let at = |field: &str| format!("queries[{}].{field}", q.id);
         let Some(p) = principal_for(&q.asking_as) else {
-            push(format!("leak `{}` asking_as is invalid", q.id));
+            e.err(
+                "asking-as",
+                F_LEAK,
+                at("asking_as"),
+                format!("leak `{}` asking_as is invalid", q.id),
+            );
             continue;
         };
         if q.forbidden.is_empty() {
-            push(format!(
-                "leak `{}` has no forbidden memories — vacuous",
-                q.id
-            ));
+            e.err(
+                "leak-vacuous",
+                F_LEAK,
+                at("forbidden"),
+                format!("leak `{}` has no forbidden memories — vacuous", q.id),
+            );
         }
         for f in &q.forbidden {
             match memories.get(f.as_str()) {
-                None => push(format!("leak `{}` forbids unknown memory `{f}`", q.id)),
+                None => e.err(
+                    "unknown-memory",
+                    F_LEAK,
+                    at("forbidden"),
+                    format!("leak `{}` forbids unknown memory `{f}`", q.id),
+                ),
                 Some(m) => {
                     let (org, team, owner, vis) = memory_scope(m);
                     if p.can_read(org, team, owner, vis) {
-                        push(format!(
-                            "leak `{}`: asker `{}` CAN legitimately read `{f}` — the leak test is vacuous",
-                            q.id, q.asking_as.user
-                        ));
+                        e.err(
+                            "leak-vacuous",
+                            F_LEAK,
+                            at(&format!("forbidden[{f}]")),
+                            format!(
+                                "leak `{}`: asker `{}` CAN legitimately read `{f}` — the leak test is vacuous",
+                                q.id, q.asking_as.user
+                            ),
+                        );
                     }
                 }
             }
         }
     }
 
-    issues
+    e.out
 }
 
-fn check_unique<'a>(ids: impl Iterator<Item = &'a str>, what: &str, push: &mut impl FnMut(String)) {
+fn check_unique<'a>(
+    ids: impl Iterator<Item = &'a str>,
+    what: &str,
+    file: &'static str,
+    e: &mut Emitter,
+) {
     let mut seen: HashSet<&str> = HashSet::new();
     for id in ids {
         if !seen.insert(id) {
-            push(format!("duplicate {what} id `{id}`"));
+            e.err(
+                "duplicate-id",
+                file,
+                format!("{what}[{id}]"),
+                format!("duplicate {what} id `{id}`"),
+            );
         }
     }
 }
