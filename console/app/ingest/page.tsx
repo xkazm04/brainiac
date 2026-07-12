@@ -6,7 +6,7 @@ import {
 } from "@/lib/api";
 
 import { DEMO_INGEST, type IngestData } from "./ingest-data";
-import IngestLab from "./IngestLab";
+import IngestMonitor from "./IngestMonitor";
 
 export const dynamic = "force-dynamic";
 
@@ -29,5 +29,5 @@ async function ingestData(): Promise<IngestData> {
 }
 
 export default async function IngestPage() {
-  return <IngestLab data={await ingestData()} />;
+  return <IngestMonitor data={await ingestData()} />;
 }

@@ -6,6 +6,37 @@ body {
   color: #e9edff;
 }
 
+/* ── Themed thin scrollbars (vertical + horizontal) ──────────────────────
+   Instrument chrome, not OS chrome: hairline thumbs in the ink tone over a
+   transparent track, brightening on hover. Applies app-wide, including the
+   internally-scrolling panels (airlock chambers, manifest, inspectors). */
+* {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: rgba(233, 237, 255, 0.22) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(233, 237, 255, 0.16);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(233, 237, 255, 0.35);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* ── Design-lab keyframes (shared by the three variants) ────────────── */
 
 @keyframes shimmer {

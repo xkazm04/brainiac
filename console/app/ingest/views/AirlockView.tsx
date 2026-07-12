@@ -1,7 +1,7 @@
 "use client";
 
 /*
- * Ingest variant C — "Airlock". Mental model: staged chambers. Knowledge
+ * Ingest Monitor — "Airlock" view (spatial lens). Mental model: staged chambers. Knowledge
  * must pass through pressurized rooms — Intake, Extraction, Adjudication,
  * Canon — and you see exactly what's sitting in each chamber right now.
  * Failures divert to the dead-letter chamber at the end. Spatial columns
@@ -33,7 +33,7 @@ function chamberOf(stage: number, stuck: boolean, pending: number, promoted: num
   return 1;
 }
 
-export default function AirlockVariant({ data: initial }: { data: IngestData }) {
+export default function AirlockView({ data: initial }: { data: IngestData }) {
   const { data, refresh } = useIngestFeed(initial);
 
   const chambers = CHAMBERS.map((c) => ({ ...c, items: [] as (typeof data.sources[number] & { stuck: boolean })[] }));

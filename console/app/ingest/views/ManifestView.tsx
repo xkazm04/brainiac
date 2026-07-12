@@ -1,7 +1,7 @@
 "use client";
 
 /*
- * Ingest variant B — "Manifest". Mental model: parcel tracking. Every
+ * Ingest Monitor — "Manifest" view (triage lens). Mental model: parcel tracking. Every
  * source is a tracked shipment with stage checkpoints; the manifest is a
  * dense table an operator can scan top to bottom. The worker log rides
  * along as the depot's activity feed.
@@ -22,7 +22,7 @@ const ATTENTION = ["failed", "retrying", "queued"] as const;
 const FILTERS = ["all", "attention", "processed"] as const;
 type Filter = (typeof FILTERS)[number];
 
-export default function ManifestVariant({ data: initial }: { data: IngestData }) {
+export default function ManifestView({ data: initial }: { data: IngestData }) {
   const { data, refresh } = useIngestFeed(initial);
   const [filter, setFilter] = useState<Filter>("all");
 

@@ -1,8 +1,11 @@
 "use client";
 
 /*
- * Ingest Monitor prototype switcher (/prototype round 1). Three mental
- * models over the same live feed. Removed at consolidation.
+ * Ingest Monitor — consolidated from the 2026-07-12 prototype round with
+ * TWO coexisting lenses (Conduction was cut): Manifest is the triage
+ * worklist; Airlock answers "where is everything right now". Both ship
+ * until real usage proves one superior. The load button swaps in a
+ * deterministic 40-source mock for density checks and demos.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -11,53 +14,52 @@ import { AnimatePresence, motion } from "framer-motion";
 import { band } from "@/design/theme";
 
 import { makeLargeIngest, type IngestData } from "./ingest-data";
-import AirlockVariant from "./variants/AirlockVariant";
-import ConductionVariant from "./variants/ConductionVariant";
-import ManifestVariant from "./variants/ManifestVariant";
+import AirlockView from "./views/AirlockView";
+import ManifestView from "./views/ManifestView";
 
-const VARIANTS = [
-  {
-    id: "conduction",
-    name: "Conduction",
-    blurb: "the EEG revival · six lanes, sources as pulses",
-    Component: ConductionVariant,
-  },
+const VIEWS = [
   {
     id: "manifest",
     name: "Manifest",
-    blurb: "parcel tracking · checkpoints per shipment",
-    Component: ManifestVariant,
+    blurb: "triage lens · attention floats first",
+    Component: ManifestView,
   },
   {
     id: "airlock",
     name: "Airlock",
-    blurb: "staged chambers · where is everything right now",
-    Component: AirlockVariant,
+    blurb: "spatial lens · where is everything right now",
+    Component: AirlockView,
   },
 ] as const;
 
-type VariantId = (typeof VARIANTS)[number]["id"];
+type ViewId = (typeof VIEWS)[number]["id"];
 
-const STORAGE_KEY = "brainiac-ingest-variant";
+const STORAGE_KEY = "brainiac-ingest-view";
 
-export default function IngestLab({ data }: { data: IngestData }) {
-  const [active, setActive] = useState<VariantId>("conduction");
-  // Load stress-toggle: 40 deterministic sources to validate operator UX
-  // at volume (polling + submit disabled in mock mode).
+export default function IngestMonitor({ data }: { data: IngestData }) {
+  const [active, setActive] = useState<ViewId>("manifest");
   const [large, setLarge] = useState(false);
   const largeData = useMemo(() => makeLargeIngest(), []);
   const shown = large ? largeData : data;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const fromUrl = params.get("variant");
+    const fromUrl = params.get("view");
     const stored = window.localStorage.getItem(STORAGE_KEY);
     const initial = fromUrl ?? stored;
-    if (initial && VARIANTS.some((v) => v.id === initial)) {
-      setActive(initial as VariantId);
+    if (initial && VIEWS.some((v) => v.id === initial)) {
+      setActive(initial as ViewId);
     }
     if (params.get("scale") === "large") setLarge(true);
   }, []);
+
+  const pick = (id: ViewId) => {
+    setActive(id);
+    window.localStorage.setItem(STORAGE_KEY, id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", id);
+    window.history.replaceState(null, "", url.toString());
+  };
 
   const pickScale = (next: boolean) => {
     setLarge(next);
@@ -67,15 +69,7 @@ export default function IngestLab({ data }: { data: IngestData }) {
     window.history.replaceState(null, "", url.toString());
   };
 
-  const pick = (id: VariantId) => {
-    setActive(id);
-    window.localStorage.setItem(STORAGE_KEY, id);
-    const url = new URL(window.location.href);
-    url.searchParams.set("variant", id);
-    window.history.replaceState(null, "", url.toString());
-  };
-
-  const current = VARIANTS.find((v) => v.id === active) ?? VARIANTS[0];
+  const current = VIEWS.find((v) => v.id === active) ?? VIEWS[0];
 
   return (
     <div className="relative pb-24">
@@ -95,9 +89,9 @@ export default function IngestLab({ data }: { data: IngestData }) {
         <div
           className="flex items-center gap-1 rounded-full border border-white/15 bg-black/70 p-1.5 shadow-2xl backdrop-blur-xl"
           role="tablist"
-          aria-label="Ingest Monitor variants"
+          aria-label="Ingest Monitor lens"
         >
-          {VARIANTS.map((v) => {
+          {VIEWS.map((v) => {
             const selected = v.id === active;
             return (
               <button
@@ -111,7 +105,7 @@ export default function IngestLab({ data }: { data: IngestData }) {
               >
                 {selected && (
                   <motion.span
-                    layoutId="ingest-pill"
+                    layoutId="ingest-view-pill"
                     className="absolute inset-0 rounded-full bg-white"
                     transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
                   />
