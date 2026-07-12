@@ -42,6 +42,16 @@ export function ageLabel(iso: string): string {
   return `${Math.round(secs / 86400)}d`;
 }
 
+/** Tiny stable hash → 0..1 (deterministic mock layouts, no Math.random). */
+export function h01(s: string, salt = 0): number {
+  let h = 2166136261 ^ salt;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
 // ── demo feed ───────────────────────────────────────────────────────────
 
 const src = (
@@ -62,6 +72,89 @@ const src = (
   pending_review: 0,
   ...overrides,
 });
+
+// ── 40-source stress mock (7 teams, realistic status mix) ───────────────
+// Deterministic apart from the "now" anchor, so layouts are stable within
+// a session. Used by the lab's scale toggle to validate operator UX under
+// load: ~15% queued/retrying, ~8% failed, the rest processed at varying
+// yields.
+
+const LOAD_TEAMS = ["payments", "platform", "data", "mobile", "security", "ml", "support"] as const;
+const LOAD_KINDS = ["session_transcript", "manual", "repo", "doc"] as const;
+const LOAD_SLUGS = [
+  "incident-retro", "design-review", "oncall-handoff", "arch-sync", "postmortem",
+  "pairing-session", "migration-notes", "spike-findings", "runbook-update", "qa-triage",
+] as const;
+
+export function makeLargeIngest(): IngestData {
+  const now = Date.now();
+  const sources: SourceFeedItem[] = Array.from({ length: 40 }, (_, i) => {
+    const key = `load-${i}`;
+    const team = LOAD_TEAMS[Math.floor(h01(key, 3) * LOAD_TEAMS.length)];
+    const kind = LOAD_KINDS[Math.floor(h01(key, 5) * LOAD_KINDS.length)];
+    const slug = `${team}-${LOAD_SLUGS[Math.floor(h01(key, 7) * LOAD_SLUGS.length)]}-${String(100 + i)}`;
+    // age: log-spread over 48h so the conduction axis fills edge to edge
+    const ageMin = Math.pow(10, h01(key, 11) * Math.log10(2880));
+    const roll = h01(key, 13);
+    let status: SourceFeedItem["status"];
+    if (roll < 0.1) status = "queued";
+    else if (roll < 0.17) status = "retrying";
+    else if (roll < 0.25) status = "failed";
+    else status = "processed";
+    const memories =
+      status === "processed" ? (h01(key, 17) < 0.15 ? 0 : 1 + Math.floor(h01(key, 19) * 5)) : 0;
+    const promoted = memories > 0 && h01(key, 23) < 0.6 ? Math.ceil(memories * h01(key, 29)) : 0;
+    const pending =
+      memories - promoted > 0 && h01(key, 31) < 0.5 ? Math.min(memories - promoted, 2) : 0;
+    return {
+      id: `dl-${key}`,
+      kind,
+      external_ref: kind === "manual" ? null : slug,
+      created_at: new Date(now - ageMin * 60000).toISOString(),
+      team,
+      status,
+      attempts: status === "retrying" ? 1 + Math.floor(h01(key, 37) * 4) : status === "failed" ? 5 : 0,
+      memories,
+      promoted,
+      pending_review: pending,
+    };
+  });
+
+  const runs: PipelineRun[] = Array.from({ length: 18 }, (_, i) => {
+    const key = `run-${i}`;
+    const stage = STAGES[1 + Math.floor(h01(key, 3) * 4)];
+    const failed = h01(key, 5) < 0.15;
+    return {
+      id: `dr-${key}`,
+      stage,
+      status: failed ? "failed" : "ok",
+      detail: failed
+        ? "validation firewall: provider returned malformed JSON"
+        : `${1 + Math.floor(h01(key, 7) * 4)} items · ${stage}`,
+      started_at: new Date(now - h01(key, 11) * 2880 * 60000).toISOString(),
+      duration_secs: 1 + Math.floor(h01(key, 13) * 40),
+    };
+  });
+
+  return {
+    live: false,
+    sources,
+    runs,
+    health: {
+      queue: "ingest",
+      ready: 6,
+      in_flight: 2,
+      oldest_ready_secs: 214,
+      attempts_histogram: [
+        { attempts: 0, count: 4 },
+        { attempts: 1, count: 2 },
+        { attempts: 3, count: 2 },
+      ],
+      archived: { ok: 29, failed: 3 },
+      dead_letters: 3,
+    },
+  };
+}
 
 export const DEMO_INGEST: IngestData = {
   live: false,

@@ -7,6 +7,7 @@
  * along as the depot's activity feed.
  */
 
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
 import { band, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
@@ -17,8 +18,36 @@ import { useIngestFeed } from "../useIngestFeed";
 
 const THETA = band("theta");
 
+const ATTENTION = ["failed", "retrying", "queued"] as const;
+const FILTERS = ["all", "attention", "processed"] as const;
+type Filter = (typeof FILTERS)[number];
+
 export default function ManifestVariant({ data: initial }: { data: IngestData }) {
   const { data, refresh } = useIngestFeed(initial);
+  const [filter, setFilter] = useState<Filter>("all");
+
+  // Operator ordering: whatever needs a human floats to the top (failed →
+  // retrying → queued → pending review), then newest first.
+  const rows = useMemo(() => {
+    const rank = (s: (typeof data.sources)[number]) => {
+      const i = (ATTENTION as readonly string[]).indexOf(s.status);
+      if (i >= 0) return i;
+      if (s.pending_review > 0) return 3;
+      return 4;
+    };
+    return data.sources
+      .filter((s) =>
+        filter === "all"
+          ? true
+          : filter === "attention"
+            ? rank(s) < 4
+            : s.status === "processed",
+      )
+      .sort((a, b) => rank(a) - rank(b) || b.created_at.localeCompare(a.created_at));
+  }, [data.sources, filter]);
+  const attentionCount = data.sources.filter(
+    (s) => (ATTENTION as readonly string[]).includes(s.status) || s.pending_review > 0,
+  ).length;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
@@ -34,15 +63,35 @@ export default function ManifestVariant({ data: initial }: { data: IngestData })
         <SubmitBox live={data.live} onSubmitted={refresh} />
       </div>
 
+      {/* triage filters */}
+      <div className={`${FONT_MONO} mt-4 flex items-center gap-2 text-xs`}>
+        {FILTERS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`rounded-full border px-3 py-1 transition ${
+              filter === f
+                ? "border-[#7fa8f5]/70 bg-[#7fa8f5]/[0.08] text-[#a8c4f8]"
+                : "border-white/12 text-[#e9edff]/50 hover:border-white/30 hover:text-white"
+            }`}
+          >
+            {f === "attention" ? `needs attention · ${attentionCount}` : f}
+          </button>
+        ))}
+        <span className="ml-auto text-[#e9edff]/35">
+          {rows.length} / {data.sources.length} shipments · attention floats first
+        </span>
+      </div>
+
       {/* manifest table */}
-      <div className={`${FONT_MONO} mt-4 overflow-hidden rounded-xl border border-white/10`}>
+      <div className={`${FONT_MONO} mt-2 overflow-hidden rounded-xl border border-white/10`}>
         <div className={`${LABEL} grid grid-cols-[1fr_110px_190px_140px] gap-3 border-b border-white/10 bg-white/[0.02] px-4 py-2.5`} style={{ color: "rgba(233,237,255,0.4)" }}>
           <span>shipment</span>
           <span>status</span>
           <span>checkpoints</span>
           <span className="text-right">yield</span>
         </div>
-        {data.sources.map((s, i) => {
+        {rows.map((s, i) => {
           const { stage, stuck } = stageOf(s);
           return (
             <motion.div

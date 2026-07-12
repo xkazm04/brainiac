@@ -13,7 +13,7 @@ import { motion } from "framer-motion";
 
 import { band, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
-import { ageLabel, STAGES, stageOf, type IngestData } from "../ingest-data";
+import { ageLabel, h01, STAGES, stageOf, type IngestData } from "../ingest-data";
 import SubmitBox from "../SubmitBox";
 import { useIngestFeed } from "../useIngestFeed";
 
@@ -26,6 +26,10 @@ export default function ConductionVariant({ data: initial }: { data: IngestData 
   const { data, refresh } = useIngestFeed(initial);
   const [selected, setSelected] = useState<string | null>(null);
 
+  // Density mode: under load, pulses shrink and jitter vertically within
+  // their lane so co-located sources stay individually clickable.
+  const dense = data.sources.length > 15;
+
   // x by age: newest right (the "now" edge), log scale over 48h.
   const pulses = useMemo(() => {
     const now = Date.now();
@@ -33,9 +37,16 @@ export default function ConductionVariant({ data: initial }: { data: IngestData 
       const ageMin = Math.max(0.5, (now - new Date(s.created_at).getTime()) / 60000);
       const frac = Math.min(1, Math.log10(ageMin + 1) / Math.log10(2880));
       const { stage, stuck } = stageOf(s);
-      return { ...s, stage, stuck, x: LABEL_W + (1 - frac) * (W - LABEL_W - 40) };
+      const jitter = dense ? (h01(s.id, 41) - 0.5) * (LANE_H - 26) : 0;
+      return { ...s, stage, stuck, jitter, x: LABEL_W + (1 - frac) * (W - LABEL_W - 40) };
     });
-  }, [data.sources]);
+  }, [data.sources, dense]);
+
+  const laneCounts = useMemo(() => {
+    const counts = STAGES.map(() => 0);
+    for (const p of pulses) counts[p.stage]++;
+    return counts;
+  }, [pulses]);
 
   const H = STAGES.length * LANE_H;
   const sel = pulses.find((p) => p.id === selected);
@@ -65,6 +76,11 @@ export default function ConductionVariant({ data: initial }: { data: IngestData 
                 <text x={16} y={y + 4} fontSize="11" fill="rgba(233,237,255,0.45)" style={{ textTransform: "uppercase", letterSpacing: "0.16em" }}>
                   {String(i + 1).padStart(2, "0")} {stage}
                 </text>
+                {laneCounts[i] > 0 && (
+                  <text x={LABEL_W - 10} y={y + 4} fontSize="10" fill={THETA} textAnchor="end">
+                    {laneCounts[i]}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -75,7 +91,7 @@ export default function ConductionVariant({ data: initial }: { data: IngestData 
           </text>
           {/* conduction traces + pulses */}
           {pulses.map((p) => {
-            const y = p.stage * LANE_H + LANE_H / 2;
+            const y = p.stage * LANE_H + LANE_H / 2 + p.jitter;
             const isSel = selected === p.id;
             const tone = p.stuck ? MAGENTA : p.stage >= 4 ? band("gamma") : THETA;
             return (
@@ -84,7 +100,11 @@ export default function ConductionVariant({ data: initial }: { data: IngestData 
                 {/* trace of the path already conducted */}
                 <motion.path
                   d={`M ${p.x} ${LANE_H / 2} ${STAGES.slice(1, p.stage + 1)
-                    .map((_, k) => `L ${p.x} ${(k + 1) * LANE_H + LANE_H / 2}`)
+                    .map((_, k) =>
+                      k === p.stage - 1
+                        ? `L ${p.x} ${y}`
+                        : `L ${p.x} ${(k + 1) * LANE_H + LANE_H / 2}`,
+                    )
                     .join(" ")}`}
                   fill="none"
                   stroke={tone}
@@ -98,7 +118,7 @@ export default function ConductionVariant({ data: initial }: { data: IngestData 
                 <motion.circle
                   cx={p.x}
                   cy={y}
-                  r={4 + Math.min(5, p.memories)}
+                  r={(dense ? 3 : 4) + Math.min(dense ? 3 : 5, p.memories)}
                   fill={tone}
                   fillOpacity={p.stuck ? 0.9 : 0.75}
                   initial={{ scale: 0 }}
