@@ -52,6 +52,7 @@ pub async fn run(
                 query: q.query.clone(),
                 k: K,
                 as_of: q.as_of,
+                filters: Default::default(),
             },
         )
         .await?;
@@ -108,6 +109,7 @@ pub async fn run(
                 query: t.question.clone(),
                 k: K,
                 as_of: Some(t.as_of),
+                filters: Default::default(),
             },
         )
         .await?;
@@ -131,6 +133,7 @@ pub async fn run(
                 query: q.query.clone(),
                 k: 50, // deep k: a leak at ANY rank is a failure
                 as_of: None,
+                filters: Default::default(),
             },
         )
         .await?;

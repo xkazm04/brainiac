@@ -214,7 +214,7 @@ async fn rls_visibility_matrix_and_search_leaks() {
     let version = memories::ensure_embedding_version(&mut tx, "test-model", 4)
         .await
         .expect("ver");
-    let hits = memories::search_vector(&mut tx, version, &[1.0, 0.0, 0.0, 0.0], 10)
+    let hits = memories::search_vector(&mut tx, version, &[1.0, 0.0, 0.0, 0.0], 10, &Default::default())
         .await
         .expect("ann");
     let hit_ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
@@ -226,7 +226,7 @@ async fn rls_visibility_matrix_and_search_leaks() {
     assert!(!hit_ids.contains(&uuid(103)), "ANN leaked a private row");
 
     // FTS as data analyst: same invariant.
-    let hits = memories::search_fts(&mut tx, "webhook signing secret", 10)
+    let hits = memories::search_fts(&mut tx, "webhook signing secret", 10, &Default::default())
         .await
         .expect("fts");
     assert!(

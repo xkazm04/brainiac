@@ -110,6 +110,52 @@ struct SearchBody {
     k: usize,
     #[serde(default)]
     as_of: Option<DateTime<Utc>>,
+    /// Memory kinds to keep (fact|decision|pattern|pitfall|howto); omit for all.
+    #[serde(default)]
+    kinds: Vec<String>,
+    /// Trust floor: raw|candidate|canonical (candidate ⇒ candidate+canonical).
+    #[serde(default)]
+    min_status: Option<String>,
+    /// Restrict to one team's memories.
+    #[serde(default)]
+    team_id: Option<Uuid>,
+    /// Minimum extractor confidence 0..1.
+    #[serde(default)]
+    min_confidence: Option<f32>,
+}
+
+impl SearchBody {
+    fn filters(&self) -> Result<brainiac_store::retrieval::RetrievalFilters, (StatusCode, String)> {
+        for k in &self.kinds {
+            if brainiac_core::MemoryKind::parse(k).is_none() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown kind `{k}` (fact|decision|pattern|pitfall|howto)"),
+                ));
+            }
+        }
+        let min_status = match self.min_status.as_deref() {
+            None => None,
+            Some(s) => Some(brainiac_core::MemoryStatus::parse(s).ok_or((
+                StatusCode::BAD_REQUEST,
+                format!("unknown min_status `{s}` (raw|candidate|canonical)"),
+            ))?),
+        };
+        if let Some(c) = self.min_confidence {
+            if !(0.0..=1.0).contains(&c) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "min_confidence must be within 0..=1".into(),
+                ));
+            }
+        }
+        Ok(brainiac_store::retrieval::RetrievalFilters {
+            kinds: self.kinds.clone(),
+            min_status,
+            team_id: self.team_id,
+            min_confidence: self.min_confidence,
+        })
+    }
 }
 
 fn default_k() -> usize {
@@ -133,6 +179,7 @@ async fn search(
     Json(body): Json<SearchBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let principal = principal_of(&state, &headers).await?;
+    let filters = body.filters()?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
@@ -142,6 +189,7 @@ async fn search(
             query: body.query,
             k: body.k.min(50),
             as_of: body.as_of,
+            filters,
         },
     )
     .await

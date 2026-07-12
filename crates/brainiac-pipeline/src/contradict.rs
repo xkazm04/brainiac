@@ -51,8 +51,14 @@ pub async fn run_contradict(
 
     // Candidates: nearest by vector, restricted to those sharing an anchor.
     let query_vec = embedder.embed(&memory.content).await?;
-    let near =
-        brainiac_store::memories::search_vector(conn, embedding_version, &query_vec, 6).await?;
+    let near = brainiac_store::memories::search_vector(
+        conn,
+        embedding_version,
+        &query_vec,
+        6,
+        &Default::default(),
+    )
+    .await?;
     let anchor_ids = brainiac_store::entities::anchors_of_memories(conn, &[memory.id]).await?;
     let candidate_ids: Vec<Uuid> = near
         .into_iter()

@@ -110,6 +110,7 @@ pub async fn search_vector(
     version_id: i32,
     query: &[f32],
     limit: i64,
+    filters: &crate::retrieval::RetrievalFilters,
 ) -> Result<Vec<(Uuid, f32)>> {
     let rows = sqlx::query(
         "SELECT m.id, 1 - (e.embedding <=> $1::vector) AS score
@@ -117,12 +118,20 @@ pub async fn search_vector(
          JOIN memories m ON m.id = e.memory_id
          WHERE e.embedding_version_id = $2
            AND m.status <> 'rejected'
+           AND ($4::text[] IS NULL OR m.kind = ANY($4))
+           AND ($5::text[] IS NULL OR m.status::text = ANY($5))
+           AND ($6::uuid IS NULL OR m.team_id = $6)
+           AND ($7::real IS NULL OR m.confidence >= $7)
          ORDER BY e.embedding <=> $1::vector
          LIMIT $3",
     )
     .bind(vector_literal(query))
     .bind(version_id)
     .bind(limit)
+    .bind(filter_kinds(filters))
+    .bind(filters.allowed_statuses())
+    .bind(filters.team_id)
+    .bind(filters.min_confidence)
     .fetch_all(conn)
     .await?;
     Ok(rows
@@ -136,23 +145,41 @@ pub async fn search_fts(
     conn: &mut PgConnection,
     query: &str,
     limit: i64,
+    filters: &crate::retrieval::RetrievalFilters,
 ) -> Result<Vec<(Uuid, f32)>> {
     let rows = sqlx::query(
         "SELECT m.id, ts_rank(m.content_fts, q) AS score
          FROM memories m, plainto_tsquery('english', $1) q
          WHERE m.content_fts @@ q
            AND m.status <> 'rejected'
+           AND ($3::text[] IS NULL OR m.kind = ANY($3))
+           AND ($4::text[] IS NULL OR m.status::text = ANY($4))
+           AND ($5::uuid IS NULL OR m.team_id = $5)
+           AND ($6::real IS NULL OR m.confidence >= $6)
          ORDER BY score DESC
          LIMIT $2",
     )
     .bind(query)
     .bind(limit)
+    .bind(filter_kinds(filters))
+    .bind(filters.allowed_statuses())
+    .bind(filters.team_id)
+    .bind(filters.min_confidence)
     .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
         .map(|r| (r.get::<Uuid, _>("id"), r.get::<f32, _>("score")))
         .collect())
+}
+
+/// `None` when no kind filter applies (SQL treats NULL as "all kinds").
+fn filter_kinds(filters: &crate::retrieval::RetrievalFilters) -> Option<Vec<String>> {
+    if filters.kinds.is_empty() {
+        None
+    } else {
+        Some(filters.kinds.clone())
+    }
 }
 
 fn row_to_memory(r: &sqlx::postgres::PgRow) -> Memory {

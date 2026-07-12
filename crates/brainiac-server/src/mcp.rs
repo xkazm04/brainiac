@@ -224,6 +224,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
             query: query.to_string(),
             k,
             as_of,
+            filters: Default::default(),
         },
     )
     .await?;
@@ -253,6 +254,7 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value> {
             query: hint.to_string(),
             k: 25,
             as_of: None,
+            filters: Default::default(),
         },
     )
     .await?;

@@ -17,7 +17,7 @@ use anyhow::Result;
 use brainiac_core::embed::Embedder;
 use brainiac_core::fusion::reciprocal_rank_fusion;
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
-use brainiac_core::Memory;
+use brainiac_core::{Memory, MemoryStatus};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -30,11 +30,67 @@ const GRAPH_EXTRA_MEMORIES: i64 = 10;
 const GRAPH_HOPS: u8 = 2;
 const RRF_K: f64 = 60.0;
 
+/// Metadata narrowing on top of relevance. All fields are conjunctive;
+/// the default filters nothing (beyond the standing `rejected` exclusion).
+#[derive(Debug, Clone, Default)]
+pub struct RetrievalFilters {
+    /// Memory kinds to keep (`fact`, `decision`, …); empty = all kinds.
+    pub kinds: Vec<String>,
+    /// Trust floor: `Candidate` keeps candidate+canonical, `Canonical`
+    /// keeps canonical only. `None` = today's default (all but rejected).
+    pub min_status: Option<MemoryStatus>,
+    /// Restrict to one team's memories.
+    pub team_id: Option<Uuid>,
+    /// Minimum extractor confidence (memories with NULL confidence drop).
+    pub min_confidence: Option<f32>,
+}
+
+impl RetrievalFilters {
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+            && self.min_status.is_none()
+            && self.team_id.is_none()
+            && self.min_confidence.is_none()
+    }
+
+    /// Statuses admitted by the floor, as SQL enum literals; `None` = no
+    /// floor (only the standing `rejected` exclusion applies).
+    pub(crate) fn allowed_statuses(&self) -> Option<Vec<String>> {
+        let floor = self.min_status?;
+        let order = [
+            MemoryStatus::Raw,
+            MemoryStatus::Candidate,
+            MemoryStatus::Canonical,
+        ];
+        Some(
+            order
+                .iter()
+                .skip_while(|s| **s != floor)
+                .map(|s| s.as_str().to_string())
+                .collect(),
+        )
+    }
+
+    /// The post-SQL check, applied to graph-expansion extras too (they join
+    /// the result set after the filtered candidate stage).
+    fn admits(&self, m: &Memory) -> bool {
+        (self.kinds.is_empty() || self.kinds.iter().any(|k| k == m.kind.as_str()))
+            && self
+                .allowed_statuses()
+                .is_none_or(|ok| ok.iter().any(|s| s == m.status.as_str()))
+            && self.team_id.is_none_or(|t| m.team_id == Some(t))
+            && self
+                .min_confidence
+                .is_none_or(|c| m.confidence.is_some_and(|mc| mc >= c))
+    }
+}
+
 pub struct RetrievalRequest {
     pub query: String,
     pub k: usize,
     /// Point-in-time view; `None` = now.
     pub as_of: Option<DateTime<Utc>>,
+    pub filters: RetrievalFilters,
 }
 
 #[derive(Debug, Clone)]
@@ -54,12 +110,20 @@ pub async fn search(
 ) -> Result<Vec<RetrievalHit>> {
     let as_of = req.as_of.unwrap_or_else(Utc::now);
 
-    // Stage 2: candidate lists (ranked best-first).
+    // Stage 2: candidate lists (ranked best-first), filters pushed into SQL
+    // so narrowed searches don't waste their candidate budget on rows the
+    // assembly stage would drop anyway.
     let query_vec = embedder.embed(&req.query).await?;
-    let vector_hits =
-        memories::search_vector(tx, embedding_version, &query_vec, CANDIDATES_PER_RETRIEVER)
-            .await?;
-    let fts_hits = memories::search_fts(tx, &req.query, CANDIDATES_PER_RETRIEVER).await?;
+    let vector_hits = memories::search_vector(
+        tx,
+        embedding_version,
+        &query_vec,
+        CANDIDATES_PER_RETRIEVER,
+        &req.filters,
+    )
+    .await?;
+    let fts_hits =
+        memories::search_fts(tx, &req.query, CANDIDATES_PER_RETRIEVER, &req.filters).await?;
 
     let vector_ranked: Vec<Uuid> = vector_hits.iter().map(|(id, _)| *id).collect();
     let fts_ranked: Vec<Uuid> = fts_hits.iter().map(|(id, _)| *id).collect();
@@ -98,8 +162,12 @@ pub async fn search(
 
     // Temporal correctness: drop rows outside their validity window at the
     // requested time, then collapse supersession chains to the single member
-    // correct for that time.
-    let ordered: Vec<Memory> = ordered.into_iter().filter(|m| valid_at(m, as_of)).collect();
+    // correct for that time. Metadata filters re-apply here because graph
+    // extras bypass the filtered candidate stage.
+    let ordered: Vec<Memory> = ordered
+        .into_iter()
+        .filter(|m| valid_at(m, as_of) && req.filters.admits(m))
+        .collect();
     let deduped = dedupe_for_time(&ordered, as_of);
 
     Ok(deduped
