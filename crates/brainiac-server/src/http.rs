@@ -62,6 +62,9 @@ pub async fn router(store: Store, embedder: Arc<dyn Embedder>) -> Result<Router>
         .route("/v1/reviews/promotions", get(pending_promotions))
         .route("/v1/tokens", get(list_tokens).post(create_token))
         .route("/v1/tokens/{id}/revoke", post(revoke_token))
+        .route("/v1/queue/health", get(queue_health))
+        .route("/v1/queue/dead-letters", get(queue_dead_letters))
+        .route("/v1/queue/dead-letters/{id}/requeue", post(queue_requeue))
         .merge(crate::console::routes())
         .with_state(state))
 }
@@ -505,6 +508,83 @@ async fn revoke_token(
         ));
     }
     Ok(Json(json!({ "id": id, "revoked": true })))
+}
+
+// ── queue operations ────────────────────────────────────────────────────
+// The queue schema is org-blind (payloads span every org), so all three
+// endpoints require the admin scope — this is an operator surface.
+
+#[derive(Deserialize)]
+struct QueueQuery {
+    /// Queue name; defaults to the ingest queue.
+    queue: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn queue_health(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<QueueQuery>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    auth_of(&state, &headers, "admin").await?;
+    let queue = q
+        .queue
+        .unwrap_or_else(|| brainiac_pipeline::worker::INGEST_QUEUE.to_string());
+    let h = brainiac_store::queue::health(state.store.pool(), &queue)
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!({
+        "queue": h.queue_name,
+        "ready": h.ready,
+        "in_flight": h.in_flight,
+        "oldest_ready_secs": h.oldest_ready_secs,
+        "attempts_histogram": h.attempts_histogram.iter().map(|(a, n)| json!({
+            "attempts": a, "count": n,
+        })).collect::<Vec<_>>(),
+        "archived": { "ok": h.archived_ok, "failed": h.archived_failed },
+        "dead_letters": h.dead_letters,
+    })))
+}
+
+async fn queue_dead_letters(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<QueueQuery>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    auth_of(&state, &headers, "admin").await?;
+    let queue = q
+        .queue
+        .unwrap_or_else(|| brainiac_pipeline::worker::INGEST_QUEUE.to_string());
+    let rows = brainiac_store::queue::dead_letters(state.store.pool(), &queue, q.limit.unwrap_or(50))
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!({
+        "dead_letters": rows.iter().map(|d| json!({
+            "id": d.id,
+            "payload": d.payload,
+            "attempts": d.attempts,
+            "enqueued_at": d.enqueued_at,
+            "archived_at": d.archived_at,
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+async fn queue_requeue(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    auth_of(&state, &headers, "admin").await?;
+    let requeued = brainiac_store::queue::requeue_dead(state.store.pool(), id)
+        .await
+        .map_err(internal)?;
+    if !requeued {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "job is not in the dead-letter archive".into(),
+        ));
+    }
+    Ok(Json(json!({ "id": id, "requeued": true })))
 }
 
 pub(crate) fn internal(e: impl std::fmt::Display) -> (StatusCode, String) {

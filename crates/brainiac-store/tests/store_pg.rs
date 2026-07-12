@@ -375,6 +375,31 @@ async fn queue_claim_redeliver_and_dead_letter() {
     queue::complete(pool, &claimed[0]).await.expect("complete");
     assert_eq!(queue::depth(pool, "extract").await.expect("depth"), 0);
 
+    // Health reflects the story so far: nothing live, one ok, one dead.
+    let h = queue::health(pool, "extract").await.expect("health");
+    assert_eq!((h.ready, h.in_flight), (0, 0));
+    assert_eq!(h.archived_ok, 1);
+    assert_eq!(h.dead_letters, 1);
+
+    // Dead-letter inspection + requeue round trip.
+    let dead = queue::dead_letters(pool, "extract", 10).await.expect("dl");
+    assert_eq!(dead.len(), 1);
+    assert_eq!(dead[0].payload["task"], "extract");
+    // Archive rows carry the DB-recorded claim count (the dead-letter above
+    // was forced by forging attempts locally, so only the real claims show).
+    assert!(dead[0].attempts >= 1);
+    let requeued = queue::requeue_dead(pool, dead[0].id).await.expect("requeue");
+    assert!(requeued, "dead letter must requeue");
+    assert_eq!(queue::depth(pool, "extract").await.expect("depth"), 1);
+    let back = queue::read(pool, "extract", 1, 30).await.expect("read5");
+    assert_eq!(back[0].id, dead[0].id, "requeue preserves the job id");
+    assert_eq!(back[0].attempts, 1, "attempt budget resets");
+    assert!(
+        !queue::requeue_dead(pool, dead[0].id).await.expect("requeue2"),
+        "second requeue of the same id is a no-op"
+    );
+    queue::complete(pool, &back[0]).await.expect("complete2");
+
     // Keep admin pool alive till the end (unused otherwise).
     let _ = &ctx.admin;
 }
