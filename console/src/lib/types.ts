@@ -69,6 +69,38 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface SourceFeedItem {
+  id: string;
+  kind: string;
+  external_ref: string | null;
+  created_at: string;
+  team: string | null;
+  status: "queued" | "retrying" | "processed" | "failed" | "unknown";
+  attempts: number | null;
+  memories: number;
+  promoted: number;
+  pending_review: number;
+}
+
+export interface PipelineRun {
+  id: string;
+  stage: string;
+  status: string;
+  detail: string | null;
+  started_at: string;
+  duration_secs: number;
+}
+
+export interface QueueHealth {
+  queue: string;
+  ready: number;
+  in_flight: number;
+  oldest_ready_secs: number;
+  attempts_histogram: { attempts: number; count: number }[];
+  archived: { ok: number; failed: number };
+  dead_letters: number;
+}
+
 export interface MemoryRow {
   id: string;
   content: string;

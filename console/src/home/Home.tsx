@@ -259,6 +259,9 @@ export default function Home({ live }: { live: LiveStats | null }) {
           <Link href="/memories" className="transition hover:text-[#f3c74f]">
             archive
           </Link>
+          <Link href="/ingest" className="transition hover:text-[#f3c74f]">
+            ingest
+          </Link>
           <Link href="/analytics" className="transition hover:text-[#f3c74f]">
             analytics
           </Link>

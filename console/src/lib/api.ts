@@ -16,8 +16,11 @@ import type {
   MemoryDetail,
   ObservatoryPayload,
   PendingPromotion,
+  PipelineRun,
+  QueueHealth,
   ReviewedPromotion,
   SearchHit,
+  SourceFeedItem,
 } from "./types";
 
 export class ApiError extends Error {
@@ -147,6 +150,27 @@ export async function listMemories(
 
 export async function getMemoryDetail(cfg: ApiConfig, id: string): Promise<MemoryDetail> {
   return call(cfg, "GET", `/v1/memories/${id}`);
+}
+
+export async function getSourcesFeed(cfg: ApiConfig, limit = 30): Promise<SourceFeedItem[]> {
+  const out = await call<{ sources: SourceFeedItem[] }>(cfg, "GET", `/v1/sources?limit=${limit}`);
+  return out.sources;
+}
+
+export async function getPipelineRuns(cfg: ApiConfig, limit = 40): Promise<PipelineRun[]> {
+  const out = await call<{ runs: PipelineRun[] }>(cfg, "GET", `/v1/pipeline/runs?limit=${limit}`);
+  return out.runs;
+}
+
+export async function getQueueHealth(cfg: ApiConfig): Promise<QueueHealth> {
+  return call(cfg, "GET", "/v1/queue/health");
+}
+
+export async function submitMemory(
+  cfg: ApiConfig,
+  content: string,
+): Promise<{ source_id: string; job_id: number }> {
+  return call(cfg, "POST", "/v1/memories", { content });
 }
 
 export async function getGraphCanonical(

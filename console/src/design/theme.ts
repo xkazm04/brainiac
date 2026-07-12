@@ -42,6 +42,7 @@ export const MODULE_BAND: Record<string, BandKey> = {
   analytics: "beta",
   demo: "beta",
   memories: "delta",
+  ingest: "theta",
 };
 
 export const band = (key: BandKey, lightness = 68, alpha = 1) =>
