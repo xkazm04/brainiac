@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
-use brainiac_core::{ActorKind, MemoryKind, MemoryStatus, Visibility};
+use brainiac_core::{ActorKind, EdgeRelation, EntityKind, MemoryKind, MemoryStatus, Visibility};
 use brainiac_gateway::{ChatProvider, ChatRequest};
 use serde::Deserialize;
 use sqlx::PgConnection;
@@ -423,13 +423,20 @@ pub async fn run_extract(
                         Some(id) => id,
                         None => {
                             let id = Uuid::new_v4();
+                            // Entity-kind firewall: coerce an unknown/typo'd
+                            // kind to the `concept` default rather than storing
+                            // the raw typo (dropping a whole memory over one
+                            // mislabeled entity would be too harsh — the kind is
+                            // advisory metadata, and a canonical value keeps the
+                            // graph queryable).
+                            let entity_kind = EntityKind::parse(&e.kind).unwrap_or_default();
                             brainiac_store::entities::insert_entity(
                                 conn,
                                 id,
                                 org_id,
                                 team_id,
                                 &e.name,
-                                &e.kind,
+                                entity_kind.as_str(),
                                 &e.clean_aliases(),
                                 Some(provenance_id),
                             )
@@ -449,13 +456,21 @@ pub async fn run_extract(
                     stats.dropped_invalid += 1;
                     continue; // relation names must reference listed entities
                 };
+                // Relation firewall: unlike entity kind, an unknown relation is
+                // DROPPED (counted), not coerced — a bogus edge invents graph
+                // structure (wrong depends_on/owns), which is worse than an
+                // untyped node. Only the five canonical relations reach the DB.
+                let Some(relation) = EdgeRelation::parse(&r.rel) else {
+                    stats.dropped_invalid += 1;
+                    continue;
+                };
                 brainiac_store::entities::insert_edge(
                     conn,
                     Uuid::new_v4(),
                     org_id,
                     *src,
                     *dst,
-                    &r.rel,
+                    relation.as_str(),
                     Some(memory_id),
                 )
                 .await?;

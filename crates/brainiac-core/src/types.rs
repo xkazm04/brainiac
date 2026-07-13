@@ -139,6 +139,131 @@ impl ActorKind {
             Self::Pipeline => "pipeline",
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "human" => Some(Self::Human),
+            "agent" => Some(Self::Agent),
+            "pipeline" => Some(Self::Pipeline),
+            _ => None,
+        }
+    }
+}
+
+/// Kind of a graph entity (ARCHITECTURE.md §2). The legal values used to live
+/// only in a comment on [`Entity::kind`]/[`CanonicalEntity::kind`] (raw
+/// `String`s), so extraction stored typo'd kinds silently; this is the typed
+/// vocabulary the extraction firewall validates against. Wire/DB stay strings
+/// via [`Self::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityKind {
+    Service,
+    Repo,
+    Tech,
+    Feature,
+    /// The permissive fallback: an unrecognized or unspecified entity kind is
+    /// coerced here rather than stored raw, so no typo ever reaches the DB.
+    #[default]
+    Concept,
+    Team,
+}
+
+impl EntityKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Service => "service",
+            Self::Repo => "repo",
+            Self::Tech => "tech",
+            Self::Feature => "feature",
+            Self::Concept => "concept",
+            Self::Team => "team",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "service" => Some(Self::Service),
+            "repo" => Some(Self::Repo),
+            "tech" => Some(Self::Tech),
+            "feature" => Some(Self::Feature),
+            "concept" => Some(Self::Concept),
+            "team" => Some(Self::Team),
+            _ => None,
+        }
+    }
+}
+
+/// Directed relation between two entities (ARCHITECTURE.md §2). Formerly a raw
+/// `String` on [`Edge::relation`] with legal values in a comment; the
+/// extraction firewall now parses against this and DROPS unknown relations
+/// (a bogus edge is worse than a coerced entity kind — it invents graph
+/// structure). Wire/DB stay strings via [`Self::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeRelation {
+    Uses,
+    DependsOn,
+    Owns,
+    Deprecates,
+    RelatesTo,
+}
+
+impl EdgeRelation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Uses => "uses",
+            Self::DependsOn => "depends_on",
+            Self::Owns => "owns",
+            Self::Deprecates => "deprecates",
+            Self::RelatesTo => "relates_to",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "uses" => Some(Self::Uses),
+            "depends_on" => Some(Self::DependsOn),
+            "owns" => Some(Self::Owns),
+            "deprecates" => Some(Self::Deprecates),
+            "relates_to" => Some(Self::RelatesTo),
+            _ => None,
+        }
+    }
+}
+
+/// Origin of a [`Source`] (ARCHITECTURE.md §2). The values actually written by
+/// the ingest surfaces are `session_transcript` (fixtures/worker transcripts)
+/// and `manual` (REST/MCP memory_add); `repo` and `doc` round out the
+/// documented vocabulary. Wire/DB stay strings via [`Self::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    SessionTranscript,
+    Repo,
+    Doc,
+    Manual,
+}
+
+impl SourceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SessionTranscript => "session_transcript",
+            Self::Repo => "repo",
+            Self::Doc => "doc",
+            Self::Manual => "manual",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "session_transcript" => Some(Self::SessionTranscript),
+            "repo" => Some(Self::Repo),
+            "doc" => Some(Self::Doc),
+            "manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +325,7 @@ pub struct Source {
     pub id: Uuid,
     pub org_id: Uuid,
     pub team_id: Option<Uuid>,
-    /// session_transcript | repo | doc | manual
+    /// Wire/DB string; legal values are [`SourceKind`].
     pub kind: String,
     pub external_ref: Option<String>,
     pub created_by: Option<Uuid>,
@@ -244,7 +369,7 @@ pub struct Entity {
     pub org_id: Uuid,
     pub team_id: Option<Uuid>,
     pub name: String,
-    /// service | repo | tech | feature | concept | team
+    /// Wire/DB string; legal values are [`EntityKind`].
     pub kind: String,
     pub aliases: Vec<String>,
     pub provenance_id: Option<Uuid>,
@@ -257,6 +382,7 @@ pub struct CanonicalEntity {
     pub id: Uuid,
     pub org_id: Uuid,
     pub name: String,
+    /// Wire/DB string; legal values are [`EntityKind`].
     pub kind: String,
     pub summary: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -279,6 +405,15 @@ impl LinkMethod {
             Self::Human => "human",
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "embedding_block" => Some(Self::EmbeddingBlock),
+            "llm_adjudicated" => Some(Self::LlmAdjudicated),
+            "human" => Some(Self::Human),
+            _ => None,
+        }
+    }
 }
 
 /// Soft merge: reversible, auditable (`same_as` edge).
@@ -297,7 +432,7 @@ pub struct Edge {
     pub org_id: Uuid,
     pub src_entity: Uuid,
     pub dst_entity: Uuid,
-    /// uses | depends_on | owns | deprecates | relates_to
+    /// Wire/DB string; legal values are [`EdgeRelation`].
     pub relation: String,
     /// Evidence: the memory this edge came from.
     pub memory_id: Option<Uuid>,
@@ -323,6 +458,15 @@ impl PolicyDecision {
             Self::AutoApproved => "auto_approved",
             Self::NeedsReview => "needs_review",
             Self::Denied => "denied",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "auto_approved" => Some(Self::AutoApproved),
+            "needs_review" => Some(Self::NeedsReview),
+            "denied" => Some(Self::Denied),
+            _ => None,
         }
     }
 }
@@ -400,5 +544,37 @@ mod tests {
         for s in ["fact", "decision", "pattern", "pitfall", "howto"] {
             assert_eq!(MemoryKind::parse(s).map(|v| v.as_str()), Some(s));
         }
+    }
+
+    #[test]
+    fn vocabulary_enum_round_trips() {
+        for s in ["human", "agent", "pipeline"] {
+            assert_eq!(ActorKind::parse(s).map(|v| v.as_str()), Some(s));
+        }
+        for s in ["service", "repo", "tech", "feature", "concept", "team"] {
+            assert_eq!(EntityKind::parse(s).map(|v| v.as_str()), Some(s));
+        }
+        for s in ["uses", "depends_on", "owns", "deprecates", "relates_to"] {
+            assert_eq!(EdgeRelation::parse(s).map(|v| v.as_str()), Some(s));
+        }
+        for s in ["session_transcript", "repo", "doc", "manual"] {
+            assert_eq!(SourceKind::parse(s).map(|v| v.as_str()), Some(s));
+        }
+        for s in ["embedding_block", "llm_adjudicated", "human"] {
+            assert_eq!(LinkMethod::parse(s).map(|v| v.as_str()), Some(s));
+        }
+        for s in ["auto_approved", "needs_review", "denied"] {
+            assert_eq!(PolicyDecision::parse(s).map(|v| v.as_str()), Some(s));
+        }
+    }
+
+    #[test]
+    fn unknown_vocabulary_is_rejected_and_entity_kind_defaults_to_concept() {
+        assert_eq!(EntityKind::parse("serrvice"), None, "typos don't parse");
+        assert_eq!(EdgeRelation::parse("uzes"), None);
+        assert_eq!(SourceKind::parse("chat"), None);
+        // The permissive fallback the extraction firewall coerces to.
+        assert_eq!(EntityKind::default(), EntityKind::Concept);
+        assert_eq!(EntityKind::default().as_str(), "concept");
     }
 }

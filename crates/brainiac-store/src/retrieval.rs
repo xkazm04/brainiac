@@ -26,7 +26,7 @@ use brainiac_core::fusion::{
 use brainiac_core::rerank::Reranker;
 use brainiac_core::scoring::{blended_score, graph_relevance, FeedbackSignal};
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
-use brainiac_core::{Memory, MemoryStatus};
+use brainiac_core::{Memory, MemoryKind, MemoryStatus};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -61,7 +61,9 @@ const IDENT_FTS_WEIGHT: f64 = 2.0;
 #[derive(Debug, Clone, Default)]
 pub struct RetrievalFilters {
     /// Memory kinds to keep (`fact`, `decision`, …); empty = all kinds.
-    pub kinds: Vec<String>,
+    /// Typed so an invalid kind can never reach the SQL filter — callers parse
+    /// at the edge (HTTP/MCP) and construct these.
+    pub kinds: Vec<MemoryKind>,
     /// Trust floor: `Candidate` keeps candidate+canonical, `Canonical`
     /// keeps canonical only. `None` = today's default (all but rejected).
     pub min_status: Option<MemoryStatus>,
@@ -100,7 +102,7 @@ impl RetrievalFilters {
     /// The post-SQL check, applied to graph-expansion extras too (they join
     /// the result set after the filtered candidate stage).
     fn admits(&self, m: &Memory) -> bool {
-        (self.kinds.is_empty() || self.kinds.iter().any(|k| k == m.kind.as_str()))
+        (self.kinds.is_empty() || self.kinds.contains(&m.kind))
             && self
                 .allowed_statuses()
                 .is_none_or(|ok| ok.iter().any(|s| s == m.status.as_str()))

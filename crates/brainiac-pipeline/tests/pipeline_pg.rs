@@ -1340,3 +1340,138 @@ async fn long_transcript_captures_head_and_tail() {
         .get("n");
     assert_eq!(prov, 1, "one provenance row per source across chunks");
 }
+
+/// Extraction firewall for the typed vocabulary (Direction 3): a typo'd entity
+/// kind is COERCED to `concept` (never stored raw), and an unknown edge
+/// relation is DROPPED and counted — only the five canonical relations reach
+/// the graph. Wire/DB stay strings; the enums are the validation boundary.
+#[tokio::test]
+async fn extraction_firewall_types_entities_and_relations() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set — extraction firewall test needs Postgres");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
+         CASCADE",
+    )
+    .execute(&admin)
+    .await
+    .expect("truncate");
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([7; 16]);
+    let team_id = Uuid::from_bytes([8; 16]);
+    let source_id = Uuid::from_bytes([9; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // One memory, two entities (one VALID kind `service`, one TYPO `serrvice`),
+    // two relations (one VALID `uses`, one BOGUS `controls`).
+    let mock = MockProvider::new(|_req: &ChatRequest| {
+        json!({
+            "memories": [{
+                "kind": "fact",
+                "content": "gizmo-svc calls widget-svc over grpc",
+                "visibility": "team",
+                "confidence": 0.9,
+                "entities": [
+                    {"name": "gizmo-svc", "kind": "service"},
+                    {"name": "widget-svc", "kind": "serrvice"}
+                ],
+                "relations": [
+                    {"src": "gizmo-svc", "rel": "uses", "dst": "widget-svc"},
+                    {"src": "gizmo-svc", "rel": "controls", "dst": "widget-svc"}
+                ]
+            }]
+        })
+        .to_string()
+    });
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    brainiac_store::orgs::upsert_org(&mut tx, org_id, "firewall-org")
+        .await
+        .expect("org");
+    brainiac_store::orgs::upsert_team(&mut tx, team_id, org_id, "firewall-team")
+        .await
+        .expect("team");
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team_id),
+        "session_transcript",
+        "gizmo-svc calls widget-svc",
+        None,
+    )
+    .await
+    .expect("source");
+    let version = brainiac_store::memories::ensure_embedding_version(
+        &mut tx,
+        embedder.model_name(),
+        embedder.dim() as i32,
+    )
+    .await
+    .expect("ver");
+
+    let stats = brainiac_pipeline::extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team_id),
+        source_id,
+        "gizmo-svc calls widget-svc",
+    )
+    .await
+    .expect("extract");
+    tx.commit().await.expect("commit");
+
+    assert_eq!(stats.memories_written, 1, "the memory itself is valid");
+    assert!(
+        stats.dropped_invalid >= 1,
+        "the bogus `controls` relation must be dropped/counted, got {}",
+        stats.dropped_invalid
+    );
+
+    use sqlx::Row;
+    // The typo'd entity kind is coerced to `concept`; NO raw typo in the DB.
+    let typo: i64 = sqlx::query("SELECT count(*) AS n FROM entities WHERE kind = 'serrvice'")
+        .fetch_one(&admin)
+        .await
+        .expect("q")
+        .get("n");
+    assert_eq!(typo, 0, "no raw typo'd kind reaches the DB");
+    let coerced: String = sqlx::query("SELECT kind FROM entities WHERE name = 'widget-svc'")
+        .fetch_one(&admin)
+        .await
+        .expect("q")
+        .get("kind");
+    assert_eq!(coerced, "concept", "unknown entity kind coerces to concept");
+    let valid_kind: String = sqlx::query("SELECT kind FROM entities WHERE name = 'gizmo-svc'")
+        .fetch_one(&admin)
+        .await
+        .expect("q")
+        .get("kind");
+    assert_eq!(valid_kind, "service", "a valid kind is preserved verbatim");
+
+    // Only the valid `uses` edge exists; the bogus relation created no edge.
+    let relations: Vec<String> = sqlx::query("SELECT relation FROM edges")
+        .fetch_all(&admin)
+        .await
+        .expect("q")
+        .iter()
+        .map(|r| r.get::<String, _>("relation"))
+        .collect();
+    assert_eq!(
+        relations,
+        vec!["uses".to_string()],
+        "only the canonical relation is stored, got {relations:?}"
+    );
+}

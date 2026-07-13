@@ -153,13 +153,15 @@ pub(crate) struct SearchBody {
 
 impl SearchBody {
     fn filters(&self) -> Result<brainiac_store::retrieval::RetrievalFilters, (StatusCode, String)> {
+        // Parse each wire string into the typed kind at the edge; the filter
+        // downstream is typed, so an invalid kind can never reach the SQL.
+        let mut kinds = Vec::with_capacity(self.kinds.len());
         for k in &self.kinds {
-            if brainiac_core::MemoryKind::parse(k).is_none() {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!("unknown kind `{k}` (fact|decision|pattern|pitfall|howto)"),
-                ));
-            }
+            let parsed = brainiac_core::MemoryKind::parse(k).ok_or((
+                StatusCode::BAD_REQUEST,
+                format!("unknown kind `{k}` (fact|decision|pattern|pitfall|howto)"),
+            ))?;
+            kinds.push(parsed);
         }
         let min_status = match self.min_status.as_deref() {
             None => None,
@@ -177,7 +179,7 @@ impl SearchBody {
             }
         }
         Ok(brainiac_store::retrieval::RetrievalFilters {
-            kinds: self.kinds.clone(),
+            kinds,
             min_status,
             team_id: self.team_id,
             min_confidence: self.min_confidence,

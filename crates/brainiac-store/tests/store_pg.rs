@@ -448,11 +448,19 @@ async fn ensure_version_auto_creates_hnsw_index_for_new_dim() {
     let embedder = DeterministicEmbedder::new(768);
     assert_eq!(embedder.dim(), 768);
 
+    // Clean precondition: indexes survive TRUNCATE (and a prior run of this
+    // test would have created this one), so drop it as the owner to prove the
+    // ensure path recreates it. DROP INDEX needs owner rights — the admin pool.
+    sqlx::query("DROP INDEX IF EXISTS idx_memory_embeddings_hnsw_768")
+        .execute(&ctx.admin)
+        .await
+        .expect("drop 768 index");
+
     let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
     let c = &mut *tx;
 
-    // Precondition: no 768-d index yet (fresh tenant, only 0006's 256/1024 and
-    // 0012's re-assertion of those two exist).
+    // Precondition: no 768-d index yet (dropped above; 0006's 256/1024 and
+    // 0012's re-assertion of those two are the only HNSW indexes).
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_indexes WHERE indexname = $1")
         .bind("idx_memory_embeddings_hnsw_768")
         .fetch_one(&mut *c)

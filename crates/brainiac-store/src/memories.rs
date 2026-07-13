@@ -246,12 +246,19 @@ pub async fn search_fts(
     Ok(hits)
 }
 
-/// `None` when no kind filter applies (SQL treats NULL as "all kinds").
+/// `None` when no kind filter applies (SQL treats NULL as "all kinds"). Typed
+/// kinds are rendered to their canonical DB strings for the `= ANY($n)` bind.
 fn filter_kinds(filters: &crate::retrieval::RetrievalFilters) -> Option<Vec<String>> {
     if filters.kinds.is_empty() {
         None
     } else {
-        Some(filters.kinds.clone())
+        Some(
+            filters
+                .kinds
+                .iter()
+                .map(|k| k.as_str().to_string())
+                .collect(),
+        )
     }
 }
 
