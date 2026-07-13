@@ -424,6 +424,11 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
     // One batched query for the whole result set — never an N+1.
     let ids: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
     let trust = brainiac_store::feedback::trust_for(&mut tx, &ids).await?;
+    // Open contradictions touching the result set: an agent must never be
+    // handed one side of a live conflict without being told the other exists.
+    // One batched, RLS-scoped query (never an N+1) — orthogonal to the
+    // feedback-derived `disputed` signal above.
+    let contradictions = brainiac_store::governance::open_contradictions_for(&mut tx, &ids).await?;
     Ok(json!({
         "memories": hits.iter().map(|h| {
             let t = trust.get(&h.memory.id).cloned().unwrap_or_default();
@@ -450,6 +455,16 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
                         "readers have reported this memory as wrong or outdated and it has not been re-verified — treat it as unconfirmed"
                     );
                 }
+            }
+            if let Some(flags) = contradictions.get(&h.memory.id) {
+                m["contradicted"] = json!(true);
+                m["contradicts"] = json!(flags.iter().map(|f| json!({
+                    "contradiction_id": f.contradiction_id,
+                    "counterpart_memory_id": f.counterpart_id,
+                })).collect::<Vec<_>>());
+                m["contradiction_warning"] = json!(
+                    "this memory is in an OPEN contradiction with another memory (see `contradicts`) — the two conflict and neither is settled; do not rely on it without reconciling them"
+                );
             }
             m
         }).collect::<Vec<_>>()
@@ -478,18 +493,34 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
     .await?;
 
     // Canonical-only, whole entries packed into the char budget.
-    let mut bundle = String::new();
-    let mut included = 0usize;
-    for h in hits
+    let canonical: Vec<_> = hits
         .iter()
         .filter(|h| h.memory.status == brainiac_core::MemoryStatus::Canonical)
-    {
-        let line = format!(
-            "- [{}] {} (memory:{})\n",
+        .collect();
+    // Open contradictions touching this bundle: a text-consuming agent must see
+    // the conflict inline, not only in structured search output. One batched,
+    // RLS-scoped query.
+    let bundle_ids: Vec<Uuid> = canonical.iter().map(|h| h.memory.id).collect();
+    let contradictions =
+        brainiac_store::governance::open_contradictions_for(&mut tx, &bundle_ids).await?;
+    let mut bundle = String::new();
+    let mut included = 0usize;
+    for h in &canonical {
+        let mut line = format!(
+            "- [{}] {} (memory:{})",
             h.memory.kind.as_str(),
             h.memory.content,
             h.memory.id
         );
+        if let Some(flags) = contradictions.get(&h.memory.id) {
+            for f in flags {
+                line.push_str(&format!(
+                    " ⚠ CONTRADICTED — conflicts with memory:{} (open contradiction; reconcile before relying on this)",
+                    f.counterpart_id
+                ));
+            }
+        }
+        line.push('\n');
         if bundle.len() + line.len() > CONTEXT_CHAR_BUDGET && included > 0 {
             break;
         }

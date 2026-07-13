@@ -3,7 +3,8 @@
 
 use anyhow::Result;
 use brainiac_core::{ActorKind, MemoryStatus, PolicyDecision};
-use sqlx::PgConnection;
+use sqlx::{PgConnection, Row};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub async fn insert_source(
@@ -178,6 +179,66 @@ pub async fn apply_supersession(
     .execute(&mut *conn)
     .await?;
     Ok(true)
+}
+
+/// One side of an OPEN contradiction as seen from a result memory: the
+/// contradiction row and the memory it conflicts with.
+#[derive(Debug, Clone)]
+pub struct ContradictionFlag {
+    pub contradiction_id: Uuid,
+    /// The other memory in the pair (the one the result memory contradicts).
+    pub counterpart_id: Uuid,
+}
+
+/// Open contradictions touching any memory in `memory_ids`, keyed by the
+/// in-set memory to the counterpart it conflicts with. ONE batched query for
+/// the whole result set — never an N+1 (mirrors [`feedback::trust_for`]).
+///
+/// RLS-safe both ways: contradictions is org-scoped, but the counterpart may
+/// live in a team the caller cannot read. Joining BOTH sides to `memories`
+/// makes the (team-scoped) memories SELECT policy filter out any pair whose
+/// counterpart is invisible — so we never surface, nor even reveal the id of,
+/// a memory the caller isn't allowed to see (no existence oracle).
+pub async fn open_contradictions_for(
+    conn: &mut PgConnection,
+    memory_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<ContradictionFlag>>> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        "SELECT ct.id AS contradiction_id, ct.memory_a, ct.memory_b
+         FROM contradictions ct
+         JOIN memories ma ON ma.id = ct.memory_a
+         JOIN memories mb ON mb.id = ct.memory_b
+         WHERE ct.status = 'open'
+           AND (ct.memory_a = ANY($1) OR ct.memory_b = ANY($1))",
+    )
+    .bind(memory_ids)
+    .fetch_all(conn)
+    .await?;
+    let wanted: std::collections::HashSet<Uuid> = memory_ids.iter().copied().collect();
+    let mut out: HashMap<Uuid, Vec<ContradictionFlag>> = HashMap::new();
+    for r in rows {
+        let cid: Uuid = r.get("contradiction_id");
+        let a: Uuid = r.get("memory_a");
+        let b: Uuid = r.get("memory_b");
+        // Flag whichever side(s) are actually in the result set, pointing at the
+        // other side (guaranteed visible by the double join above).
+        if wanted.contains(&a) {
+            out.entry(a).or_default().push(ContradictionFlag {
+                contradiction_id: cid,
+                counterpart_id: b,
+            });
+        }
+        if wanted.contains(&b) {
+            out.entry(b).or_default().push(ContradictionFlag {
+                contradiction_id: cid,
+                counterpart_id: a,
+            });
+        }
+    }
+    Ok(out)
 }
 
 pub async fn insert_contradiction(

@@ -469,4 +469,109 @@ async fn mcp_handshake_and_tools() {
         .await
         .expect("response");
     assert!(r["result"].is_object(), "session must keep serving: {r}");
+
+    // ── Contradiction-aware results (Direction 2) ──────────────────────
+    // Two canonical data-team memories the analyst CAN read, in an OPEN
+    // contradiction, sharing a distinctive keyword so FTS surfaces both.
+    let org = stable_uuid(&fx.org.org);
+    let team = stable_uuid("team-data");
+    let mem_a = uuid::Uuid::new_v4();
+    let mem_b = uuid::Uuid::new_v4();
+    for (id, body) in [
+        (mem_a, "zqxcontradiction the widget cache TTL is 30 seconds"),
+        (
+            mem_b,
+            "zqxcontradiction the widget cache TTL is 300 seconds",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+             VALUES ($1, $2, $3, 'team', 'canonical', 'fact', $4)",
+        )
+        .bind(id)
+        .bind(org)
+        .bind(team)
+        .bind(body)
+        .execute(&admin)
+        .await
+        .expect("contradiction memory");
+    }
+    let contradiction_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO contradictions (id, org_id, memory_a, memory_b, detected_by, status)
+         VALUES ($1, $2, $3, $4, 'test', 'open')",
+    )
+    .bind(contradiction_id)
+    .bind(org)
+    .bind(mem_a)
+    .bind(mem_b)
+    .execute(&admin)
+    .await
+    .expect("contradiction");
+
+    // memory_search flags BOTH hits, each pointing at the other and at the
+    // same contradiction id.
+    let contradiction_query = |id: u64| {
+        rpc(
+            id,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zqxcontradiction widget cache", "k": 25 } }),
+        )
+    };
+    let r = handle_message(&state, &contradiction_query(23))
+        .await
+        .expect("response");
+    let payload = tool_payload(&r);
+    let find = |mems: &Value, id: &str| -> Value {
+        mems.as_array()
+            .expect("memories")
+            .iter()
+            .find(|m| m["id"].as_str() == Some(id))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let a_str = mem_a.to_string();
+    let b_str = mem_b.to_string();
+    let ma = find(&payload["memories"], &a_str);
+    let mb = find(&payload["memories"], &b_str);
+    assert_eq!(ma["contradicted"], true, "A must be flagged: {payload}");
+    assert_eq!(mb["contradicted"], true, "B must be flagged: {payload}");
+    assert_eq!(ma["contradicts"][0]["counterpart_memory_id"], b_str);
+    assert_eq!(mb["contradicts"][0]["counterpart_memory_id"], a_str);
+    assert_eq!(
+        ma["contradicts"][0]["contradiction_id"],
+        contradiction_id.to_string()
+    );
+
+    // memory_context renders the conflict textually so a text-only agent sees it.
+    let r = handle_message(
+        &state,
+        &rpc(
+            24,
+            "tools/call",
+            json!({ "name": "memory_context", "arguments": { "task_hint": "zqxcontradiction widget cache ttl" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ctx = tool_payload(&r)["context"]
+        .as_str()
+        .expect("ctx")
+        .to_string();
+    assert!(ctx.contains("CONTRADICTED"), "context must warn: {ctx}");
+
+    // Resolve the contradiction (store-level) → the flags disappear.
+    sqlx::query("UPDATE contradictions SET status = 'resolved', resolved_at = now() WHERE id = $1")
+        .bind(contradiction_id)
+        .execute(&admin)
+        .await
+        .expect("resolve");
+    let r = handle_message(&state, &contradiction_query(25))
+        .await
+        .expect("response");
+    let payload = tool_payload(&r);
+    let ma = find(&payload["memories"], &a_str);
+    let mb = find(&payload["memories"], &b_str);
+    assert!(ma["contradicted"].is_null(), "A flag must clear: {payload}");
+    assert!(mb["contradicted"].is_null(), "B flag must clear: {payload}");
 }
