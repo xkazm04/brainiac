@@ -1,9 +1,11 @@
+import DemoBanner from "@/components/DemoBanner";
 import {
   configFromEnv,
   getPipelineRuns,
   getQueueHealth,
   getSourcesFeed,
 } from "@/lib/api";
+import { withDemoFallback } from "@/lib/demo-fallback";
 
 import { DEMO_INGEST, type IngestData } from "./ingest-data";
 import IngestMonitor from "./IngestMonitor";
@@ -14,8 +16,10 @@ export const metadata = {
   title: "Brainiac — Ingest Monitor",
 };
 
-async function ingestData(): Promise<IngestData> {
-  try {
+// Live pipeline feed when reachable; demo shape (behind an unconditional
+// DemoBanner) when not.
+export default async function IngestPage() {
+  const { data, live } = await withDemoFallback<IngestData>(async () => {
     const cfg = configFromEnv();
     const [sources, runs, health] = await Promise.all([
       getSourcesFeed(cfg, 30),
@@ -23,11 +27,11 @@ async function ingestData(): Promise<IngestData> {
       getQueueHealth(cfg),
     ]);
     return { live: true, sources, runs, health };
-  } catch {
-    return DEMO_INGEST;
-  }
-}
-
-export default async function IngestPage() {
-  return <IngestMonitor data={await ingestData()} />;
+  }, DEMO_INGEST);
+  return (
+    <>
+      {!live && <DemoBanner />}
+      <IngestMonitor data={data} />
+    </>
+  );
 }

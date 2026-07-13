@@ -34,6 +34,9 @@ export default async function ReviewsPage({
   const cstatus = asStatus(params.cstatus);
   const cfg = configFromEnv();
   let promotions, contradictionsPage;
+  // Deliberate exception to withDemoFallback (see src/lib/demo-fallback.ts):
+  // reviews is a write surface (approve / reject / resolve), so it hard-stops
+  // rather than showing a fabricated queue wired to real actions.
   try {
     [promotions, contradictionsPage] = await Promise.all([
       promotionQueue(cfg),

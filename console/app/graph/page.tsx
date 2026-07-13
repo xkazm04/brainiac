@@ -1,4 +1,6 @@
+import DemoBanner from "@/components/DemoBanner";
 import { configFromEnv, getGraphOverview } from "@/lib/api";
+import { withDemoFallback } from "@/lib/demo-fallback";
 
 import { DEMO_CORTEX, type CortexData } from "./cortex-data";
 import CortexMap from "./CortexMap";
@@ -9,16 +11,17 @@ export const metadata = {
   title: "Brainiac — Cortex Map",
 };
 
-// Live multi-level graph when brainiac serve is up; demo
-// shape when not, so both lenses render either way.
-async function cortexData(): Promise<CortexData> {
-  try {
-    return { live: true, overview: await getGraphOverview(configFromEnv()) };
-  } catch {
-    return DEMO_CORTEX;
-  }
-}
-
+// Live multi-level graph when brainiac serve is up; the demo shape (behind an
+// unconditional DemoBanner) when not, so both lenses render either way.
 export default async function GraphPage() {
-  return <CortexMap data={await cortexData()} />;
+  const { data, live } = await withDemoFallback<CortexData>(
+    async () => ({ live: true, overview: await getGraphOverview(configFromEnv()) }),
+    DEMO_CORTEX,
+  );
+  return (
+    <>
+      {!live && <DemoBanner />}
+      <CortexMap data={data} />
+    </>
+  );
 }

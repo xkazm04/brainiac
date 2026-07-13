@@ -6,6 +6,7 @@ import {
   type ObservatoryData,
 } from "@/observatory/observatory-data";
 import { configFromEnv, getObservatory } from "@/lib/api";
+import { withDemoFallback } from "@/lib/demo-fallback";
 
 export const dynamic = "force-dynamic";
 
@@ -13,21 +14,16 @@ export const metadata = {
   title: "Brainiac — Observatory",
 };
 
-// Live data when brainiac serve is reachable; the demo shape (clearly
-// labeled in the UI) when not, so the page never 500s.
-async function observatoryData(): Promise<ObservatoryData> {
-  try {
-    return normalizeObservatory(await getObservatory(configFromEnv()));
-  } catch {
-    return DEMO_OBSERVATORY;
-  }
-}
-
+// Live data when brainiac serve is reachable; the demo shape (behind an
+// unconditional DemoBanner) when not, so the page never 500s.
 export default async function AnalyticsPage() {
-  const data = await observatoryData();
+  const { data, live } = await withDemoFallback<ObservatoryData>(
+    async () => normalizeObservatory(await getObservatory(configFromEnv())),
+    DEMO_OBSERVATORY,
+  );
   return (
     <>
-      {!data.live && <DemoBanner />}
+      {!live && <DemoBanner />}
       <Observatory data={data} />
     </>
   );
