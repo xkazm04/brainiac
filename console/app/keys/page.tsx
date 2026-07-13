@@ -1,7 +1,7 @@
 import { configFromEnv, getOrgUsers, listTokens } from "@/lib/api";
 
 import { DEMO_KEYS, type KeysData } from "./keys-data";
-import KeysLab from "./KeysLab";
+import Keys from "./Keys";
 
 export const dynamic = "force-dynamic";
 
@@ -20,5 +20,5 @@ async function keysData(): Promise<KeysData> {
 }
 
 export default async function KeysPage() {
-  return <KeysLab data={await keysData()} />;
+  return <Keys data={await keysData()} />;
 }

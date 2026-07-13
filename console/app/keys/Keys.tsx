@@ -1,19 +1,21 @@
 "use client";
 
 /*
- * Keys variant A — "Ground Control". Mental model: the operations desk.
+ * Keys — consolidated from the 2026-07-13 prototype round ("Ground
+ * Control" won over Keyring and Blast Radius; the radius rings live on
+ * inside the mint panel). Mental model: the operations desk.
  * A dense management table (name, prefix, scopes, usage, status) beside
  * the mint panel. No metaphor at the surface — the admin's daily view.
  */
 
 import { useState } from "react";
 
-import type { KeysData } from "../keys-data";
-import { refreshTokens, revokeKey } from "../keys-data";
-import { fmtAgo, MintPanel } from "../KeyShared";
+import type { KeysData } from "./keys-data";
+import { refreshTokens, revokeKey } from "./keys-data";
+import { fmtAgo, MintPanel } from "./KeyShared";
 import { FONT_DISPLAY, FONT_MONO, GROUND, LABEL, MAGENTA } from "@/design/theme";
 
-export default function GroundControlVariant({ data }: { data: KeysData }) {
+export default function Keys({ data }: { data: KeysData }) {
   const [tokens, setTokens] = useState(data.tokens);
   const [confirming, setConfirming] = useState<string | null>(null);
 
