@@ -283,6 +283,31 @@ async fn full_pipeline_over_seed_transcripts() {
         "HARD GATE: near-miss traps must never auto-merge"
     );
 
+    // Direction 2: every canonical born through resolve carries a persisted
+    // name embedding for the active version — so resolution reads one SQL
+    // similarity query instead of re-embedding all canonicals live.
+    let (canon_total, embedded): (i64, i64) = {
+        let c: i64 = sqlx::query("SELECT count(*) AS n FROM canonical_entities")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("q")
+            .get("n");
+        let e: i64 = sqlx::query(
+            "SELECT count(*) AS n FROM canonical_entity_embeddings WHERE embedding_version_id = $1",
+        )
+        .bind(version)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("q")
+        .get("n");
+        (c, e)
+    };
+    assert!(canon_total > 0, "corpus bootstrapped canonicals");
+    assert_eq!(
+        canon_total, embedded,
+        "every canonical has a persisted embedding (no live re-embedding path)"
+    );
+
     // Queue drained.
     assert_eq!(
         brainiac_store::queue::depth(store.pool(), worker::INGEST_QUEUE)

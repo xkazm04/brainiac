@@ -202,3 +202,107 @@ pub async fn list_canonicals(
         .map(|r| (r.get("id"), r.get("name"), r.get("kind")))
         .collect())
 }
+
+// ── persisted canonical embeddings (Direction 2) ────────────────────────
+
+/// pgvector text literal ("[1,2,3]"), bound as text and cast with ::vector —
+/// avoids a pgvector client-crate dependency (mirrors memories.rs).
+fn vector_literal(v: &[f32]) -> String {
+    let mut s = String::with_capacity(v.len() * 10 + 2);
+    s.push('[');
+    for (i, x) in v.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&x.to_string());
+    }
+    s.push(']');
+    s
+}
+
+/// Persist (or refresh) a canonical's name embedding for a version. Called on
+/// canonical create and on any future rename/merge, and by lazy backfill.
+pub async fn upsert_canonical_embedding(
+    conn: &mut PgConnection,
+    canonical_id: Uuid,
+    version_id: i32,
+    embedding: &[f32],
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO canonical_entity_embeddings (canonical_id, embedding_version_id, embedding)
+         VALUES ($1, $2, $3::vector)
+         ON CONFLICT (canonical_id, embedding_version_id)
+         DO UPDATE SET embedding = EXCLUDED.embedding",
+    )
+    .bind(canonical_id)
+    .bind(version_id)
+    .bind(vector_literal(embedding))
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Org canonicals with NO persisted embedding for `version` — the lazy
+/// backfill worklist (pre-existing canonicals, or a fresh embedding version).
+/// Steady state returns nothing; each canonical is embedded at most once per
+/// version, never re-embedded on subsequent resolves.
+pub async fn canonicals_missing_embedding(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    version_id: i32,
+) -> Result<Vec<(Uuid, String)>> {
+    let rows = sqlx::query(
+        "SELECT c.id, c.name FROM canonical_entities c
+         WHERE c.org_id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM canonical_entity_embeddings ce
+               WHERE ce.canonical_id = c.id AND ce.embedding_version_id = $2
+           )",
+    )
+    .bind(org_id)
+    .bind(version_id)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get("id"), r.get("name")))
+        .collect())
+}
+
+/// Nearest canonicals to `query_vec` by cosine similarity over persisted
+/// embeddings — one SQL round-trip, no live re-embedding of canonicals.
+/// RLS-scoped through the join to canonical_entities. Returns
+/// (id, name, kind, similarity) best-first.
+pub async fn nearest_canonical(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    version_id: i32,
+    query_vec: &[f32],
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String, f32)>> {
+    let rows = sqlx::query(
+        "SELECT c.id, c.name, c.kind, 1 - (ce.embedding <=> $1::vector) AS score
+         FROM canonical_entity_embeddings ce
+         JOIN canonical_entities c ON c.id = ce.canonical_id
+         WHERE ce.embedding_version_id = $2 AND c.org_id = $3
+         ORDER BY ce.embedding <=> $1::vector
+         LIMIT $4",
+    )
+    .bind(vector_literal(query_vec))
+    .bind(version_id)
+    .bind(org_id)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.get::<Uuid, _>("id"),
+                r.get::<String, _>("name"),
+                r.get::<String, _>("kind"),
+                r.get::<f64, _>("score") as f32,
+            )
+        })
+        .collect())
+}

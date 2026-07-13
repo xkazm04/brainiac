@@ -114,6 +114,7 @@ async fn process_job(
             &mut tx,
             providers.for_stage(Stage::Resolve),
             embedder,
+            embedding_version,
             org_id,
             *entity_id,
             &name,

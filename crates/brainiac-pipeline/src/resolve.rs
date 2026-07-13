@@ -7,7 +7,7 @@
 //! entity just waits for a human.
 
 use anyhow::{Context, Result};
-use brainiac_core::embed::{cosine, Embedder};
+use brainiac_core::embed::Embedder;
 use brainiac_gateway::{ChatProvider, ChatRequest};
 use serde::Deserialize;
 use sqlx::PgConnection;
@@ -47,25 +47,40 @@ pub enum ResolveOutcome {
     NewCanonical { canonical_id: Uuid },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn resolve_entity(
     conn: &mut PgConnection,
     provider: &dyn ChatProvider,
     embedder: &dyn Embedder,
+    embedding_version: i32,
     org_id: Uuid,
     entity_id: Uuid,
     entity_name: &str,
     entity_kind: &str,
 ) -> Result<ResolveOutcome> {
-    let canonicals = brainiac_store::entities::list_canonicals(conn, org_id).await?;
     let query_vec = embedder.embed(entity_name).await?;
 
-    let mut best: Option<(Uuid, String, f32)> = None;
-    for (id, name, _kind) in &canonicals {
-        let sim = cosine(&query_vec, &embedder.embed(name).await?);
-        if best.as_ref().is_none_or(|(_, _, s)| sim > *s) {
-            best = Some((*id, name.clone(), sim));
-        }
+    // Lazy backfill: any canonical without a persisted embedding for this
+    // version (pre-existing rows, or a freshly activated embedding version) is
+    // embedded ONCE and stored. Steady state finds none, so resolution never
+    // re-embeds canonicals live — the O(n) cost per source is gone.
+    for (cid, cname) in
+        brainiac_store::entities::canonicals_missing_embedding(conn, org_id, embedding_version)
+            .await?
+    {
+        let v = embedder.embed(&cname).await?;
+        brainiac_store::entities::upsert_canonical_embedding(conn, cid, embedding_version, &v)
+            .await?;
     }
+
+    // One similarity query against persisted embeddings replaces the live
+    // re-embed loop over every canonical name.
+    let best =
+        brainiac_store::entities::nearest_canonical(conn, org_id, embedding_version, &query_vec, 1)
+            .await?
+            .into_iter()
+            .next()
+            .map(|(id, name, _kind, sim)| (id, name, sim));
 
     match best {
         Some((canonical_id, _, sim)) if sim >= AUTO_LINK_SIMILARITY => {
@@ -127,6 +142,15 @@ pub async fn resolve_entity(
                 org_id,
                 entity_name,
                 entity_kind,
+            )
+            .await?;
+            // Persist the canonical's name embedding at birth — the canonical
+            // name equals this surface form, so query_vec is exactly it.
+            brainiac_store::entities::upsert_canonical_embedding(
+                conn,
+                canonical_id,
+                embedding_version,
+                &query_vec,
             )
             .await?;
             brainiac_store::entities::link(
