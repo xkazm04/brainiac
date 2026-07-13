@@ -23,6 +23,7 @@ use brainiac_core::embed::Embedder;
 use brainiac_core::fusion::{
     query_is_identifier_heavy, reciprocal_rank_fusion, weighted_reciprocal_rank_fusion,
 };
+use brainiac_core::rerank::Reranker;
 use brainiac_core::scoring::{blended_score, graph_relevance, FeedbackSignal};
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
 use brainiac_core::{Memory, MemoryStatus};
@@ -38,6 +39,14 @@ const GRAPH_ANCHOR_TOP: usize = 10;
 const GRAPH_EXTRA_MEMORIES: i64 = 10;
 const GRAPH_HOPS: u8 = 2;
 const RRF_K: f64 = 60.0;
+
+/// Stage-5 rerank budget (ARCHITECTURE.md §4: "cross-encoder rerank over ≤40
+/// candidates"). The assembled+deduped survivor set is already ≤ `FUSED_POOL`
+/// (30) + `GRAPH_EXTRA_MEMORIES` (10) = 40, so in practice every survivor is
+/// reranked; the cap is an explicit ceiling so a future wider assembly can't
+/// silently hand a cross-encoder an unbounded batch. Survivors beyond the cap
+/// (none today) keep their pre-rerank relevance.
+const RERANK_MAX_CANDIDATES: usize = 40;
 
 // Fusion weights for identifier-heavy queries (repo/service names, dotted
 // paths, error codes): exact lexical matches should lead, so the FTS list
@@ -188,10 +197,32 @@ async fn scoped_pool_tx<'a>(pool: &'a PgPool, scope: &RlsScope) -> Result<crate:
     Ok(tx)
 }
 
+/// Hybrid retrieval with NO stage-5 reranker — the byte-identical baseline.
+/// Thin delegate to [`search_reranked`] with `None`; every existing caller
+/// (eval, mcp, tests, the default HTTP path) uses this, so turning the seam
+/// off is guaranteed identical by construction, not by matching behavior.
 pub async fn search(
     tx: &mut sqlx::PgConnection,
     pool: &PgPool,
     embedder: &dyn Embedder,
+    embedding_version: i32,
+    req: &RetrievalRequest,
+) -> Result<Vec<RetrievalHit>> {
+    search_reranked(tx, pool, embedder, None, embedding_version, req).await
+}
+
+/// Hybrid retrieval with the optional stage-5 cross-encoder rerank
+/// (ARCHITECTURE.md §4). When `reranker` is `None` this is byte-identical to
+/// [`search`]; when `Some`, the assembled+deduped ≤40 survivors are rescored
+/// by the reranker BEFORE the recency/feedback blend and truncation — the
+/// reranker's joint `(query, candidate)` score REPLACES the fused/graph
+/// relevance term feeding [`blended_score`], so the tiebreak nudges still apply
+/// on top of it and both direct and graph hits share one post-rerank scale.
+pub async fn search_reranked(
+    tx: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    embedder: &dyn Embedder,
+    reranker: Option<&dyn Reranker>,
     embedding_version: i32,
     req: &RetrievalRequest,
 ) -> Result<Vec<RetrievalHit>> {
@@ -287,6 +318,31 @@ pub async fn search(
         .collect();
     let deduped = dedupe_for_time(&ordered, as_of);
 
+    // Stage 5: cross-encoder rerank (ARCHITECTURE.md §4). Over the ≤40
+    // assembled+deduped survivors, BEFORE the blend, a reranker rescores each
+    // (query, candidate-text) pair jointly. Its score REPLACES the fused/graph
+    // relevance below, so the recency/feedback nudges still ride on top. With
+    // no reranker configured this whole stage is skipped and relevance stays
+    // the fused/graph score — byte-identical to [`search`].
+    let rerank_scores: Option<std::collections::HashMap<Uuid, f64>> = match reranker {
+        Some(r) => {
+            let capped: Vec<(Uuid, &str)> = deduped
+                .iter()
+                .take(RERANK_MAX_CANDIDATES)
+                .map(|m| (m.id, m.content.as_str()))
+                .collect();
+            let scores = r.rerank(&req.query, &capped).await?;
+            Some(
+                capped
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .zip(scores.into_iter().map(|s| s as f64))
+                    .collect(),
+            )
+        }
+        None => None,
+    };
+
     // Stage 6: blended ranking (ARCHITECTURE.md §4 "order by relevance +
     // recency"). Fused relevance stays dominant; recency and net reader
     // feedback are tiebreak-scale nudges (brainiac-core::scoring). One batched
@@ -304,11 +360,20 @@ pub async fn search(
             // strong cross-team hit can outrank a weak direct hit instead of
             // always sinking. Both then feed the same recency/feedback blend.
             let via_graph = graph_ids.contains(&m.id);
-            let relevance = match fused_score.get(&m.id) {
+            // Pre-rerank relevance: fused RRF for direct hits, graph-derived for
+            // expansion extras (the byte-identical baseline).
+            let base_relevance = match fused_score.get(&m.id) {
                 Some(s) => *s,
                 None if via_graph => graph_relevance(anchor_strength),
                 None => 0.0,
             };
+            // Stage 5: if a reranker scored this survivor, its joint score
+            // replaces the base relevance; survivors past the cap (none today)
+            // fall back to the base. No reranker ⇒ always the base.
+            let relevance = rerank_scores
+                .as_ref()
+                .and_then(|rs| rs.get(&m.id).copied())
+                .unwrap_or(base_relevance);
             let t = trust.get(&m.id).cloned().unwrap_or_default();
             let feedback = FeedbackSignal {
                 helpful: t.helpful,

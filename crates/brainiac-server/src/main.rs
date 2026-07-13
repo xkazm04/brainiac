@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+use brainiac_core::rerank::{LexicalOverlapReranker, Reranker};
 use brainiac_gateway::QwenEmbedder;
 use brainiac_store::Store;
 use clap::{Parser, Subcommand};
@@ -31,6 +32,11 @@ enum Command {
         /// With --with-worker: use the deterministic mock provider.
         #[arg(long)]
         mock: bool,
+        /// Stage-5 reranker (ARCHITECTURE.md §4): `none` (default) or
+        /// `lexical` (deterministic overlap scorer — the bake-off seam; the
+        /// ONNX cross-encoder plugs in here later).
+        #[arg(long)]
+        reranker: Option<String>,
     },
     /// Run the MCP server on stdio (agent surface).
     Mcp,
@@ -122,6 +128,22 @@ fn embedder_select(name: Option<&str>) -> Result<Arc<dyn Embedder>> {
     }
 }
 
+/// Pick the stage-5 reranker, mirroring [`embedder_select`]. `name` (CLI) wins
+/// over BRAINIAC_RERANKER (env); default `none` = no reranker (retrieval is
+/// byte-identical to the pre-stage-5 path). `lexical` is the deterministic
+/// model-free seam; the ONNX cross-encoder registers here later.
+fn reranker_select(name: Option<&str>) -> Result<Option<Arc<dyn Reranker>>> {
+    let choice = match name {
+        Some(n) => n.to_string(),
+        None => std::env::var("BRAINIAC_RERANKER").unwrap_or_else(|_| "none".into()),
+    };
+    match choice.as_str() {
+        "none" => Ok(None),
+        "lexical" => Ok(Some(Arc::new(LexicalOverlapReranker))),
+        other => anyhow::bail!("unknown reranker `{other}` (none|lexical)"),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Local dev convenience: pick up DATABASE_URL / QWEN_API_KEY from .env.
@@ -138,7 +160,8 @@ async fn main() -> Result<()> {
             bind,
             with_worker,
             mock,
-        } => serve(&bind, with_worker, mock).await,
+            reranker,
+        } => serve(&bind, with_worker, mock, reranker.as_deref()).await,
         Command::Mcp => mcp().await,
         Command::Worker { mock } => worker(mock).await,
         Command::Eval {
@@ -253,11 +276,17 @@ fn fixtures_schema(out: &str) -> Result<()> {
     Ok(())
 }
 
-async fn serve(bind: &str, with_worker: bool, mock: bool) -> Result<()> {
+async fn serve(
+    bind: &str,
+    with_worker: bool,
+    mock: bool,
+    reranker_name: Option<&str>,
+) -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
+    let reranker = reranker_select(reranker_name)?;
 
     // One shutdown signal shared by the server's graceful-shutdown future and
     // the in-process worker: ctrl_c flips it, both drain and exit cleanly.
@@ -280,7 +309,10 @@ async fn serve(bind: &str, with_worker: bool, mock: bool) -> Result<()> {
         None
     };
 
-    let app = http::router(store, embedder).await?;
+    if let Some(r) = &reranker {
+        tracing::info!(reranker = r.model_name(), "stage-5 reranker enabled");
+    }
+    let app = http::router(store, embedder, reranker).await?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, with_worker, "brainiac REST listening");
     axum::serve(listener, app)

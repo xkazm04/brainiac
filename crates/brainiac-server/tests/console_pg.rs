@@ -85,7 +85,7 @@ async fn console_reviews_graph_analytics() {
     });
     std::env::set_var("BRAINIAC_TOKENS", tokens.to_string());
 
-    let app = brainiac_server::http::router(store, embedder)
+    let app = brainiac_server::http::router(store, embedder, None)
         .await
         .expect("router");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

@@ -331,6 +331,110 @@ async fn identifier_query_ranks_exact_match_first() {
 }
 
 #[tokio::test]
+async fn stage5_reranker_reorders_survivors() {
+    // Stage 5 (ARCHITECTURE.md §4): the reranker rescores the assembled
+    // survivors BEFORE the blend. Two org-visible memories are shaped so the
+    // baseline (bi-encoder) and a query-token-overlap reranker DISAGREE.
+    // Neither memory contains ALL of the query's tokens, so the AND-semantics
+    // FTS query matches neither — the baseline is pure bi-encoder cosine:
+    //   A — "alpha": a single query token, no dilution ⇒ high cosine (1/√3) ⇒
+    //       baseline #1, but only 1 of 3 query tokens (reranker 1/3).
+    //   B — two query tokens ("beta gamma") buried in filler ⇒ the filler
+    //       dilutes its cosine below A's, but it covers 2 of 3 query tokens
+    //       (reranker 2/3). The reranker is query-normalized, so B's filler
+    //       doesn't lower its rerank score.
+    // Baseline top must be A; flip the reranker on and B (more query tokens
+    // covered) must take the top — proving reordering flows through stage 5.
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+    let p = pay_dev();
+    let embedder = DeterministicEmbedder::default();
+
+    let query = "alpha beta gamma";
+    let a = "alpha";
+    let b = "beta gamma delta epsilon zeta eta theta iota";
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let mk = |id: u8, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+    };
+    memories::insert(c, &mk(170, a)).await.expect("m170");
+    memories::insert(c, &mk(171, b)).await.expect("m171");
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    memories::upsert_embedding(c, uuid(170), ver, &embedder.embed_sync(a))
+        .await
+        .expect("e170");
+    memories::upsert_embedding(c, uuid(171), ver, &embedder.embed_sync(b))
+        .await
+        .expect("e171");
+    tx.commit().await.expect("commit");
+
+    let req = || retrieval::RetrievalRequest {
+        query: query.into(),
+        k: 10,
+        as_of: None,
+        filters: Default::default(),
+    };
+
+    // Baseline (reranker off): A ranks first.
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let base = retrieval::search(&mut tx, ctx.store.pool(), &embedder, ver, &req())
+        .await
+        .expect("baseline search");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        base.first().map(|h| h.memory.id),
+        Some(uuid(170)),
+        "baseline (no reranker) ranks the tight subset match first, got {:?}",
+        base.iter().map(|h| h.memory.id).collect::<Vec<_>>()
+    );
+
+    // Reranker on: the full-overlap memory B is promoted to the top.
+    let reranker = brainiac_core::rerank::LexicalOverlapReranker;
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let reranked = retrieval::search_reranked(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        Some(&reranker),
+        ver,
+        &req(),
+    )
+    .await
+    .expect("reranked search");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        reranked.first().map(|h| h.memory.id),
+        Some(uuid(171)),
+        "stage-5 reranker promotes the full-overlap memory, got {:?}",
+        reranked.iter().map(|h| h.memory.id).collect::<Vec<_>>()
+    );
+    // Both memories are still present — rerank reorders, it does not drop.
+    assert!(
+        reranked.iter().any(|h| h.memory.id == uuid(170)),
+        "reranker reorders without dropping candidates"
+    );
+}
+
+#[tokio::test]
 async fn czech_fts_honors_language_config() {
     let Some((ctx, _guard)) = setup().await else {
         return;

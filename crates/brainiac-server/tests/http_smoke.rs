@@ -105,7 +105,7 @@ async fn brainiac_server_router(
     store: Store,
     embedder: std::sync::Arc<DeterministicEmbedder>,
 ) -> axum::Router {
-    brainiac_server::http::router(store, embedder)
+    brainiac_server::http::router(store, embedder, None)
         .await
         .expect("router")
 }

@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use brainiac_core::embed::Embedder;
+use brainiac_core::rerank::Reranker;
 use brainiac_core::Principal;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
@@ -26,11 +27,18 @@ use crate::auth::TokenMap;
 pub struct AppState {
     pub store: Store,
     pub embedder: Arc<dyn Embedder>,
+    /// Optional stage-5 reranker (ARCHITECTURE.md §4). `None` ⇒ retrieval takes
+    /// the byte-identical pre-stage-5 path.
+    pub reranker: Option<Arc<dyn Reranker>>,
     pub embedding_version: i32,
     pub tokens: TokenMap,
 }
 
-pub async fn router(store: Store, embedder: Arc<dyn Embedder>) -> Result<Router> {
+pub async fn router(
+    store: Store,
+    embedder: Arc<dyn Embedder>,
+    reranker: Option<Arc<dyn Reranker>>,
+) -> Result<Router> {
     let tokens = TokenMap::from_env()?;
     if tokens.is_empty() {
         tracing::warn!("BRAINIAC_TOKENS is empty — every request will be 401");
@@ -50,6 +58,7 @@ pub async fn router(store: Store, embedder: Arc<dyn Embedder>) -> Result<Router>
     let state = Arc::new(AppState {
         store,
         embedder,
+        reranker,
         embedding_version,
         tokens,
     });
@@ -227,10 +236,11 @@ pub(crate) async fn search(
     let principal = principal_of(&state, &headers).await?;
     let filters = body.filters()?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    let hits = brainiac_store::retrieval::search(
+    let hits = brainiac_store::retrieval::search_reranked(
         &mut tx,
         state.store.pool(),
         state.embedder.as_ref(),
+        state.reranker.as_deref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
             query: body.query,
