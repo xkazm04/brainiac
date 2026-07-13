@@ -1,0 +1,6 @@
+{
+  "embedding_model": "deterministic-bow-v1",
+  "fixture_version": "v1",
+  "b_cubed_f1": 0.7942583732057417,
+  "pairwise_f1": 0.10526315789473684
+}

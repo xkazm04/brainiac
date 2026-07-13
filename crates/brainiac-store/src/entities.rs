@@ -226,6 +226,32 @@ pub async fn find_by_name(
     Ok(row.map(|r| r.get::<Uuid, _>("id")))
 }
 
+/// Every raw-entity → canonical link in the org, as (entity_id, canonical_id).
+/// RLS-scoped through the join to `entities`. The resolution eval profile reads
+/// this to reconstruct the PREDICTED clustering after running the resolve stage
+/// over the gold raw entities (each canonical is a predicted cluster; entities
+/// with no link are singletons).
+pub async fn links_in_org(conn: &mut PgConnection, org_id: Uuid) -> Result<Vec<(Uuid, Uuid)>> {
+    let rows = sqlx::query(
+        "SELECT l.entity_id, l.canonical_id
+         FROM entity_links l
+         JOIN entities e ON e.id = l.entity_id
+         WHERE e.org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.get::<Uuid, _>("entity_id"),
+                r.get::<Uuid, _>("canonical_id"),
+            )
+        })
+        .collect())
+}
+
 /// All canonical entities of the org (resolve blocking candidates; small in
 /// v0 — revisit with ANN over canonical embeddings at scale).
 pub async fn list_canonicals(

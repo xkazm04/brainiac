@@ -36,6 +36,45 @@ pub fn principal_for_user(fx: &Fixtures, user_id: &str) -> Option<Principal> {
     })
 }
 
+/// Seed ONLY identity + raw entities for the `resolution` profile. Unlike
+/// [`seed_gold`], it deliberately does NOT seed the gold canonical entities or
+/// links — those are exactly what the resolve stage must PREDICT, so seeding
+/// them would score the fixtures against themselves. Memories/embeddings are
+/// irrelevant to entity resolution and are skipped too. Returns the org id.
+pub async fn seed_resolution(store: &Store, fx: &Fixtures) -> Result<Uuid> {
+    let org_id = stable_uuid(&fx.org.org);
+    let p = seeding_principal(fx);
+    let mut tx = store.scoped_tx(&p).await?;
+    let c = &mut *tx;
+
+    orgs::upsert_org(c, org_id, &fx.org.org).await?;
+    for t in &fx.org.teams {
+        orgs::upsert_team(c, stable_uuid(&t.id), org_id, &t.name).await?;
+    }
+    for u in &fx.org.users {
+        orgs::upsert_user(c, stable_uuid(&u.id), org_id, &u.email).await?;
+        for t in &u.teams {
+            orgs::upsert_member(c, stable_uuid(t), stable_uuid(&u.id), &u.role).await?;
+        }
+    }
+    for e in &fx.entities.entities {
+        entities::insert_entity(
+            c,
+            stable_uuid(&e.id),
+            org_id,
+            Some(stable_uuid(&e.team)),
+            &e.name,
+            &e.kind,
+            &e.aliases,
+            None,
+        )
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(org_id)
+}
+
 pub async fn seed_gold(store: &Store, fx: &Fixtures, embedder: &dyn Embedder) -> Result<Seeded> {
     let org_id = stable_uuid(&fx.org.org);
     let p = seeding_principal(fx);

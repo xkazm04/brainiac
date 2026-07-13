@@ -216,6 +216,8 @@ dependencies = [
  "anyhow",
  "brainiac-core",
  "brainiac-fixtures",
+ "brainiac-gateway",
+ "brainiac-pipeline",
  "brainiac-store",
  "chrono",
  "serde",

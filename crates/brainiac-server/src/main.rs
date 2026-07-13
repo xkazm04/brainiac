@@ -484,16 +484,19 @@ async fn eval(
     baseline_path: Option<&str>,
     write_baseline_path: Option<&str>,
 ) -> Result<()> {
-    anyhow::ensure!(profile == "retrieval", "v0 CLI supports profile=retrieval");
+    anyhow::ensure!(
+        matches!(profile, "retrieval" | "resolution"),
+        "v0 CLI supports profile=retrieval|resolution"
+    );
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
 
     // Fresh tenant slate (eval DBs are disposable by contract — see --help).
     let admin = sqlx::PgPool::connect(&url).await?;
     sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
-                  promotions, memories, canonical_entities, entities, provenance, sources,
-                  team_members, users, teams, orgs, pipeline_runs CASCADE",
+        "TRUNCATE memory_entities, memory_embeddings, canonical_entity_embeddings, entity_links,
+                  edges, contradictions, promotions, memories, canonical_entities, entities,
+                  provenance, sources, team_members, users, teams, orgs, pipeline_runs CASCADE",
     )
     .execute(&admin)
     .await?;
@@ -501,10 +504,20 @@ async fn eval(
     let store = Store::connect(&url).await?;
     let fx = brainiac_fixtures::load(fixtures_dir).context("loading fixtures")?;
     let embedder = embedder_select(embedder_name)?;
-    tracing::info!(
-        embedder = embedder.model_name(),
-        "running retrieval profile"
-    );
+    tracing::info!(embedder = embedder.model_name(), profile, "running eval");
+
+    if profile == "resolution" {
+        return eval_resolution(
+            &store,
+            &fx,
+            embedder.as_ref(),
+            out,
+            baseline_path,
+            write_baseline_path,
+        )
+        .await;
+    }
+
     let seeded = brainiac_eval::seed::seed_gold(&store, &fx, embedder.as_ref()).await?;
     let (report, diagnostics) = brainiac_eval::retrieval_profile::run(
         &store,
@@ -571,6 +584,73 @@ async fn eval(
             std::process::exit(1);
         }
         tracing::info!(path, "regression gates passed");
+    }
+    Ok(())
+}
+
+/// The `resolution` profile (EVAL.md §2.2/§3.2): seed the gold RAW entities,
+/// run the resolve stage over them with an oracle adjudicator, score the
+/// predicted clustering, and enforce the hard `false_merges == 0` gate plus the
+/// optional B³/pairwise F1 regression gate. Store/fx/embedder are already set
+/// up and the tenant truncated by the caller.
+async fn eval_resolution(
+    store: &Store,
+    fx: &brainiac_fixtures::Fixtures,
+    embedder: &dyn Embedder,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::resolution_profile::{regression_failures, run, ResolutionBaseline};
+
+    brainiac_eval::seed::seed_resolution(store, fx).await?;
+    let report = run(store, fx, embedder).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "resolution report written");
+        }
+        None => println!("{json}"),
+    }
+
+    // HARD GATE first: a false merge is zero-tolerance.
+    let failures = report.gate_failures();
+    if !failures.is_empty() {
+        eprintln!("HARD GATES FAILED:\n{}", failures.join("\n"));
+        std::process::exit(1);
+    }
+
+    if let Some(path) = write_baseline_path {
+        let baseline = ResolutionBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "resolution baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: ResolutionBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "REGRESSION GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "resolution regression gates passed");
     }
     Ok(())
 }
