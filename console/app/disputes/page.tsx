@@ -1,7 +1,7 @@
 import { configFromEnv } from "@/lib/api";
 import { feedbackQueue } from "@/lib/governance-api";
 
-import DisputeLab from "./DisputeLab";
+import DisputeBench from "./DisputeBench";
 import { DEMO_DISPUTES, type DisputeData } from "./disputes-data";
 
 export const dynamic = "force-dynamic";
@@ -21,5 +21,5 @@ async function disputeData(): Promise<DisputeData> {
 }
 
 export default async function DisputesPage() {
-  return <DisputeLab data={await disputeData()} />;
+  return <DisputeBench data={await disputeData()} />;
 }

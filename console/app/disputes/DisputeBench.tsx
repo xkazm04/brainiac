@@ -1,18 +1,20 @@
 "use client";
 
 /*
- * Disputes — "Half-life" view (decay bench).
+ * Disputes — the decay bench (winner of the 2026-07-13 prototype round;
+ * Interference and Testimony were cut).
  *
  * Mental model: the corpus is radioactive. Every memory already has a
- * half-life (its TTL window); a reader's claim is evidence it is decaying
- * faster than the clock says. The bench plots each disputed memory against
- * the decay axis — already dark on the left, still hot on the right — so the
- * question stops being "what got flagged" and becomes "what is dying before
- * anyone re-verified it". Answering pushes a memory right (re-verified),
- * collapses it now (deprecated), or leaves it decaying on schedule.
+ * half-life (the validity window its kind was given); a reader's claim is
+ * evidence it is decaying faster than the clock says. The bench plots each
+ * disputed memory against the decay axis — already dark on the left, still
+ * hot on the right — so the question stops being "what got flagged" and
+ * becomes "what is dying before anyone re-verified it". Answering pushes a
+ * memory right (re-verified), collapses it now (deprecated), or leaves it
+ * decaying on schedule (dismissed).
  *
- * This is the lens where the freshness lifecycle and the feedback loop are
- * visibly the same mechanism.
+ * This is the lens where the freshness lifecycle (TTL) and the feedback loop
+ * are visibly the same mechanism.
  */
 
 import { useState } from "react";
@@ -20,7 +22,7 @@ import { motion, useReducedMotion } from "framer-motion";
 
 import { band, bandGlow, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
-import DecisionBar from "../DecisionBar";
+import DecisionBar from "./DecisionBar";
 import {
   ageLabel,
   claimCount,
@@ -29,7 +31,7 @@ import {
   triageOrder,
   type DisputeData,
   type DisputedMemory,
-} from "../disputes-data";
+} from "./disputes-data";
 
 const THETA = band("theta");
 const GAMMA = band("gamma");
@@ -50,7 +52,7 @@ const TICKS = [
   { at: 180, label: "180d+" },
 ];
 
-export default function HalfLifeView({ data }: { data: DisputeData }) {
+export default function DisputeBench({ data }: { data: DisputeData }) {
   const reduced = useReducedMotion();
   const rows = triageOrder(data.flagged);
   const [selected, setSelected] = useState<string | null>(rows[0]?.memory_id ?? null);

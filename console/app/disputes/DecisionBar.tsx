@@ -1,10 +1,10 @@
 "use client";
 
 /*
- * The three answers, shared by every variant — hoisted the moment the second
- * variant needed them. Constructive (gamma) / destructive (magenta) / neutral
- * follows the theme's light metaphor: re-verifying restores the signal,
- * deprecating nulls it, dismissing cancels the noise.
+ * The three answers a maintainer can give a disputed memory. Constructive
+ * (gamma) / destructive (magenta) / neutral follows the theme's light
+ * metaphor: re-verifying restores the signal, deprecating nulls it,
+ * dismissing cancels the noise.
  */
 
 import { useState, useTransition } from "react";
@@ -20,7 +20,7 @@ const TONE: Record<Resolution, string> = {
   dismissed: "rgba(233,237,255,0.55)",
 };
 
-export function useDecision(onDone?: () => void) {
+function useDecision(onDone?: () => void) {
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<DecisionResult | null>(null);
   const decide = (memoryId: string, resolution: Resolution) =>
@@ -36,13 +36,11 @@ export default function DecisionBar({
   memoryId,
   live,
   size = "md",
-  showKeys = false,
   onDone,
 }: {
   memoryId: string;
   live: boolean;
   size?: "sm" | "md";
-  showKeys?: boolean;
   onDone?: () => void;
 }) {
   const { pending, result, decide } = useDecision(onDone);
@@ -61,9 +59,6 @@ export default function DecisionBar({
           style={{ borderColor: `${TONE[dcn.id]}66`, color: TONE[dcn.id] }}
         >
           {dcn.verb}
-          {showKeys && (
-            <span className="ml-1.5 text-[10px] text-white/30">{dcn.key.toUpperCase()}</span>
-          )}
         </button>
       ))}
       {result && (

@@ -1,5 +1,5 @@
-// Shared substrate for the Disputes variants: the claim model, severity
-// ordering, decay math, and the demo queue.
+// Substrate for the Disputes bench: the claim model, severity ordering,
+// decay math, and the demo queue.
 //
 // Client-safe by construction — it must NOT import the server-only API
 // client, so the shape is declared here (structurally identical to
@@ -28,30 +28,10 @@ export interface DisputeData {
 export type Resolution = "reverified" | "deprecated" | "dismissed";
 
 /** The three answers, in the order a reviewer weighs them. */
-export const DECISIONS: {
-  id: Resolution;
-  verb: string;
-  gloss: string;
-  key: string;
-}[] = [
-  {
-    id: "reverified",
-    verb: "still true",
-    gloss: "checked it — extend its validity window",
-    key: "r",
-  },
-  {
-    id: "deprecated",
-    verb: "they're right",
-    gloss: "end it now — drop it out of retrieval",
-    key: "d",
-  },
-  {
-    id: "dismissed",
-    verb: "noise",
-    gloss: "the reports are wrong — the memory stands",
-    key: "x",
-  },
+export const DECISIONS: { id: Resolution; verb: string; gloss: string }[] = [
+  { id: "reverified", verb: "still true", gloss: "checked it — extend its validity window" },
+  { id: "deprecated", verb: "they're right", gloss: "end it now — drop it out of retrieval" },
+  { id: "dismissed", verb: "noise", gloss: "the reports are wrong — the memory stands" },
 ];
 
 /**
