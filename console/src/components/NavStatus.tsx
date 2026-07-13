@@ -9,6 +9,7 @@ interface Status {
   live: boolean;
   pending: number;
   contradictions: number;
+  flagged: number;
   queueDepth: number;
 }
 
@@ -28,7 +29,8 @@ export default function NavStatus() {
         const s = (await res.json()) as Status;
         if (!cancelled) setStatus(s);
       } catch {
-        if (!cancelled) setStatus({ live: false, pending: 0, contradictions: 0, queueDepth: 0 });
+        if (!cancelled)
+          setStatus({ live: false, pending: 0, contradictions: 0, flagged: 0, queueDepth: 0 });
       }
     };
     tick();
@@ -40,7 +42,7 @@ export default function NavStatus() {
   }, []);
 
   if (!status) return null;
-  const waiting = status.pending + status.contradictions;
+  const waiting = status.pending + status.contradictions + status.flagged;
   const dotColor = status.live ? band("beta") : "#f0b429";
   const label = status.live ? "live" : "demo data";
   return (
@@ -50,7 +52,7 @@ export default function NavStatus() {
           href="/reviews"
           className="rounded-full border px-2.5 py-0.5 transition hover:text-white"
           style={{ borderColor: band("beta", 68, 0.4), color: band("beta") }}
-          title={`${status.pending} pending promotions, ${status.contradictions} open contradictions`}
+          title={`${status.pending} pending promotions, ${status.contradictions} open contradictions, ${status.flagged} disputed memories`}
         >
           {waiting} to review
         </Link>

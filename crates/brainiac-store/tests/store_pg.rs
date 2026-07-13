@@ -8,7 +8,7 @@
 //! - Queue: claim invisibility, crash-redelivery, dead-lettering.
 
 use brainiac_core::{MemoryKind, MemoryStatus, Principal, Visibility};
-use brainiac_store::{entities, memories, orgs, queue, Store};
+use brainiac_store::{entities, feedback, memories, orgs, queue, Store};
 use uuid::Uuid;
 
 fn database_url() -> Option<String> {
@@ -458,6 +458,106 @@ async fn ttl_expiring_queue_and_reverification() {
         .await
         .expect("query ok");
     assert!(denied.is_none(), "invisible (private) memory must not extend");
+
+    let _ = &ctx.admin;
+}
+
+#[tokio::test]
+async fn feedback_claims_queue_and_resolution() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+    let p = pay_dev();
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+
+    // A helpful verdict asserts nothing to fix: it must NOT open a claim.
+    feedback::insert(
+        &mut tx,
+        Uuid::new_v4(),
+        org(),
+        uuid(101),
+        uuid(11),
+        "helpful",
+        None,
+    )
+    .await
+    .expect("helpful");
+    assert!(
+        feedback::flagged(&mut tx, 50).await.expect("flagged").is_empty(),
+        "a helpful verdict must not open a claim"
+    );
+
+    // Two negative verdicts against one memory = ONE queue row, counts merged.
+    for (verdict, note) in [("wrong", Some("psp changed the endpoint")), ("outdated", None)] {
+        feedback::insert(
+            &mut tx,
+            Uuid::new_v4(),
+            org(),
+            uuid(102),
+            uuid(11),
+            verdict,
+            note,
+        )
+        .await
+        .expect("negative verdict");
+    }
+    let flagged = feedback::flagged(&mut tx, 50).await.expect("flagged");
+    assert_eq!(flagged.len(), 1, "one row per disputed memory, not per verdict");
+    assert_eq!(flagged[0].memory_id, uuid(102));
+    assert_eq!((flagged[0].wrong, flagged[0].outdated), (1, 1));
+    assert_eq!(flagged[0].notes, vec!["psp changed the endpoint".to_string()]);
+    assert_eq!(feedback::flagged_count(&mut tx).await.expect("count"), 1);
+
+    // Trust attaches to served memories in one batched lookup.
+    let trust = feedback::trust_for(&mut tx, &[uuid(101), uuid(102), uuid(104)])
+        .await
+        .expect("trust");
+    assert_eq!(trust[&uuid(101)].helpful, 1);
+    assert!(!trust[&uuid(101)].disputed(), "helpful is not a dispute");
+    assert!(trust[&uuid(102)].disputed(), "open claims mark a memory disputed");
+    assert!(!trust.contains_key(&uuid(104)), "un-rated memories carry no trust row");
+
+    // A maintainer answers: dismissed → claims close, memory untouched.
+    let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed")
+        .await
+        .expect("resolve");
+    assert_eq!(closed, 2, "both open claims close together");
+    assert!(
+        feedback::flagged(&mut tx, 50).await.expect("flagged").is_empty(),
+        "answered claims leave the queue"
+    );
+    let trust = feedback::trust_for(&mut tx, &[uuid(102)]).await.expect("trust");
+    assert_eq!(trust[&uuid(102)].wrong, 1, "history is kept");
+    assert!(!trust[&uuid(102)].disputed(), "but the dispute is settled");
+
+    // Re-resolving an already-answered memory closes nothing (idempotent).
+    let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed")
+        .await
+        .expect("resolve again");
+    assert_eq!(closed, 0);
+
+    // RLS: the data analyst cannot see claims against a payments-team memory.
+    drop(tx);
+    let mut tx = ctx.store.scoped_tx(&pay_dev()).await.expect("tx");
+    feedback::insert(
+        &mut tx,
+        Uuid::new_v4(),
+        org(),
+        uuid(103),
+        uuid(11),
+        "wrong",
+        None,
+    )
+    .await
+    .expect("claim on a private memory");
+    tx.commit().await.expect("commit");
+    let mut tx = ctx.store.scoped_tx(&data_analyst()).await.expect("tx");
+    assert_eq!(
+        feedback::flagged_count(&mut tx).await.expect("count"),
+        0,
+        "claims against invisible memories must not leak into another principal's queue"
+    );
 
     let _ = &ctx.admin;
 }

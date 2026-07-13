@@ -44,6 +44,11 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/memories/expiring", get(memories_expiring))
         .route("/v1/memories/{id}", get(memory_detail))
         .route("/v1/memories/{id}/reverify", post(memory_reverify))
+        .route("/v1/reviews/feedback", get(feedback_queue))
+        .route(
+            "/v1/reviews/feedback/{id}/resolve",
+            post(resolve_feedback_claims),
+        )
         .route("/v1/sources", get(sources_list))
         .route("/v1/pipeline/runs", get(pipeline_runs))
         .route("/v1/org/users", get(org_users))
@@ -357,6 +362,135 @@ async fn resolve_contradiction(
     Ok(Json(json!({ "contradiction_id": id, "status": status })))
 }
 
+// ── feedback triage (agent verdicts a maintainer must answer) ───────────
+
+#[derive(Deserialize)]
+struct FeedbackQueueQuery {
+    limit: Option<i64>,
+}
+
+/// Memories carrying unresolved `wrong` / `outdated` claims from the agents
+/// and operators who were served them — most-disputed first. This is where
+/// MCP memory_feedback verdicts land for a human.
+async fn feedback_queue(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<FeedbackQueueQuery>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let rows = brainiac_store::feedback::flagged(&mut tx, q.limit.unwrap_or(50))
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!({
+        "flagged": rows.iter().map(|f| json!({
+            "memory_id": f.memory_id,
+            "content": f.content,
+            "kind": f.kind,
+            "status": f.status,
+            "team_id": f.team_id,
+            "valid_to": f.valid_to,
+            "claims": { "wrong": f.wrong, "outdated": f.outdated },
+            "notes": f.notes,
+            "oldest_claim_secs": f.oldest_claim_secs,
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct ResolveFeedbackBody {
+    /// reverified | deprecated | dismissed
+    resolution: String,
+    /// For `reverified`: the new validity budget (defaults to the kind TTL).
+    days: Option<i64>,
+}
+
+/// Answer the open claims against a memory. The three answers are the three
+/// things a maintainer can actually mean:
+///   reverified — checked it, still true → extend its validity window
+///   deprecated — the reporters are right → end it now, drop it from retrieval
+///   dismissed  — the reports are noise → leave the memory as-is
+/// Whichever is chosen, every open claim on that memory closes with it.
+async fn resolve_feedback_claims(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<ResolveFeedbackBody>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    if !brainiac_store::feedback::RESOLUTIONS.contains(&body.resolution.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "unknown resolution `{}` ({})",
+                body.resolution,
+                brainiac_store::feedback::RESOLUTIONS.join("|")
+            ),
+        ));
+    }
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    // Invisible memory ⇒ 404, not 403 (no oracle) — same stance as promotions.
+    let row = sqlx::query("SELECT team_id, kind FROM memories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(internal)?
+        .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
+    if let Some(team_id) = row.get::<Option<Uuid>, _>("team_id") {
+        if !is_maintainer(&mut tx, &principal, team_id).await? {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "answering feedback claims requires a maintainer of the owning team".into(),
+            ));
+        }
+    }
+
+    let mut new_valid_to: Option<chrono::DateTime<chrono::Utc>> = None;
+    match body.resolution.as_str() {
+        "reverified" => {
+            let kind = brainiac_core::MemoryKind::parse(&row.get::<String, _>("kind"));
+            let days = body
+                .days
+                .unwrap_or_else(|| kind.map_or(365, |k| i64::from(k.default_ttl_days())))
+                .clamp(1, 3650);
+            new_valid_to = brainiac_store::memories::extend_validity(&mut tx, id, days)
+                .await
+                .map_err(internal)?;
+        }
+        "deprecated" => {
+            // The reporters were right: end the window now and drop it out of
+            // retrieval, without inventing a supersessor it doesn't have.
+            sqlx::query(
+                "UPDATE memories
+                 SET status = 'deprecated'::memory_status, valid_to = now(), updated_at = now()
+                 WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal)?;
+        }
+        _ => {} // dismissed: the memory stands untouched
+    }
+
+    let closed = brainiac_store::feedback::resolve_claims(
+        &mut tx,
+        id,
+        principal.user_id,
+        &body.resolution,
+    )
+    .await
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(json!({
+        "memory_id": id,
+        "resolution": body.resolution,
+        "claims_closed": closed,
+        "valid_to": new_valid_to,
+    })))
+}
+
 // ── freshness lifecycle (TTL + re-verification) ─────────────────────────
 
 #[derive(Deserialize)]
@@ -441,12 +575,23 @@ async fn memory_reverify(
         .await
         .map_err(internal)?
         .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
+    // Re-verifying answers any open feedback claims against this memory —
+    // a maintainer who just confirmed it is true has, in fact, responded.
+    let claims_closed = brainiac_store::feedback::resolve_claims(
+        &mut tx,
+        id,
+        principal.user_id,
+        "reverified",
+    )
+    .await
+    .map_err(internal)?;
     tx.commit().await.map_err(internal)?;
     Ok(Json(json!({
         "memory_id": id,
         "reverified": true,
         "valid_to": new_valid_to,
         "days": days,
+        "claims_closed": claims_closed,
     })))
 }
 
@@ -603,6 +748,9 @@ async fn analytics(
             .await
             .map_err(internal)?
             .get("n");
+    let flagged_memories = brainiac_store::feedback::flagged_count(&mut tx)
+        .await
+        .map_err(internal)?;
     let entities: i64 = sqlx::query("SELECT count(*) AS n FROM entities")
         .fetch_one(&mut *tx)
         .await
@@ -628,6 +776,7 @@ async fn analytics(
             "pending_promotions": review.get::<i64, _>("pending"),
             "oldest_pending_secs": review.get::<i64, _>("oldest_secs"),
             "open_contradictions": contradictions_open,
+            "flagged_memories": flagged_memories,
         },
         "graph": { "entities": entities, "canonicals": canonicals },
         "queue": { "ingest_depth": queue_depth },

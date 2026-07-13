@@ -11,26 +11,35 @@ export interface NavStatusPayload {
   live: boolean;
   pending: number;
   contradictions: number;
+  /** Memories with unresolved wrong/outdated reports from their readers. */
+  flagged: number;
   queueDepth: number;
 }
 
+const OFFLINE: NavStatusPayload = {
+  live: false,
+  pending: 0,
+  contradictions: 0,
+  flagged: 0,
+  queueDepth: 0,
+};
+
 export async function GET() {
   try {
-    const a = await getAnalytics(configFromEnv());
+    // flagged_memories is newer than the hand-written Analytics mirror in
+    // types.ts; read it structurally rather than widening that shared type.
+    const a = (await getAnalytics(configFromEnv())) as Awaited<
+      ReturnType<typeof getAnalytics>
+    > & { reviews: { flagged_memories?: number } };
     const payload: NavStatusPayload = {
       live: true,
       pending: a.reviews.pending_promotions,
       contradictions: a.reviews.open_contradictions,
+      flagged: a.reviews.flagged_memories ?? 0,
       queueDepth: a.queue.ingest_depth,
     };
     return NextResponse.json(payload);
   } catch {
-    const payload: NavStatusPayload = {
-      live: false,
-      pending: 0,
-      contradictions: 0,
-      queueDepth: 0,
-    };
-    return NextResponse.json(payload);
+    return NextResponse.json(OFFLINE);
   }
 }

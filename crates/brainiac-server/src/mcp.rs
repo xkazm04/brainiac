@@ -243,15 +243,37 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
         },
     )
     .await?;
+    // Trust signals: what previous readers reported about these memories, so
+    // the agent can weigh a disputed memory instead of trusting it blindly.
+    // One batched query for the whole result set — never an N+1.
+    let ids: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
+    let trust = brainiac_store::feedback::trust_for(&mut tx, &ids).await?;
     Ok(json!({
-        "memories": hits.iter().map(|h| json!({
-            "id": h.memory.id,
-            "kind": h.memory.kind.as_str(),
-            "status": h.memory.status.as_str(),
-            "content": h.memory.content,
-            "via_graph": h.via_graph,
-            "provenance_id": h.memory.provenance_id,
-        })).collect::<Vec<_>>()
+        "memories": hits.iter().map(|h| {
+            let t = trust.get(&h.memory.id).cloned().unwrap_or_default();
+            let mut m = json!({
+                "id": h.memory.id,
+                "kind": h.memory.kind.as_str(),
+                "status": h.memory.status.as_str(),
+                "content": h.memory.content,
+                "via_graph": h.via_graph,
+                "provenance_id": h.memory.provenance_id,
+            });
+            if !t.is_empty() {
+                m["feedback"] = json!({
+                    "helpful": t.helpful,
+                    "wrong": t.wrong,
+                    "outdated": t.outdated,
+                    "disputed": t.disputed(),
+                });
+                if t.disputed() {
+                    m["warning"] = json!(
+                        "readers have reported this memory as wrong or outdated and it has not                          been re-verified — treat it as unconfirmed"
+                    );
+                }
+            }
+            m
+        }).collect::<Vec<_>>()
     }))
 }
 

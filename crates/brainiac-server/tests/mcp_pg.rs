@@ -218,6 +218,35 @@ async fn mcp_handshake_and_tools() {
     assert_eq!(payload["feedback_totals"][0]["verdict"], "outdated");
     assert_eq!(payload["feedback_totals"][0]["count"], 1);
 
+    // The verdict comes back as a trust signal on the next search: the agent
+    // that retrieves this memory is told it is disputed.
+    let r = handle_message(
+        &state,
+        &rpc(
+            12,
+            "tools/call",
+            json!({
+                "name": "memory_search",
+                "arguments": { "query": "feature store", "k": 5 }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    let rated = payload["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .find(|m| m["id"].as_str() == Some(visible_id.as_str()))
+        .expect("the rated memory is still retrievable");
+    assert_eq!(rated["feedback"]["outdated"], 1);
+    assert_eq!(rated["feedback"]["disputed"], true);
+    assert!(
+        rated["warning"].as_str().expect("warning").contains("re-verified"),
+        "a disputed memory must warn the agent reading it"
+    );
+
     // Invalid verdict is refused.
     let r = handle_message(
         &state,
