@@ -15,6 +15,12 @@ use crate::{contradict, extract, pipeline_principal, resolve};
 pub const INGEST_QUEUE: &str = "ingest";
 const VISIBILITY_SECS: i64 = 300;
 
+/// First-retry backoff handed to [`queue::fail`]; it doubles per attempt and is
+/// capped inside the queue (`queue::BACKOFF_CAP_SECS`). A transient failure
+/// retries quickly, a persistent one backs off toward the cap before the
+/// attempt budget dead-letters it.
+const FAIL_BASE_BACKOFF_SECS: i64 = 30;
+
 /// Enqueue a source for the pipeline.
 pub async fn enqueue_source(store: &Store, org_id: Uuid, source_id: Uuid) -> Result<i64> {
     queue::send(
@@ -66,7 +72,7 @@ pub async fn tick(
             Ok(()) => queue::complete(store.pool(), &job).await?,
             Err(e) => {
                 tracing::error!(job = job.id, error = %e, "ingest job failed");
-                queue::fail(store.pool(), &job, 30).await?;
+                queue::fail(store.pool(), &job, FAIL_BASE_BACKOFF_SECS).await?;
             }
         }
         stats.jobs += 1;

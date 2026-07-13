@@ -259,23 +259,41 @@ async fn serve(bind: &str, with_worker: bool, mock: bool) -> Result<()> {
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
 
+    // One shutdown signal shared by the server's graceful-shutdown future and
+    // the in-process worker: ctrl_c flips it, both drain and exit cleanly.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
     // Single-process mode for constrained hosts (a 1 GB free-tier VM can't
     // afford a second runtime + connection pool). The worker loop is just a
-    // task on the same runtime; it shares the store and the embedder.
-    if with_worker {
+    // task on the same runtime; it shares the store and the embedder, and gets
+    // the same shutdown signal so it finishes its in-flight batch on ctrl_c.
+    let worker_handle = if with_worker {
         let store = store.clone();
         let embedder = Arc::clone(&embedder);
-        tokio::spawn(async move {
-            if let Err(e) = worker_loop(store, embedder, mock).await {
+        let shutdown_rx = shutdown_rx.clone();
+        Some(tokio::spawn(async move {
+            if let Err(e) = worker_loop(store, embedder, mock, shutdown_rx).await {
                 tracing::error!(error = %e, "in-process worker stopped");
             }
-        });
-    }
+        }))
+    } else {
+        None
+    };
 
     let app = http::router(store, embedder).await?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, with_worker, "brainiac REST listening");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("shutdown signal received; draining");
+            let _ = shutdown_tx.send(true);
+        })
+        .await?;
+    // Server has stopped accepting; let the worker finish its in-flight batch.
+    if let Some(handle) = worker_handle {
+        let _ = handle.await;
+    }
     Ok(())
 }
 
@@ -293,12 +311,53 @@ async fn worker(mock: bool) -> Result<()> {
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
-    worker_loop(store, embedder, mock).await
+    // Standalone: own the ctrl_c → shutdown wiring the server otherwise provides.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown signal received; draining");
+        let _ = shutdown_tx.send(true);
+    });
+    worker_loop(store, embedder, mock, shutdown_rx).await
+}
+
+/// Idle poll interval when the queue is empty.
+const WORKER_IDLE_SLEEP: std::time::Duration = std::time::Duration::from_secs(2);
+/// Self-heal backoff bounds for a failing tick (DB hiccup, provider outage):
+/// first retry waits BASE, doubling per consecutive failure up to CAP.
+const WORKER_SELFHEAL_BASE: std::time::Duration = std::time::Duration::from_secs(1);
+const WORKER_SELFHEAL_CAP: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Sleep for `dur`, returning early with `true` the moment shutdown is
+/// signalled. Used for every wait in the loop so ctrl_c is honoured promptly.
+async fn sleep_or_shutdown(
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    dur: std::time::Duration,
+) -> bool {
+    if *shutdown.borrow() {
+        return true;
+    }
+    tokio::select! {
+        _ = tokio::time::sleep(dur) => false,
+        // The channel only ever flips false -> true, so a change means shutdown.
+        _ = shutdown.changed() => true,
+    }
 }
 
 /// The pipeline drain loop. Runs standalone (`brainiac worker`) or as a task
 /// inside `serve --with-worker`.
-async fn worker_loop(store: Store, embedder: Arc<dyn Embedder>, mock: bool) -> Result<()> {
+///
+/// Direction 1 hardening: a failing tick (a DB hiccup, a provider outage) no
+/// longer propagates `?` and kills the worker — under `serve --with-worker`
+/// that left the REST server up while the worker was silently dead. Instead the
+/// loop logs, backs off exponentially, and retries, self-healing when the
+/// dependency recovers. On ctrl_c it finishes the in-flight batch, then exits.
+async fn worker_loop(
+    store: Store,
+    embedder: Arc<dyn Embedder>,
+    mock: bool,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
     let default_provider: Arc<dyn brainiac_gateway::ChatProvider> = if mock {
         tracing::warn!("worker running with the MOCK provider — dev/demo only");
         Arc::new(brainiac_gateway::MockProvider::new(|_| {
@@ -328,16 +387,48 @@ async fn worker_loop(store: Store, embedder: Arc<dyn Embedder>, mock: bool) -> R
     };
 
     tracing::info!(providers = %providers.describe(), embedder = embedder.model_name(), "brainiac worker started");
+    let mut consecutive_failures: u32 = 0;
     loop {
-        let stats =
-            brainiac_pipeline::worker::tick(&store, &providers, embedder.as_ref(), version, 8)
-                .await?;
-        if stats.jobs == 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        } else {
-            tracing::info!(?stats, "pipeline tick");
+        if *shutdown.borrow() {
+            break;
+        }
+        // Let the in-flight batch run to completion before honouring shutdown —
+        // we don't cancel a tick mid-source, we just stop starting new ones.
+        match brainiac_pipeline::worker::tick(&store, &providers, embedder.as_ref(), version, 8)
+            .await
+        {
+            Ok(stats) => {
+                consecutive_failures = 0;
+                if stats.jobs == 0 {
+                    if sleep_or_shutdown(&mut shutdown, WORKER_IDLE_SLEEP).await {
+                        break;
+                    }
+                } else {
+                    tracing::info!(?stats, "pipeline tick");
+                }
+            }
+            Err(e) => {
+                consecutive_failures += 1;
+                let shift = (consecutive_failures - 1).min(5);
+                let backoff = (WORKER_SELFHEAL_BASE * (1 << shift)).min(WORKER_SELFHEAL_CAP);
+                // Bound the log noise of a sustained outage: first few, then
+                // every 10th — enough to prove liveness without flooding.
+                if consecutive_failures <= 3 || consecutive_failures.is_multiple_of(10) {
+                    tracing::error!(
+                        error = %e,
+                        consecutive_failures,
+                        backoff_secs = backoff.as_secs(),
+                        "worker tick failed; backing off and retrying (self-heal)"
+                    );
+                }
+                if sleep_or_shutdown(&mut shutdown, backoff).await {
+                    break;
+                }
+            }
         }
     }
+    tracing::info!("brainiac worker shut down gracefully");
+    Ok(())
 }
 
 async fn eval(

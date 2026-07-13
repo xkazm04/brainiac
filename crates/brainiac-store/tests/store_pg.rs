@@ -642,10 +642,12 @@ async fn queue_claim_redeliver_and_dead_letter() {
     assert_eq!(redelivered.len(), 1, "failed job redelivers");
     assert!(redelivered[0].attempts >= 2);
 
-    // Exhaust attempts → dead-letter.
+    // Exhaust attempts via fail() → 'failed' (adjudicated: the worker reported
+    // the error every time until the budget ran out; distinct from crash-poison
+    // 'dead', which claim-time reaping produces — see queue_reaps_crash_poison).
     let mut job = redelivered[0].clone();
     job.attempts = queue::MAX_ATTEMPTS;
-    let retrying = queue::fail(pool, &job, 0).await.expect("dead");
+    let retrying = queue::fail(pool, &job, 0).await.expect("failed");
     assert!(!retrying, "exhausted job must not retry");
     assert_eq!(queue::depth(pool, "extract").await.expect("depth"), 0);
 
@@ -655,13 +657,17 @@ async fn queue_claim_redeliver_and_dead_letter() {
     queue::complete(pool, &claimed[0]).await.expect("complete");
     assert_eq!(queue::depth(pool, "extract").await.expect("depth"), 0);
 
-    // Health reflects the story so far: nothing live, one ok, one dead.
+    // Health reflects the story so far: nothing live, one ok, one adjudicated
+    // failure, zero crash-poison (no job ever went unacked past the ceiling).
     let h = queue::health(pool, "extract").await.expect("health");
     assert_eq!((h.ready, h.in_flight), (0, 0));
     assert_eq!(h.archived_ok, 1);
-    assert_eq!(h.dead_letters, 1);
+    assert_eq!(h.archived_failed, 1);
+    assert_eq!(h.dead_letters, 0);
 
-    // Dead-letter inspection + requeue round trip.
+    // Dead-letter inspection + requeue round trip. dead_letters() is the
+    // operator recovery surface: it lists BOTH terminal outcomes, so the
+    // 'failed' job above appears here.
     let dead = queue::dead_letters(pool, "extract", 10).await.expect("dl");
     assert_eq!(dead.len(), 1);
     assert_eq!(dead[0].payload["task"], "extract");
@@ -685,6 +691,63 @@ async fn queue_claim_redeliver_and_dead_letter() {
     queue::complete(pool, &back[0]).await.expect("complete2");
 
     // Keep admin pool alive till the end (unused otherwise).
+    let _ = &ctx.admin;
+}
+
+/// Direction 1: a crash-poison job — one that crashes the worker before it can
+/// ever call fail() — is reaped to the dead-letter archive at claim time
+/// instead of being redelivered forever. Simulated by claiming repeatedly with
+/// zero visibility and never acking, past the attempt budget.
+#[tokio::test]
+async fn queue_reaps_crash_poison() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    let pool = ctx.store.pool();
+
+    queue::send(pool, "reap", &serde_json::json!({"task": "crasher"}))
+        .await
+        .expect("send");
+
+    // Claim over and over WITHOUT ever completing or failing — this is exactly
+    // what a worker that panics/crashes mid-job looks like to the queue: each
+    // claim bumps attempts, nothing acks, the visibility window lapses (0s),
+    // and it comes right back. Reaping must terminate this.
+    let mut reaped = false;
+    let mut last_seen_attempts = 0;
+    for _ in 0..(queue::MAX_ATTEMPTS + 3) {
+        let jobs = queue::read(pool, "reap", 1, 0).await.expect("read");
+        match jobs.into_iter().next() {
+            Some(job) => last_seen_attempts = job.attempts,
+            None => {
+                reaped = true;
+                break;
+            }
+        }
+    }
+    assert!(reaped, "crash-poison job must stop being redelivered");
+    assert!(
+        last_seen_attempts >= queue::MAX_ATTEMPTS,
+        "job was delivered its full budget before reaping, got {last_seen_attempts}"
+    );
+    assert_eq!(
+        queue::depth(pool, "reap").await.expect("depth"),
+        0,
+        "no live job remains after reaping"
+    );
+
+    // It landed in dead-letter as crash-poison ('dead'), NOT as an adjudicated
+    // 'failed' — fail() was never called.
+    let h = queue::health(pool, "reap").await.expect("health");
+    assert_eq!(h.dead_letters, 1, "reaped as crash-poison");
+    assert_eq!(h.archived_failed, 0, "never adjudicated via fail()");
+    assert_eq!(h.archived_ok, 0);
+
+    // And it's recoverable through the same operator surface.
+    let dl = queue::dead_letters(pool, "reap", 10).await.expect("dl");
+    assert_eq!(dl.len(), 1);
+    assert_eq!(dl[0].payload["task"], "crasher");
+
     let _ = &ctx.admin;
 }
 
