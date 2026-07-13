@@ -7,8 +7,32 @@
 //! recalibrates them.
 
 use brainiac_core::embed::DeterministicEmbedder;
+use brainiac_core::rerank::LexicalOverlapReranker;
+use brainiac_eval::gates::{regression_failures, Baseline};
 use brainiac_eval::{retrieval_profile, seed};
 use brainiac_store::Store;
+
+/// These tests share one database (truncate + seed), so serialize them —
+/// cargo runs test fns in parallel by default.
+static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    DB_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
+async fn truncate(admin: &sqlx::PgPool) {
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs CASCADE",
+    )
+    .execute(admin)
+    .await
+    .expect("truncate");
+}
 
 #[tokio::test]
 async fn retrieval_profile_end_to_end() {
@@ -16,18 +40,12 @@ async fn retrieval_profile_end_to_end() {
         eprintln!("SKIP: DATABASE_URL not set — eval integration test needs Postgres");
         return;
     };
+    let _guard = db_guard().await;
     brainiac_store::migrate(&url).await.expect("migrate");
 
     // Fresh tenant slate (admin connection; the store role can't TRUNCATE).
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
-    sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
-                  promotions, memories, canonical_entities, entities, provenance, sources,
-                  team_members, users, teams, orgs, pipeline_runs CASCADE",
-    )
-    .execute(&admin)
-    .await
-    .expect("truncate");
+    truncate(&admin).await;
 
     let store = Store::connect(&url).await.expect("connect");
     let fx = brainiac_fixtures::load(brainiac_fixtures::loader::default_root()).expect("fixtures");
@@ -35,7 +53,7 @@ async fn retrieval_profile_end_to_end() {
 
     let seeded = seed::seed_gold(&store, &fx, &embedder).await.expect("seed");
     let (report, diagnostics) =
-        retrieval_profile::run(&store, &fx, &embedder, seeded.embedding_version)
+        retrieval_profile::run(&store, &fx, &embedder, None, seeded.embedding_version)
             .await
             .expect("profile");
 
@@ -43,6 +61,10 @@ async fn retrieval_profile_end_to_end() {
         "retrieval report: {}",
         serde_json::to_string_pretty(&report).expect("json")
     );
+
+    // Direction 1: no reranker tags "none" and round-trips through the gate.
+    assert_eq!(report.reranker, "none");
+    assert_eq!(diagnostics.reranker, "none");
 
     // ── diagnostics mirror the run ───────────────────────────────────────
     assert_eq!(
@@ -97,5 +119,75 @@ async fn retrieval_profile_end_to_end() {
     assert!(
         exact.ndcg_at_10.unwrap_or(0.0) > 0.5,
         "exact-identifier stratum should be strong under hybrid FTS"
+    );
+}
+
+/// Direction 1: a lexical-reranker run produces a report TAGGED with the
+/// reranker, its scores gate against a same-reranker baseline, and a
+/// cross-reranker baseline comparison is REFUSED with a clear error.
+#[tokio::test]
+async fn reranker_axis_tags_and_gates() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set — reranker eval test needs Postgres");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let fx = brainiac_fixtures::load(brainiac_fixtures::loader::default_root()).expect("fixtures");
+    let embedder = DeterministicEmbedder::default();
+    let reranker = LexicalOverlapReranker;
+
+    let seeded = seed::seed_gold(&store, &fx, &embedder).await.expect("seed");
+    let (report, diagnostics) = retrieval_profile::run(
+        &store,
+        &fx,
+        &embedder,
+        Some(&reranker),
+        seeded.embedding_version,
+    )
+    .await
+    .expect("profile");
+
+    // The report is tagged with the reranker's model name.
+    assert_eq!(report.reranker, "lexical-overlap-v1");
+    assert_eq!(diagnostics.reranker, "lexical-overlap-v1");
+
+    // Hard gates still evaluate (RLS is orthogonal to reranking).
+    assert!(
+        report.gate_failures().is_empty(),
+        "hard gates failed under lexical reranker:\n{}",
+        report.gate_failures().join("\n")
+    );
+
+    // Its scores gate cleanly against a baseline captured from the same
+    // reranker (a run must not regress against itself).
+    let lexical_baseline = Baseline::from_report(&report).expect("baseline");
+    assert_eq!(lexical_baseline.reranker, "lexical-overlap-v1");
+    assert!(
+        regression_failures(&report, &lexical_baseline).is_empty(),
+        "lexical run must not regress against its own baseline"
+    );
+
+    // A cross-reranker comparison is REFUSED: gating this lexical run against a
+    // no-reranker baseline errors clearly instead of comparing incomparable
+    // rankings.
+    let none_baseline = Baseline {
+        reranker: "none".into(),
+        ..lexical_baseline
+    };
+    let fails = regression_failures(&report, &none_baseline);
+    assert_eq!(
+        fails.len(),
+        1,
+        "cross-reranker comparison yields one refusal"
+    );
+    assert!(
+        fails[0].contains("reranker mismatch"),
+        "the refusal names the reranker mismatch: {}",
+        fails[0]
     );
 }

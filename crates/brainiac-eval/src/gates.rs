@@ -27,11 +27,24 @@ const TEMPORAL_RANK1_DELTA: f64 = 0.02;
 /// semantic stratum stands in for it.
 const CROSS_TEAM_MARGIN_OVER_SEMANTIC: f64 = 0.05;
 
+/// A baseline written before the reranker axis existed carries no `reranker`
+/// field; it describes the no-reranker path, so an absent field reads as
+/// `"none"` and the committed `results/baseline.json` stays valid unchanged.
+fn default_reranker() -> String {
+    "none".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Baseline {
     /// Which embedder produced this baseline; a mismatch is a hard error —
     /// comparing scores across embedders is meaningless.
     pub embedding_model: String,
+    /// Which stage-5 reranker produced this baseline (`"none"` = no reranker).
+    /// Like the embedder, a mismatch is a hard error: rerankers reorder the
+    /// result set, so scores are only comparable within one reranker. Absent in
+    /// pre-reranker baselines → defaults to `"none"` (see [`default_reranker`]).
+    #[serde(default = "default_reranker")]
+    pub reranker: String,
     pub fixture_version: String,
     pub overall_ndcg_at_10: f64,
     pub per_stratum_ndcg_at_10: BTreeMap<String, f64>,
@@ -42,6 +55,7 @@ impl Baseline {
     pub fn from_report(report: &RetrievalReport) -> anyhow::Result<Self> {
         Ok(Self {
             embedding_model: report.embedding_model.clone(),
+            reranker: report.reranker.clone(),
             fixture_version: report.fixture_version.clone(),
             overall_ndcg_at_10: report
                 .overall
@@ -68,6 +82,18 @@ pub fn regression_failures(report: &RetrievalReport, baseline: &Baseline) -> Vec
         fails.push(format!(
             "embedder mismatch: run={} baseline={} — recalibrate the baseline instead of comparing across embedders",
             report.embedding_model, baseline.embedding_model
+        ));
+        return fails;
+    }
+
+    // A reranker mismatch is refused exactly like the embedder mismatch: a
+    // reranker reorders the surviving candidates, so NDCG/MRR under `lexical`
+    // and under `none` measure different rankings — comparing them is
+    // meaningless. Recalibrate a per-reranker baseline instead.
+    if report.reranker != baseline.reranker {
+        fails.push(format!(
+            "reranker mismatch: run={} baseline={} — recalibrate the baseline instead of comparing across rerankers",
+            report.reranker, baseline.reranker
         ));
         return fails;
     }
@@ -142,6 +168,7 @@ mod tests {
         RetrievalReport {
             fixture_version: "v1".into(),
             embedding_model: "deterministic-bow-v1".into(),
+            reranker: "none".into(),
             overall: scores(Some(overall)),
             per_stratum: strata
                 .iter()
@@ -208,6 +235,36 @@ mod tests {
         let fails = regression_failures(&r, &baseline());
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("embedder mismatch"));
+    }
+
+    #[test]
+    fn reranker_mismatch_short_circuits() {
+        let mut r = report(0.9, &[("semantic", 0.9), ("cross_team_graph", 0.99)], 0.9);
+        r.reranker = "lexical-overlap-v1".into();
+        let fails = regression_failures(&r, &baseline());
+        assert_eq!(fails.len(), 1);
+        assert!(fails[0].contains("reranker mismatch"));
+    }
+
+    #[test]
+    fn pre_reranker_baseline_json_defaults_to_none() {
+        // A baseline written before the reranker axis has no `reranker` key; it
+        // must still parse and read as the no-reranker path.
+        let json = r#"{
+            "embedding_model": "deterministic-bow-v1",
+            "fixture_version": "v1",
+            "overall_ndcg_at_10": 0.685,
+            "per_stratum_ndcg_at_10": {"semantic": 0.422, "cross_team_graph": 0.772},
+            "temporal_rank1_accuracy": 0.786
+        }"#;
+        let b: Baseline = serde_json::from_str(json).expect("legacy baseline parses");
+        assert_eq!(b.reranker, "none");
+        let r = report(
+            0.685,
+            &[("semantic", 0.422), ("cross_team_graph", 0.772)],
+            0.786,
+        );
+        assert!(regression_failures(&r, &b).is_empty());
     }
 
     #[test]

@@ -16,6 +16,12 @@ pub struct StratumScores {
 pub struct RetrievalReport {
     pub fixture_version: String,
     pub embedding_model: String,
+    /// Stage-5 reranker that produced this run: the reranker's `model_name`, or
+    /// `"none"` when retrieval ran with no reranker (the byte-identical
+    /// pre-stage-5 path). Tagged alongside `embedding_model` because — exactly
+    /// like the embedder — scores are only comparable within one reranker; the
+    /// regression gate refuses a cross-reranker baseline comparison.
+    pub reranker: String,
     pub overall: StratumScores,
     pub per_stratum: BTreeMap<String, StratumScores>,
     /// Temporal suite: fraction of as-of cases with the correct memory at rank 1.
@@ -81,6 +87,8 @@ pub struct QueryDiagnostic {
 pub struct RetrievalDiagnostics {
     pub fixture_version: String,
     pub embedding_model: String,
+    /// Stage-5 reranker tag (mirrors [`RetrievalReport::reranker`]).
+    pub reranker: String,
     pub queries: Vec<QueryDiagnostic>,
 }
 

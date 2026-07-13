@@ -12,9 +12,10 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::Result;
 use brainiac_core::embed::Embedder;
 use brainiac_core::metrics::{ndcg_at_k, recall_at_k, reciprocal_rank};
+use brainiac_core::rerank::Reranker;
 use brainiac_fixtures::ids::stable_uuid;
 use brainiac_fixtures::Fixtures;
-use brainiac_store::retrieval::{search, RetrievalHit, RetrievalRequest};
+use brainiac_store::retrieval::{search_reranked, RetrievalHit, RetrievalRequest};
 use brainiac_store::Store;
 use uuid::Uuid;
 
@@ -68,8 +69,14 @@ pub async fn run(
     store: &Store,
     fx: &Fixtures,
     embedder: &dyn Embedder,
+    reranker: Option<&dyn Reranker>,
     embedding_version: i32,
 ) -> Result<(RetrievalReport, RetrievalDiagnostics)> {
+    // Tag for the report: the reranker's model name, or "none" when the run
+    // uses the byte-identical pre-stage-5 path.
+    let reranker_tag = reranker
+        .map(|r| r.model_name().to_string())
+        .unwrap_or_else(|| "none".into());
     let mut per_query: Vec<PerQuery> = Vec::new();
     let mut diagnostics: Vec<QueryDiagnostic> = Vec::new();
     let mut leaks: Vec<String> = Vec::new();
@@ -83,10 +90,11 @@ pub async fn run(
         let principal = principal_for_user(fx, &q.asking_as.user)
             .ok_or_else(|| anyhow::anyhow!("unknown asker {}", q.asking_as.user))?;
         let mut tx = store.scoped_tx(&principal).await?;
-        let hits = search(
+        let hits = search_reranked(
             &mut tx,
             store.pool(),
             embedder,
+            reranker,
             embedding_version,
             &RetrievalRequest {
                 query: q.query.clone(),
@@ -189,10 +197,11 @@ pub async fn run(
             .ok_or_else(|| anyhow::anyhow!("no user in team {}", expected.team))?;
         let principal = principal_for_user(fx, &asker.id).expect("asker principal");
         let mut tx = store.scoped_tx(&principal).await?;
-        let hits = search(
+        let hits = search_reranked(
             &mut tx,
             store.pool(),
             embedder,
+            reranker,
             embedding_version,
             &RetrievalRequest {
                 query: t.question.clone(),
@@ -252,10 +261,11 @@ pub async fn run(
         let principal = principal_for_user(fx, &q.asking_as.user)
             .ok_or_else(|| anyhow::anyhow!("unknown asker {}", q.asking_as.user))?;
         let mut tx = store.scoped_tx(&principal).await?;
-        let hits = search(
+        let hits = search_reranked(
             &mut tx,
             store.pool(),
             embedder,
+            reranker,
             embedding_version,
             &RetrievalRequest {
                 query: q.query.clone(),
@@ -328,6 +338,7 @@ pub async fn run(
     let report = RetrievalReport {
         fixture_version: "v1".into(),
         embedding_model: embedder.model_name().to_string(),
+        reranker: reranker_tag,
         overall: aggregate(&all),
         per_stratum,
         temporal_rank1_accuracy: if temporal_total == 0 {
@@ -343,6 +354,7 @@ pub async fn run(
     let mut diagnostics = RetrievalDiagnostics {
         fixture_version: report.fixture_version.clone(),
         embedding_model: report.embedding_model.clone(),
+        reranker: report.reranker.clone(),
         queries: diagnostics,
     };
     diagnostics.sort_failures_first();

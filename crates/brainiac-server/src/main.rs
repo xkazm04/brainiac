@@ -67,6 +67,12 @@ enum Command {
         /// (DashScope text-embedding-v4; needs QWEN_API_KEY/DASHSCOPE_API_KEY).
         #[arg(long)]
         embedder: Option<String>,
+        /// Stage-5 reranker for the `retrieval` profile: `none` (default) or
+        /// `lexical` (deterministic overlap scorer — the bake-off seam). Tagged
+        /// into the report; the regression gate refuses a cross-reranker
+        /// baseline comparison, so recalibrate a per-reranker baseline.
+        #[arg(long)]
+        reranker: Option<String>,
         #[arg(long)]
         out: Option<String>,
         /// Also write the per-query drill-down (expected vs got per QA/
@@ -179,6 +185,7 @@ async fn main() -> Result<()> {
             fixtures,
             profile,
             embedder,
+            reranker,
             out,
             diagnostics,
             baseline,
@@ -188,6 +195,7 @@ async fn main() -> Result<()> {
                 &fixtures,
                 &profile,
                 embedder.as_deref(),
+                reranker.as_deref(),
                 out.as_deref(),
                 diagnostics.as_deref(),
                 baseline.as_deref(),
@@ -507,10 +515,12 @@ async fn worker_loop(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn eval(
     fixtures_dir: &str,
     profile: &str,
     embedder_name: Option<&str>,
+    reranker_name: Option<&str>,
     out: Option<&str>,
     diagnostics_out: Option<&str>,
     baseline_path: Option<&str>,
@@ -550,11 +560,21 @@ async fn eval(
         .await;
     }
 
+    // Stage-5 reranker axis (retrieval profile only): tagged into the report so
+    // the regression gate can refuse a cross-reranker baseline comparison.
+    let reranker = reranker_select(reranker_name)?;
+    if let Some(r) = &reranker {
+        tracing::info!(
+            reranker = r.model_name(),
+            "retrieval eval with stage-5 reranker"
+        );
+    }
     let seeded = brainiac_eval::seed::seed_gold(&store, &fx, embedder.as_ref()).await?;
     let (report, diagnostics) = brainiac_eval::retrieval_profile::run(
         &store,
         &fx,
         embedder.as_ref(),
+        reranker.as_deref(),
         seeded.embedding_version,
     )
     .await?;
