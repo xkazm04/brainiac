@@ -14,6 +14,7 @@ import Link from "next/link";
 import { motion, useReducedMotion, useScroll, useSpring } from "framer-motion";
 
 import { CANONICAL_DEMO, CONTRADICTION, QUEUE } from "../design/demo-data";
+import { PRODUCT_ROUTES } from "../design/routes";
 import {
   BG,
   FONT_DISPLAY,
@@ -249,25 +250,12 @@ export default function Home({ live }: { live: LiveStats | null }) {
             γ · binding console
           </span>
         </div>
-        <nav className={`${FONT_MONO} flex items-center gap-6 text-xs uppercase tracking-widest text-[#e9edff]/45`}>
-          <Link href="/reviews" className="transition hover:text-[#f3c74f]">
-            reviews
-          </Link>
-          <Link href="/graph" className="transition hover:text-[#f3c74f]">
-            graph
-          </Link>
-          <Link href="/memories" className="transition hover:text-[#f3c74f]">
-            archive
-          </Link>
-          <Link href="/ingest" className="transition hover:text-[#f3c74f]">
-            ingest
-          </Link>
-          <Link href="/analytics" className="transition hover:text-[#f3c74f]">
-            analytics
-          </Link>
-          <Link href="/keys" className="transition hover:text-[#f3c74f]">
-            keys
-          </Link>
+        <nav className={`${FONT_MONO} flex flex-wrap items-center justify-end gap-x-5 gap-y-2 text-xs uppercase tracking-widest text-[#e9edff]/45`}>
+          {PRODUCT_ROUTES.map((r) => (
+            <Link key={r.path} href={r.path} className="transition hover:text-[#f3c74f]">
+              {r.label}
+            </Link>
+          ))}
         </nav>
       </header>
 
@@ -417,8 +405,11 @@ export default function Home({ live }: { live: LiveStats | null }) {
           </motion.section>
         ))}
 
-        <footer className={`${LABEL} flex items-center justify-between border-t border-white/10 py-6 text-[#e9edff]/35`}>
+        <footer className={`${LABEL} flex flex-wrap items-center justify-between gap-3 border-t border-white/10 py-6 text-[#e9edff]/35`}>
           <span>brainiac · constructive by design</span>
+          <Link href="/demo" className="transition hover:text-[#f3c74f]">
+            → live demo · fixture org
+          </Link>
           <span style={{ color: GOLD }}>0 leaks · every phase-lock signed</span>
         </footer>
       </div>
