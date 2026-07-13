@@ -11,10 +11,12 @@
 //!   against gold.
 
 pub mod gates;
+pub mod pipeline_profile;
 pub mod report;
 pub mod resolution_profile;
 pub mod retrieval_profile;
 pub mod seed;
 
+pub use pipeline_profile::PipelineReport;
 pub use report::RetrievalReport;
 pub use resolution_profile::ResolutionReport;

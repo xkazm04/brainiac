@@ -527,18 +527,21 @@ async fn eval(
     write_baseline_path: Option<&str>,
 ) -> Result<()> {
     anyhow::ensure!(
-        matches!(profile, "retrieval" | "resolution"),
-        "v0 CLI supports profile=retrieval|resolution"
+        matches!(profile, "retrieval" | "resolution" | "pipeline"),
+        "v0 CLI supports profile=retrieval|resolution|pipeline"
     );
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
 
     // Fresh tenant slate (eval DBs are disposable by contract — see --help).
+    // The queue tables are truncated too so the `pipeline` profile starts from
+    // an empty ingest queue.
     let admin = sqlx::PgPool::connect(&url).await?;
     sqlx::query(
         "TRUNCATE memory_entities, memory_embeddings, canonical_entity_embeddings, entity_links,
                   edges, contradictions, promotions, memories, canonical_entities, entities,
-                  provenance, sources, team_members, users, teams, orgs, pipeline_runs CASCADE",
+                  provenance, sources, team_members, users, teams, orgs, pipeline_runs,
+                  queue.jobs, queue.archive CASCADE",
     )
     .execute(&admin)
     .await?;
@@ -551,6 +554,19 @@ async fn eval(
     if profile == "resolution" {
         return eval_resolution(
             &store,
+            &fx,
+            embedder.as_ref(),
+            out,
+            baseline_path,
+            write_baseline_path,
+        )
+        .await;
+    }
+
+    if profile == "pipeline" {
+        return eval_pipeline(
+            &store,
+            &admin,
             &fx,
             embedder.as_ref(),
             out,
@@ -703,6 +719,74 @@ async fn eval_resolution(
             std::process::exit(1);
         }
         tracing::info!(path, "resolution regression gates passed");
+    }
+    Ok(())
+}
+
+/// The `pipeline` profile (EVAL.md §2.1/§3): drive the REAL worker chain over
+/// the seed transcripts with a deterministic gold mock, score the extracted
+/// memories against gold (content-level P/R/micro-F1), and enforce the soft
+/// micro-F1 regression gate (cross-config comparison refused). `store`/`admin`/
+/// `fx`/`embedder` are set up and the tenant + queue truncated by the caller.
+async fn eval_pipeline(
+    store: &Store,
+    admin: &sqlx::PgPool,
+    fx: &brainiac_fixtures::Fixtures,
+    embedder: &dyn Embedder,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::pipeline_profile::{regression_failures, run, PipelineBaseline};
+
+    let report = run(store, admin, fx, embedder).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "pipeline report written");
+        }
+        None => println!("{json}"),
+    }
+
+    // No hard gate on this profile (see PipelineReport::gate_failures) — the
+    // zero-tolerance false-merge invariant is owned by the resolution profile.
+    let failures = report.gate_failures();
+    if !failures.is_empty() {
+        eprintln!("HARD GATES FAILED:\n{}", failures.join("\n"));
+        std::process::exit(1);
+    }
+
+    if let Some(path) = write_baseline_path {
+        let baseline = PipelineBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "pipeline baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: PipelineBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "REGRESSION GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "pipeline regression gates passed");
     }
     Ok(())
 }

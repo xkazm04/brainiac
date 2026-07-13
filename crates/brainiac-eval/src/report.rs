@@ -165,6 +165,28 @@ impl RetrievalDiagnostics {
     }
 }
 
+impl RetrievalReport {
+    /// Evaluate the hard gates (EVAL.md §3.2). Returns human-readable
+    /// failures; empty = pass.
+    pub fn gate_failures(&self) -> Vec<String> {
+        let mut fails = Vec::new();
+        if !self.rls_leaks.is_empty() {
+            fails.push(format!(
+                "RLS leaks detected ({}): {}",
+                self.rls_leaks.len(),
+                self.rls_leaks.join(", ")
+            ));
+        }
+        if self.superseded_in_top3 > 0 {
+            fails.push(format!(
+                "superseded memories in top-3 of current-time queries: {}",
+                self.superseded_in_top3
+            ));
+        }
+        fails
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,27 +217,5 @@ mod tests {
         assert_eq!(s.count, 1);
         assert_eq!(s.p50_ms, 42.0);
         assert_eq!(s.p95_ms, 42.0);
-    }
-}
-
-impl RetrievalReport {
-    /// Evaluate the hard gates (EVAL.md §3.2). Returns human-readable
-    /// failures; empty = pass.
-    pub fn gate_failures(&self) -> Vec<String> {
-        let mut fails = Vec::new();
-        if !self.rls_leaks.is_empty() {
-            fails.push(format!(
-                "RLS leaks detected ({}): {}",
-                self.rls_leaks.len(),
-                self.rls_leaks.join(", ")
-            ));
-        }
-        if self.superseded_in_top3 > 0 {
-            fails.push(format!(
-                "superseded memories in top-3 of current-time queries: {}",
-                self.superseded_in_top3
-            ));
-        }
-        fails
     }
 }

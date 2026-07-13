@@ -1,0 +1,6 @@
+{
+  "embedding_model": "deterministic-bow-v1",
+  "provider": "mock:deterministic",
+  "fixture_version": "v1",
+  "micro_f1": 1.0
+}

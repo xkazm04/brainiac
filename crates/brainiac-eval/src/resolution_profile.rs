@@ -149,7 +149,7 @@ pub fn regression_failures(
 /// every entity absent from a merge set is its own singleton. Keyed by fixture
 /// entity id so it lines up with the predicted clustering and the negative
 /// pairs (which are also fixture ids).
-fn gold_clustering(fx: &Fixtures) -> Clustering<String> {
+pub(crate) fn gold_clustering(fx: &Fixtures) -> Clustering<String> {
     let mut gold: Clustering<String> = HashMap::new();
     let mut next = 0usize;
     for set in &fx.merges.merge_sets {
@@ -173,28 +173,41 @@ fn gold_clustering(fx: &Fixtures) -> Clustering<String> {
 /// of the pipeline tests' `perfect_mock`. Two surface forms are the same iff
 /// they belong to the same gold cluster; every negative pair is in a different
 /// cluster by construction, so this never green-lights a forbidden merge.
-fn oracle_adjudicator(fx: &Fixtures, gold: &Clustering<String>) -> MockProvider {
-    // Lowercased surface form → gold cluster id. Names are the resolver's
-    // handle on an entity (it passes `Name A: <name>` / `Name B: <canonical
-    // name>`, and a bootstrapped canonical's name IS a raw surface form).
-    let mut name_to_cluster: HashMap<String, usize> = HashMap::new();
+/// Lowercased surface form → gold cluster id. Names are the resolver's handle
+/// on an entity (it passes `Name A: <name>` / `Name B: <canonical name>`, and a
+/// bootstrapped canonical's name IS a raw surface form). Shared with the
+/// pipeline profile's combined mock so both adjudicate from the same ground
+/// truth.
+pub(crate) fn name_to_cluster(fx: &Fixtures, gold: &Clustering<String>) -> HashMap<String, usize> {
+    let mut map: HashMap<String, usize> = HashMap::new();
     for e in &fx.entities.entities {
         if let Some(&c) = gold.get(&e.id) {
-            name_to_cluster
-                .entry(e.name.trim().to_lowercase())
-                .or_insert(c);
+            map.entry(e.name.trim().to_lowercase()).or_insert(c);
         }
     }
+    map
+}
+
+/// Ground-truth answer to "are these two surface forms the same real-world
+/// thing?" from the gold clustering — reused by the resolution oracle and the
+/// pipeline mock. Unknown names (not in any gold cluster) are treated as
+/// distinct, so this never green-lights a forbidden merge.
+pub(crate) fn oracle_same(name_to_cluster: &HashMap<String, usize>, a: &str, b: &str) -> bool {
+    match (
+        name_to_cluster.get(&a.trim().to_lowercase()),
+        name_to_cluster.get(&b.trim().to_lowercase()),
+    ) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn oracle_adjudicator(fx: &Fixtures, gold: &Clustering<String>) -> MockProvider {
+    let name_to_cluster = name_to_cluster(fx, gold);
     MockProvider::new(move |req: &ChatRequest| {
         if req.system.contains("adjudicate") {
             let (a, b) = parse_adjudication_names(&req.user);
-            let same = match (
-                name_to_cluster.get(&a.trim().to_lowercase()),
-                name_to_cluster.get(&b.trim().to_lowercase()),
-            ) {
-                (Some(x), Some(y)) => x == y,
-                _ => false,
-            };
+            let same = oracle_same(&name_to_cluster, &a, &b);
             return format!(r#"{{"same": {same}, "confidence": 0.95}}"#);
         }
         "{}".to_string()
@@ -203,7 +216,7 @@ fn oracle_adjudicator(fx: &Fixtures, gold: &Clustering<String>) -> MockProvider 
 
 /// Pull the two names out of the resolve stage's adjudication prompt body
 /// (`Name A: <a>\nName B: <b>`).
-fn parse_adjudication_names(user: &str) -> (String, String) {
+pub(crate) fn parse_adjudication_names(user: &str) -> (String, String) {
     let mut a = String::new();
     let mut b = String::new();
     for line in user.lines() {
