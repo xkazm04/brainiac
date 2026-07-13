@@ -38,5 +38,25 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
-      - name: eval retrieval profile
-        run: cargo run -p brainiac-server -- eval --fixtures fixtures/v1 --profile retrieval --out results/ci-run.json
+      # P7 (EVAL.md §3.2): hard gates (RLS leaks / superseded-in-top3 = 0) are
+      # unconditional; the regression gates compare against the committed
+      # baseline (overall NDCG −1pt, per-stratum −2pts, temporal rank-1 −2pts,
+      # cross-team must clear semantic by 5pts). Recalibrate deliberately with
+      # `eval --write-baseline results/baseline.json` and commit the diff.
+      - name: eval retrieval profile + regression gates
+        run: >
+          cargo run -p brainiac-server -- eval
+          --fixtures fixtures/v1 --profile retrieval
+          --baseline results/baseline.json
+          --out results/ci-run.json
+          --diagnostics results/ci-diagnostics.json
+      # The drill-down is what you actually read when a gate trips.
+      - name: upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: |
+            results/ci-run.json
+            results/ci-diagnostics.json
+          if-no-files-found: ignore

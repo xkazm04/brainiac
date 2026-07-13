@@ -50,6 +50,14 @@ enum Command {
         /// temporal/leak item, failures first) to this path.
         #[arg(long)]
         diagnostics: Option<String>,
+        /// Enforce §3.2 regression gates against this committed baseline
+        /// (exit 1 on any breach). CI passes results/baseline.json.
+        #[arg(long)]
+        baseline: Option<String>,
+        /// Recalibrate: write this run's scores as the new baseline. A
+        /// deliberate act — commit the diff with a reason.
+        #[arg(long)]
+        write_baseline: Option<String>,
     },
     /// Fixture-corpus tooling (lint, schema export). Pure filesystem — no
     /// database needed.
@@ -121,6 +129,8 @@ async fn main() -> Result<()> {
             embedder,
             out,
             diagnostics,
+            baseline,
+            write_baseline,
         } => {
             eval(
                 &fixtures,
@@ -128,6 +138,8 @@ async fn main() -> Result<()> {
                 embedder.as_deref(),
                 out.as_deref(),
                 diagnostics.as_deref(),
+                baseline.as_deref(),
+                write_baseline.as_deref(),
             )
             .await
         }
@@ -274,6 +286,8 @@ async fn eval(
     embedder_name: Option<&str>,
     out: Option<&str>,
     diagnostics_out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
 ) -> Result<()> {
     anyhow::ensure!(profile == "retrieval", "v0 CLI supports profile=retrieval");
     let url = database_url()?;
@@ -334,6 +348,34 @@ async fn eval(
     if !failures.is_empty() {
         eprintln!("HARD GATES FAILED:\n{}", failures.join("\n"));
         std::process::exit(1);
+    }
+
+    if let Some(path) = write_baseline_path {
+        let baseline = brainiac_eval::gates::Baseline::from_report(&report)?;
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: brainiac_eval::gates::Baseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = brainiac_eval::gates::regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "REGRESSION GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "regression gates passed");
     }
     Ok(())
 }

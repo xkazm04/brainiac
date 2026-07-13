@@ -7,6 +7,7 @@
 //! - `pipeline` (P5): raw transcripts in -> extraction/resolution scored
 //!   against gold.
 
+pub mod gates;
 pub mod report;
 pub mod retrieval_profile;
 pub mod seed;

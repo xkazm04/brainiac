@@ -84,4 +84,12 @@ crates/
 - [x] Next.js console scaffold (`console/`): server-only typed API client
       (vitest-covered), reviews/graph/analytics pages with server actions.
       Deliberately unstyled — the visual-identity pass replaces the chrome.
-- [ ] P7 CI eval gates wired to thresholds
+- [x] P7 CI eval gates wired to thresholds — `brainiac-eval::gates` compares a
+      run against `results/baseline.json` (EVAL.md §3.2 deltas: overall NDCG
+      −1pt, per-stratum −2pts, temporal rank-1 −2pts, plus the thesis check
+      that cross-team clears semantic by 5pts and an embedder-mismatch
+      short-circuit). CI runs `eval --baseline results/baseline.json` and
+      uploads the per-query diagnostics; recalibrate with `--write-baseline`
+      and commit the diff with a reason. Not yet wired: extraction F1 / B³
+      (pipeline profile, nightly per-provider) and retrieval p95 (needs
+      reference hardware).
