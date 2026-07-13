@@ -30,21 +30,30 @@ ECS free-trial instance · Singapore (ap-southeast-1)
 | **Singapore (ap-southeast-1)** | Two reasons: **ICP filing applies only to mainland regions** (deploy outside mainland and it's a non-issue), and **Model Studio's free quota is Singapore-only**. Keep compute and LLM in the same region. |
 | **`serve --with-worker`** | The free instance is **1 GB of RAM**. Running the pipeline as a task inside the API process instead of a second container saves a whole Tokio runtime and connection pool. |
 
-## The RAM budget (the real constraint)
+## The RAM budget — measured, not guessed
 
-1 GB, honestly accounted:
+The 1 GB instance was the thing I expected to break. It doesn't. Booting the
+exact `docker-compose.deploy.yml` locally and serving pages:
 
-| Container | Limit | Note |
+| Container | Limit | **Measured (idle, serving)** |
 |---|---|---|
-| postgres | 320 MB | tuned: `shared_buffers=128MB`, `max_connections=40` (stock PG wants ~400 MB+) |
-| server + worker | 256 MB | one Rust process; rustls, no OpenSSL |
-| console (Next.js SSR) | 320 MB | `--max-old-space-size=256` |
-| host + docker | ~100 MB | |
+| postgres (tuned: `shared_buffers=128MB`, `max_connections=40`) | 320 MB | **41 MiB** |
+| server + in-process worker (Rust, rustls) | 256 MB | **2 MiB** |
+| console (Next.js SSR, `--max-old-space-size=256`) | 320 MB | **50 MiB** |
+| **total** | | **≈ 93 MiB** |
 
-That fits, but with little headroom — **add 2 GB of swap** (below). If it
-thrashes anyway, the cheapest escape is a **Simple Application Server**
+That leaves ~900 MB of headroom on the free instance. The limits above are
+guard rails, not a tight fit. Still **add 2 GB of swap** (below) — Postgres
+grows under a big re-embed, and Next SSR spikes on cold routes — but the
+"1 GB is too small" worry turned out to be unfounded.
+
+If it *does* thrash, the cheapest escape is a **Simple Application Server**
 (~$3.50/month, 2c/2 GB) — but note that **buying one may forfeit your ECS
 free-trial eligibility**, so pick one path and stay on it.
+
+Both images are built and verified: **server 166 MB** (multi-stage → Debian
+slim; rustls means no OpenSSL in the runtime layer), **console 481 MB**
+(Next standalone).
 
 ## Costs after the free window
 
@@ -98,6 +107,11 @@ nano .env.deploy
 
 docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d --build
 ```
+
+Verified locally end to end: console answers on :80, `/analytics` renders
+from the live API through the internal Docker network (not the demo
+fallback), `/demo` serves token-free, and the pipeline worker starts inside
+the server process.
 
 The Rust image builds in ~10 minutes on a 1-core box (release LTO). If that's
 painful, build locally and push to **ACR** (Alibaba Container Registry — a
