@@ -108,6 +108,9 @@ pub struct ExtractStats {
     /// Repair re-prompts that recovered a parseable response. Total LLM calls
     /// for the source = `chunks + repairs`.
     pub repairs: usize,
+    /// Model ref the provider actually reported (from the first chunk's call),
+    /// recorded on the pipeline_runs row. `None` only for an empty source.
+    pub model_ref: Option<String>,
 }
 
 /// Ceiling on the extractor's completion length (tokens). One place so the
@@ -312,6 +315,10 @@ pub async fn run_extract(
     team_id: Option<Uuid>,
     source_id: Uuid,
     raw_text: &str,
+    // Direction 2: the run this extraction belongs to. Stamped onto the single
+    // provenance row so every memory (and entity) written here links back to
+    // the pipeline_runs record via provenance.pipeline_run_id.
+    pipeline_run_id: Option<Uuid>,
 ) -> Result<ExtractStats> {
     // Chunk oversized sources so a long session's tail isn't truncated. One
     // provenance row per source still (stamped from the first chunk's model
@@ -332,8 +339,10 @@ pub async fn run_extract(
         }
 
         // Lazily create the single provenance row on the first chunk, using
-        // the model ref the provider actually reported.
+        // the model ref the provider actually reported, and stamp the run id so
+        // memories link back to their pipeline_runs record.
         if provenance_id.is_none() {
+            stats.model_ref = Some(call.model_ref.clone());
             let pid = Uuid::new_v4();
             brainiac_store::governance::insert_provenance(
                 conn,
@@ -343,7 +352,7 @@ pub async fn run_extract(
                 "extract-worker",
                 Some(&call.model_ref),
                 Some(source_id),
-                None,
+                pipeline_run_id,
             )
             .await?;
             provenance_id = Some(pid);

@@ -328,6 +328,205 @@ async fn full_pipeline_over_seed_transcripts() {
             .expect("depth"),
         0
     );
+
+    // ── Direction 2: pipeline_runs written for real ─────────────────────────
+    // One run row per processed source, all succeeded, tagged as the full v0
+    // chain, and the per-row stats sum back to the tick totals.
+    let (run_count, ok_count, run_memories, run_promoted): (i64, i64, i64, i64) = {
+        let r = sqlx::query(
+            "SELECT count(*) AS n,
+                    count(*) FILTER (WHERE status = 'ok') AS ok,
+                    COALESCE(sum(memories_written), 0)::bigint AS mem,
+                    COALESCE(sum(auto_promoted), 0)::bigint AS promoted
+             FROM pipeline_runs WHERE stage = 'pipeline'",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("runs agg");
+        (r.get("n"), r.get("ok"), r.get("mem"), r.get("promoted"))
+    };
+    assert_eq!(
+        run_count as usize,
+        fx.transcripts.len(),
+        "one pipeline_runs row per processed source"
+    );
+    assert_eq!(ok_count, run_count, "every run recorded outcome 'ok'");
+    assert_eq!(
+        run_memories as usize, stats.memories,
+        "run rows account for every memory the tick wrote"
+    );
+    assert_eq!(
+        run_promoted as usize, stats.auto_promoted,
+        "run rows account for every auto-promotion"
+    );
+
+    // Runs that produced memories recorded the model ref they used.
+    let model_gaps: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM pipeline_runs
+         WHERE memories_written > 0 AND model_ref IS NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("model gaps")
+    .get("n");
+    assert_eq!(
+        model_gaps, 0,
+        "a run that wrote memories records its model ref"
+    );
+
+    // Memories link their run through provenance.pipeline_run_id, and every
+    // such id resolves to a real pipeline_runs row. Checked over the admin pool
+    // (bypasses RLS): the pipeline writes team-tier memories that the test's
+    // teamless scoped_tx principal cannot see, but the linkage invariant holds
+    // for ALL of them.
+    let (linked, dangling): (i64, i64) = {
+        let r = sqlx::query(
+            "SELECT
+               count(*) FILTER (WHERE p.pipeline_run_id IS NOT NULL) AS linked,
+               count(*) FILTER (
+                 WHERE p.pipeline_run_id IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM pipeline_runs r WHERE r.id = p.pipeline_run_id)
+               ) AS dangling
+             FROM memories m JOIN provenance p ON p.id = m.provenance_id",
+        )
+        .fetch_one(&admin)
+        .await
+        .expect("link agg");
+        (r.get("linked"), r.get("dangling"))
+    };
+    assert_eq!(
+        linked as usize, gold_total,
+        "every extracted memory links its pipeline run"
+    );
+    assert_eq!(dangling, 0, "no memory points at a missing run row");
+
+    // Drive the exact query GET /v1/pipeline/runs runs (console.rs) — proof the
+    // console endpoint now returns real rows instead of an empty table.
+    let console_rows = sqlx::query(
+        "SELECT id, stage, status, detail, started_at, finished_at,
+                EXTRACT(EPOCH FROM (COALESCE(finished_at, now()) - started_at))::bigint AS secs
+         FROM pipeline_runs
+         ORDER BY started_at DESC
+         LIMIT $1",
+    )
+    .bind(30_i64)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("console query");
+    assert_eq!(
+        console_rows.len(),
+        fx.transcripts.len(),
+        "console endpoint returns every run"
+    );
+    for row in &console_rows {
+        let status: String = row.get("status");
+        let secs: i64 = row.get("secs");
+        assert_eq!(status, "ok");
+        assert!(secs >= 0, "duration is non-negative");
+    }
+}
+
+/// Direction 2: a FAILED job still records a pipeline_runs row. The row is
+/// written OUTSIDE the job transaction precisely so a rolled-back job leaves an
+/// audit trail — status 'failed', an error summary in `detail`, zero stats —
+/// while its memories/provenance vanish with the rollback.
+#[tokio::test]
+async fn failed_job_records_a_failed_run_row() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_store::{memories, orgs};
+    use sqlx::Row;
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([61u8; 16]);
+    let team = Uuid::from_bytes([62u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // Extraction never yields parseable JSON, even after the one repair — the
+    // job hard-fails inside process_job.
+    let mock = MockProvider::new(|req: &ChatRequest| {
+        if req.system.contains("distill organizational knowledge") {
+            return "not json {{{".to_string();
+        }
+        "{}".to_string()
+    });
+    let provider = brainiac_gateway::ProviderRouter::single(std::sync::Arc::new(mock));
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let source_id = Uuid::from_bytes([63u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team),
+        "session_transcript",
+        "garbage",
+        None,
+    )
+    .await
+    .expect("source");
+    tx.commit().await.expect("commit");
+
+    worker::enqueue_source(&store, org_id, source_id)
+        .await
+        .expect("enqueue");
+    let stats = worker::tick(&store, &provider, &embedder, version, 4)
+        .await
+        .expect("tick");
+    assert_eq!(stats.jobs, 1);
+    assert_eq!(stats.memories, 0, "failed extraction wrote no memory");
+
+    // The run row: failed, with an error summary and zero stats, tagged to the
+    // source.
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    let row = sqlx::query("SELECT status, detail, source_id, memories_written FROM pipeline_runs")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("run row");
+    let status: String = row.get("status");
+    let detail: Option<String> = row.get("detail");
+    let row_source: Option<Uuid> = row.get("source_id");
+    let mem: i32 = row.get("memories_written");
+    assert_eq!(status, "failed", "failed job recorded a failed run");
+    assert!(
+        detail.is_some_and(|d| !d.is_empty()),
+        "failed run carries an error summary"
+    );
+    assert_eq!(row_source, Some(source_id));
+    assert_eq!(mem, 0);
+
+    // The job transaction rolled back: no memory survives.
+    let mem_count: i64 = sqlx::query("SELECT count(*) AS n FROM memories")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("q")
+        .get("n");
+    assert_eq!(mem_count, 0, "rolled-back job left no memory behind");
+
+    // The job went back to the queue for a retry (not dead-lettered yet).
+    assert_eq!(
+        brainiac_store::queue::depth(store.pool(), worker::INGEST_QUEUE)
+            .await
+            .expect("depth"),
+        1
+    );
 }
 
 /// Direction 1: a governance supersession must feed the temporal engine —
@@ -591,6 +790,7 @@ async fn alias_capture_and_resolution() {
         Some(team_a),
         source_id,
         "psp-gateway (PSP) owns retry backoff",
+        None,
     )
     .await
     .expect("extract");
@@ -778,6 +978,7 @@ async fn reprocessing_source_is_idempotent() {
         Some(team),
         source_id,
         source_text,
+        None,
     )
     .await
     .expect("extract 1");
@@ -795,6 +996,7 @@ async fn reprocessing_source_is_idempotent() {
         Some(team),
         source_id,
         source_text,
+        None,
     )
     .await
     .expect("extract 2");
@@ -882,6 +1084,7 @@ async fn malformed_extraction_repairs_once() {
         Some(team),
         source_id,
         "a transcript",
+        None,
     )
     .await
     .expect("extract recovers via repair");
@@ -959,6 +1162,7 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         Some(team),
         source_id,
         "garbage",
+        None,
     )
     .await;
     assert!(result.is_err(), "malformed source hard-fails the extract");
@@ -1089,6 +1293,7 @@ async fn long_transcript_captures_head_and_tail() {
         Some(team),
         source_id,
         &transcript,
+        None,
     )
     .await
     .expect("extract");

@@ -48,6 +48,42 @@ pub struct TickStats {
     pub deduped: usize,
 }
 
+/// Per-source stats accumulated while a single job runs, so one pipeline_runs
+/// row can record exactly what this run produced (Direction 2). Folded into the
+/// tick-wide [`TickStats`] afterwards.
+#[derive(Debug, Default)]
+struct RunStats {
+    memories: usize,
+    auto_promoted: usize,
+    needs_review: usize,
+    contradictions_opened: usize,
+    entities_created: usize,
+    entities_resolved: usize,
+    chunks: usize,
+    parse_failures: usize,
+    repairs: usize,
+    deduped: usize,
+    model_ref: Option<String>,
+}
+
+fn parse_job_ids(job: &queue::Job) -> Result<(Uuid, Uuid)> {
+    let org_id: Uuid = serde_json::from_value(job.payload["org_id"].clone())?;
+    let source_id: Uuid = serde_json::from_value(job.payload["source_id"].clone())?;
+    Ok((org_id, source_id))
+}
+
+/// Cause chain of a run failure, bounded so a run row's `detail` can't grow
+/// without limit from a deeply-nested error.
+fn summarize_error(e: &anyhow::Error) -> String {
+    const MAX: usize = 500;
+    let s = format!("{e:#}");
+    if s.chars().count() > MAX {
+        s.chars().take(MAX).collect::<String>() + "…"
+    } else {
+        s
+    }
+}
+
 /// Process up to `batch` ingest jobs. Returns per-tick stats; callers loop.
 pub async fn tick(
     store: &Store,
@@ -59,37 +95,146 @@ pub async fn tick(
     let mut stats = TickStats::default();
     let jobs = queue::read(store.pool(), INGEST_QUEUE, batch, VISIBILITY_SECS).await?;
     for job in jobs {
-        match process_job(
-            store,
-            providers,
-            embedder,
-            embedding_version,
-            &job,
-            &mut stats,
-        )
-        .await
-        {
-            Ok(()) => queue::complete(store.pool(), &job).await?,
+        // Identity + run id up front: a pipeline_runs row is written for this
+        // source whether the job succeeds or fails, and it must be org-scoped.
+        let parsed = parse_job_ids(&job);
+        let run_id = Uuid::new_v4();
+        let started_at = chrono::Utc::now();
+        let mut run = RunStats::default();
+
+        match parsed {
+            Ok((org_id, source_id)) => {
+                match process_job(
+                    store,
+                    providers,
+                    embedder,
+                    embedding_version,
+                    org_id,
+                    source_id,
+                    run_id,
+                    &mut run,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        // Run record written AFTER the job's own transaction
+                        // commits (see write_pipeline_run docs for the atomicity
+                        // choice): the memories exist and carry this run_id via
+                        // provenance, and now the run row records the outcome.
+                        write_pipeline_run(
+                            store, org_id, source_id, run_id, started_at, "ok", None, &run,
+                        )
+                        .await?;
+                        queue::complete(store.pool(), &job).await?;
+                    }
+                    Err(e) => {
+                        tracing::error!(job = job.id, error = %e, "ingest job failed");
+                        // The job tx rolled back (its memories/provenance are
+                        // gone), but we still record a failed run row with the
+                        // error summary — the whole point of writing the row
+                        // outside the job transaction.
+                        write_pipeline_run(
+                            store,
+                            org_id,
+                            source_id,
+                            run_id,
+                            started_at,
+                            "failed",
+                            Some(&summarize_error(&e)),
+                            &run,
+                        )
+                        .await?;
+                        queue::fail(store.pool(), &job, FAIL_BASE_BACKOFF_SECS).await?;
+                    }
+                }
+            }
             Err(e) => {
-                tracing::error!(job = job.id, error = %e, "ingest job failed");
+                // Unparseable payload: no org to scope a run row to, so none is
+                // written — just fail the job through the attempt-aware path.
+                tracing::error!(job = job.id, error = %e, "ingest job payload unparseable");
                 queue::fail(store.pool(), &job, FAIL_BASE_BACKOFF_SECS).await?;
             }
         }
+
+        stats.memories += run.memories;
+        stats.auto_promoted += run.auto_promoted;
+        stats.needs_review += run.needs_review;
+        stats.contradictions_opened += run.contradictions_opened;
+        stats.chunks += run.chunks;
+        stats.parse_failures += run.parse_failures;
+        stats.repairs += run.repairs;
+        stats.deduped += run.deduped;
         stats.jobs += 1;
     }
     Ok(stats)
 }
 
+/// Write the pipeline_runs record for one processed source.
+///
+/// Atomicity choice: the row is written in its OWN short scoped transaction,
+/// immediately AFTER the job's transaction has settled — not inside it. Writing
+/// it inside the job tx would mean a FAILED job (which rolls back) leaves no run
+/// row at all; we specifically want a failed job to record a run row carrying
+/// its error summary. The narrow cost is that a crash between the job commit and
+/// this write could leave a committed job without its observability row; that is
+/// acceptable for an audit record (the memories still exist and still link the
+/// run_id through provenance). pipeline_runs is org-scoped by RLS, so this uses
+/// a scoped_tx for the org.
+#[allow(clippy::too_many_arguments)]
+async fn write_pipeline_run(
+    store: &Store,
+    org_id: Uuid,
+    source_id: Uuid,
+    run_id: Uuid,
+    started_at: chrono::DateTime<chrono::Utc>,
+    status: &str,
+    detail: Option<&str>,
+    run: &RunStats,
+) -> Result<()> {
+    let principal = pipeline_principal(org_id);
+    let mut tx = store.scoped_tx(&principal).await?;
+    sqlx::query(
+        "INSERT INTO pipeline_runs
+            (id, org_id, stage, status, detail, started_at, finished_at, source_id, model_ref,
+             memories_written, entities_created, entities_resolved, contradictions_opened,
+             auto_promoted, needs_review, chunks, llm_calls, repairs, parse_failures, deduped)
+         VALUES ($1,$2,'pipeline',$3,$4,$5,now(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
+    )
+    .bind(run_id)
+    .bind(org_id)
+    .bind(status)
+    .bind(detail)
+    .bind(started_at)
+    .bind(source_id)
+    .bind(run.model_ref.as_deref())
+    .bind(run.memories as i32)
+    .bind(run.entities_created as i32)
+    .bind(run.entities_resolved as i32)
+    .bind(run.contradictions_opened as i32)
+    .bind(run.auto_promoted as i32)
+    .bind(run.needs_review as i32)
+    .bind(run.chunks as i32)
+    .bind((run.chunks + run.repairs) as i32)
+    .bind(run.repairs as i32)
+    .bind(run.parse_failures as i32)
+    .bind(run.deduped as i32)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn process_job(
     store: &Store,
     providers: &ProviderRouter,
     embedder: &dyn Embedder,
     embedding_version: i32,
-    job: &queue::Job,
-    stats: &mut TickStats,
+    org_id: Uuid,
+    source_id: Uuid,
+    run_id: Uuid,
+    run: &mut RunStats,
 ) -> Result<()> {
-    let org_id: Uuid = serde_json::from_value(job.payload["org_id"].clone())?;
-    let source_id: Uuid = serde_json::from_value(job.payload["source_id"].clone())?;
     // Worker authority: later stages (contradict, promote) must read back the
     // team-visible memories the extract stage just wrote for any team of the
     // org — worker_tx sets the audited app.worker read scope (org + team
@@ -101,7 +246,8 @@ async fn process_job(
         .await?
         .context("source not found")?;
 
-    // extract (+ embed inline)
+    // extract (+ embed inline). run_id threads onto the provenance row so every
+    // memory written here links back to this run.
     let extracted = extract::run_extract(
         &mut tx,
         providers.for_stage(Stage::Extract),
@@ -111,13 +257,18 @@ async fn process_job(
         team_id,
         source_id,
         &raw_text,
+        Some(run_id),
     )
     .await?;
-    stats.memories += extracted.memories_written;
-    stats.chunks += extracted.chunks;
-    stats.parse_failures += extracted.parse_failures;
-    stats.repairs += extracted.repairs;
-    stats.deduped += extracted.deduped;
+    run.memories += extracted.memories_written;
+    run.entities_created += extracted.entities_created.len();
+    run.chunks += extracted.chunks;
+    run.parse_failures += extracted.parse_failures;
+    run.repairs += extracted.repairs;
+    run.deduped += extracted.deduped;
+    if run.model_ref.is_none() {
+        run.model_ref = extracted.model_ref.clone();
+    }
     // Cost + resilience per source: number of chunks (= primary calls) and
     // total LLM calls (chunks + repairs), plus memories deduped away (retry
     // redelivery / chunk overlap).
@@ -153,6 +304,7 @@ async fn process_job(
             &aliases,
         )
         .await?;
+        run.entities_resolved += 1;
     }
 
     // contradict + promote per new memory
@@ -168,7 +320,7 @@ async fn process_job(
             m,
         )
         .await?;
-        stats.contradictions_opened += c.opened;
+        run.contradictions_opened += c.opened;
 
         let (decision, rule) = engine.evaluate(m, MemoryStatus::Candidate);
         brainiac_store::governance::insert_promotion(
@@ -189,9 +341,9 @@ async fn process_job(
                     MemoryStatus::Candidate,
                 )
                 .await?;
-                stats.auto_promoted += 1;
+                run.auto_promoted += 1;
             }
-            _ => stats.needs_review += 1,
+            _ => run.needs_review += 1,
         }
     }
 
