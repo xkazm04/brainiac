@@ -8,6 +8,7 @@
 pub mod embed;
 pub mod fusion;
 pub mod metrics;
+pub mod scoring;
 pub mod temporal;
 pub mod types;
 

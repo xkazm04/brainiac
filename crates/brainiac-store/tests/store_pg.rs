@@ -599,6 +599,116 @@ async fn ttl_expiring_queue_and_reverification() {
 }
 
 #[tokio::test]
+async fn fresh_memory_outranks_stale_near_duplicate() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await; // org / teams / users
+    let p = pay_dev();
+    let embedder = DeterministicEmbedder::default();
+    let query = "zephyr reconciliation cadence";
+
+    // Engineer two memories with EQUAL fused relevance, differing only in age,
+    // so the recency nudge is the sole differentiator. Equal RRF can't come
+    // from identical rows (SQL tie-break makes them adjacent, not equal); it
+    // comes from SWAPPED cross-retriever ranks — each memory wins one list:
+    //   STALE: FTS #1 (denser lexical match) + vector #2  → 1/61 + 1/62
+    //   FRESH: vector #1 (exact query embedding) + FTS #2 → 1/61 + 1/62
+    // Identical fused scores; only created_at (hence recency) differs.
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let mk = |id: u8, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+    };
+    // STALE wins FTS: repeats every query term (higher term frequency).
+    let stale_content = "zephyr reconciliation cadence zephyr reconciliation cadence";
+    // FRESH matches the query terms once, diluted with filler → lower ts_rank.
+    let fresh_content = "zephyr reconciliation cadence noted with assorted unrelated filler prose";
+    memories::insert(c, &mk(170, stale_content))
+        .await
+        .expect("m170 stale");
+    memories::insert(c, &mk(171, fresh_content))
+        .await
+        .expect("m171 fresh");
+    sqlx::query("UPDATE memories SET created_at = now() - interval '400 days' WHERE id = $1")
+        .bind(uuid(170))
+        .execute(&mut *tx)
+        .await
+        .expect("age stale");
+    sqlx::query("UPDATE memories SET created_at = now() - interval '2 days' WHERE id = $1")
+        .bind(uuid(171))
+        .execute(&mut *tx)
+        .await
+        .expect("age fresh");
+    let ver =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    // FRESH gets the exact query embedding → cosine distance 0 → vector #1.
+    // STALE gets an unrelated embedding → vector #2.
+    memories::upsert_embedding(&mut tx, uuid(171), ver, &embedder.embed_sync(query))
+        .await
+        .expect("e171");
+    memories::upsert_embedding(
+        &mut tx,
+        uuid(170),
+        ver,
+        &embedder.embed_sync("orthogonal ledger housekeeping unrelated"),
+    )
+    .await
+    .expect("e170");
+    tx.commit().await.expect("commit");
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let hits = retrieval::search(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        &retrieval::RetrievalRequest {
+            query: query.into(),
+            k: 10,
+            as_of: None,
+            filters: Default::default(),
+        },
+    )
+    .await
+    .expect("search");
+    let order: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
+    let pos_fresh = order.iter().position(|id| *id == uuid(171));
+    let pos_stale = order.iter().position(|id| *id == uuid(170));
+    assert!(
+        pos_fresh.is_some() && pos_stale.is_some(),
+        "both near-duplicates should surface, got {order:?}"
+    );
+    assert!(
+        pos_fresh < pos_stale,
+        "fresh memory must outrank the stale near-duplicate at equal relevance: \
+         fresh@{pos_fresh:?} stale@{pos_stale:?}"
+    );
+    // The recency edge stays tiebreak-scale: the blended scores are a hair apart.
+    let s_fresh = hits[pos_fresh.unwrap()].score;
+    let s_stale = hits[pos_stale.unwrap()].score;
+    assert!(
+        s_fresh > s_stale && (s_fresh - s_stale) < 0.01,
+        "recency is a nudge, not a landslide: {s_fresh} vs {s_stale}"
+    );
+}
+
+#[tokio::test]
 async fn feedback_claims_queue_and_resolution() {
     let Some((ctx, _guard)) = setup().await else {
         return;

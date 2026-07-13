@@ -21,13 +21,14 @@ use brainiac_core::embed::Embedder;
 use brainiac_core::fusion::{
     query_is_identifier_heavy, reciprocal_rank_fusion, weighted_reciprocal_rank_fusion,
 };
+use brainiac_core::scoring::{blended_score, FeedbackSignal};
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
 use brainiac_core::{Memory, MemoryStatus};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::{entities, memories};
+use crate::{entities, feedback, memories};
 
 const CANDIDATES_PER_RETRIEVER: i64 = 50;
 const FUSED_POOL: usize = 30;
@@ -110,8 +111,10 @@ pub struct RetrievalRequest {
 #[derive(Debug, Clone)]
 pub struct RetrievalHit {
     pub memory: Memory,
-    /// RRF-fused score for direct hits; 0.0 for graph-expansion extras
-    /// (appended after the fused ranking).
+    /// Final blended ranking key (brainiac-core::scoring): fused RRF relevance
+    /// as the dominant term, nudged by recency decay and net reader feedback.
+    /// Graph-expansion extras have relevance 0.0 (they sink below direct hits)
+    /// until they earn a real graph score.
     pub score: f64,
     pub via_graph: bool,
 }
@@ -264,13 +267,60 @@ pub async fn search(
         .collect();
     let deduped = dedupe_for_time(&ordered, as_of);
 
-    Ok(deduped
+    // Stage 6: blended ranking (ARCHITECTURE.md §4 "order by relevance +
+    // recency"). Fused relevance stays dominant; recency and net reader
+    // feedback are tiebreak-scale nudges (brainiac-core::scoring). One batched
+    // feedback lookup for the whole survivor set — never an N+1. Trust is
+    // RLS-scoped like every read, so a memory's verdicts from invisible orgs
+    // never leak in (memory_feedback is org-scoped).
+    let survivor_ids: Vec<Uuid> = deduped.iter().map(|m| m.id).collect();
+    let trust = feedback::trust_for(tx, &survivor_ids).await?;
+
+    let mut ranked: Vec<RetrievalHit> = deduped
         .into_iter()
-        .take(req.k)
-        .map(|m| RetrievalHit {
-            score: fused_score.get(&m.id).copied().unwrap_or(0.0),
-            via_graph: graph_ids.contains(&m.id),
-            memory: m,
+        .map(|m| {
+            let relevance = fused_score.get(&m.id).copied().unwrap_or(0.0);
+            let t = trust.get(&m.id).cloned().unwrap_or_default();
+            let feedback = FeedbackSignal {
+                helpful: t.helpful,
+                wrong: t.wrong,
+                outdated: t.outdated,
+            };
+            let blended = blended_score(relevance, age_days(&m, as_of), feedback);
+            RetrievalHit {
+                score: blended,
+                via_graph: graph_ids.contains(&m.id),
+                memory: m,
+            }
         })
-        .collect())
+        .collect();
+    // Stable sort: candidates that tie on the blended key keep their prior
+    // (fused-then-graph) order, so the nudges only ever reorder near-ties.
+    ranked.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked.truncate(req.k);
+    Ok(ranked)
+}
+
+/// Age of a memory (in days) at the query's as-of instant, for the recency
+/// term. Anchored on `created_at` — when the knowledge was captured/confirmed
+/// into the corpus — NOT `valid_from`. Recency here means "how current is this
+/// knowledge", i.e. how recently we learned or re-verified it; a decision made
+/// two years ago that is still valid (open `valid_to`) is current knowledge
+/// even though its `valid_from` is old, so anchoring on `valid_from` would
+/// wrongly decay long-standing truths. `created_at` is always set, so there is
+/// no fallback. Negative ages (a clock skew, or an as-of before capture) are
+/// clamped to fresh by the decay function.
+///
+/// Age is quantized to WHOLE DAYS (`num_days` truncates toward zero). Recency
+/// is a coarse currency signal — a memory captured seconds or hours before
+/// another is not meaningfully "fresher", and sub-day resolution would let
+/// insertion micro-timing break otherwise-exact relevance ties. Day
+/// granularity keeps the term a genuine tiebreak: candidates from the same day
+/// stay tied on recency and hold their fused order.
+fn age_days(m: &Memory, as_of: DateTime<Utc>) -> f64 {
+    (as_of - m.created_at).num_days() as f64
 }
