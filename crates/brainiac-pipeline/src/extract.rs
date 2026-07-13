@@ -33,9 +33,39 @@ short names, spelled-out forms) — omit or leave [] when the entity is named on
 way, never invent synonyms; relations only between listed entities; confidence
 reflects how explicitly the transcript supports the statement.";
 
+/// Lenient array deserializer for extractor output. Real BYOM providers (Qwen
+/// among them) intermittently emit a nested array field as a JSON-ENCODED STRING
+/// — e.g. `"entities": "[{\"name\":\"x\"}]"` instead of a native array — which a
+/// strict `Vec<T>` deserialize rejects, stalling the whole ingest job (found live
+/// in the UAT flywheel run, 2026-07-13; MockProvider never exercised it). Accept
+/// a native array, a JSON-string-encoded array, or null; anything else still
+/// errors so genuine garbage is not silently swallowed.
+fn de_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    use serde::de::Error;
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Null => Ok(Vec::new()),
+        v @ serde_json::Value::Array(_) => serde_json::from_value(v).map_err(D::Error::custom),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                Ok(Vec::new())
+            } else {
+                serde_json::from_str(t).map_err(D::Error::custom)
+            }
+        }
+        _ => Err(D::Error::custom(
+            "expected an array or a JSON-encoded array string",
+        )),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ExtractionOutput {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_vec")]
     memories: Vec<ExtractedMemory>,
 }
 
@@ -47,9 +77,9 @@ struct ExtractedMemory {
     visibility: Option<String>,
     #[serde(default)]
     confidence: Option<f32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_vec")]
     entities: Vec<ExtractedEntity>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_vec")]
     relations: Vec<ExtractedRelation>,
 }
 
@@ -509,6 +539,23 @@ mod tests {
     fn braces_inside_strings_do_not_confuse() {
         let raw = "{\"memories\":[{\"kind\":\"fact\",\"content\":\"a { b } c\"}]}";
         assert_eq!(extract_json_object(raw), Some(raw));
+    }
+
+    #[test]
+    fn tolerates_json_encoded_array_fields() {
+        // Real BYOM output (Qwen) double-encodes a nested array as a string.
+        // Both the native-array and the stringified form must parse to the same
+        // structure, and neither may stall the ingest job.
+        let native = r#"{"memories":[{"kind":"pitfall","content":"x",
+            "entities":[{"name":"ledger-service","kind":"service","aliases":[]}]}]}"#;
+        let stringy = r#"{"memories":[{"kind":"pitfall","content":"x",
+            "entities":"[{\"name\":\"ledger-service\",\"kind\":\"service\",\"aliases\":[]}]"}]}"#;
+        let a = parse_extraction(native).expect("native parses");
+        let b = parse_extraction(stringy).expect("json-encoded-string array parses");
+        assert_eq!(a.memories.len(), 1);
+        assert_eq!(b.memories.len(), 1);
+        assert_eq!(b.memories[0].entities.len(), 1);
+        assert_eq!(b.memories[0].entities[0].name, "ledger-service");
     }
 
     #[test]
