@@ -1207,7 +1207,7 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         0,
         "no live job left"
     );
-    let dl = queue::dead_letters(store.pool(), worker::INGEST_QUEUE, 10)
+    let dl = queue::dead_letters(store.pool(), worker::INGEST_QUEUE, 10, 0)
         .await
         .expect("dl");
     assert_eq!(dl.len(), 1, "exactly one dead letter recorded");

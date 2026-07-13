@@ -307,6 +307,90 @@ async fn serve_health_auth_and_scoped_search() {
             .all(|p| !first_ids.contains(p["id"].as_str().expect("id"))),
         "the second page returns rows the first page never showed"
     );
+
+    // ── idempotent ingest: a retried memory_add replays the original ───────
+    // Same Idempotency-Key (per org) ⇒ the ORIGINAL source_id/job_id and NO
+    // second source row (a duplicate source would burn a whole pipeline run).
+    let add_keyed = |key: &'static str| {
+        let http = http.clone();
+        let base = base.clone();
+        async move {
+            http.post(format!("{base}/v1/memories"))
+                .bearer_auth("tok_analyst")
+                .header("Idempotency-Key", key)
+                .json(&serde_json::json!({"content": "manual note: idempotent capture — nightly recon at 02:00"}))
+                .send()
+                .await
+                .expect("keyed add")
+        }
+    };
+    let r1 = add_keyed("retry-key-A").await;
+    assert_eq!(r1.status(), reqwest::StatusCode::ACCEPTED);
+    let a1: serde_json::Value = r1.json().await.expect("json");
+    let r2 = add_keyed("retry-key-A").await;
+    assert_eq!(r2.status(), reqwest::StatusCode::ACCEPTED);
+    let a2: serde_json::Value = r2.json().await.expect("json");
+    assert_eq!(a1["source_id"], a2["source_id"], "same key ⇒ same source");
+    assert_eq!(a1["job_id"], a2["job_id"], "same key ⇒ same job");
+    let key_sources: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sources WHERE idempotency_key = 'retry-key-A'")
+            .fetch_one(&admin)
+            .await
+            .expect("count keyed sources");
+    assert_eq!(key_sources, 1, "the retry did NOT mint a second source");
+
+    // A different key mints a distinct source (the guard is per key, not global).
+    let r3 = add_keyed("retry-key-B").await;
+    let a3: serde_json::Value = r3.json().await.expect("json");
+    assert_ne!(
+        a1["source_id"], a3["source_id"],
+        "distinct key ⇒ new source"
+    );
+
+    // ── bulk ingest: one bad item does not sink the batch ──────────────────
+    let r = http
+        .post(format!("{base}/v1/memories/bulk"))
+        .bearer_auth("tok_analyst")
+        .json(&serde_json::json!({"items": [
+            {"content": "bulk import row one: ledger cutover 09:00"},
+            {"content": "   "},
+            {"content": "bulk import row three: dunning retries at noon"},
+        ]}))
+        .send()
+        .await
+        .expect("bulk");
+    assert_eq!(r.status(), reqwest::StatusCode::ACCEPTED);
+    let bulk: serde_json::Value = r.json().await.expect("json");
+    let results = bulk["results"].as_array().expect("results");
+    assert_eq!(results.len(), 3, "one result per item, in order");
+    assert!(results[0]["source_id"].is_string() && results[0].get("error").is_none());
+    assert_eq!(
+        results[1]["code"], "bad_request",
+        "the empty item is a per-item error"
+    );
+    assert!(
+        results[1].get("source_id").is_none(),
+        "the failed item has no receipt"
+    );
+    assert!(
+        results[2]["source_id"].is_string() && results[2].get("error").is_none(),
+        "the item after the bad one still succeeds — the batch is not sunk"
+    );
+
+    // Over-cap batch → a whole-request 400 (guards the fan-out).
+    let too_many: Vec<serde_json::Value> = (0..101)
+        .map(|i| serde_json::json!({"content": format!("row {i}")}))
+        .collect();
+    let r = http
+        .post(format!("{base}/v1/memories/bulk"))
+        .bearer_auth("tok_analyst")
+        .json(&serde_json::json!({ "items": too_many }))
+        .send()
+        .await
+        .expect("bulk over cap");
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(err["code"], "bad_request");
 }
 
 async fn brainiac_server_router(

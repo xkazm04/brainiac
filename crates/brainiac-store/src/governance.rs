@@ -32,6 +32,56 @@ pub async fn insert_source(
     Ok(())
 }
 
+/// Idempotent source insert: like [`insert_source`] but carries an
+/// `idempotency_key`. Returns `Some(id)` when the row was written, `None` when
+/// an existing keyed source already claims `(org_id, idempotency_key)` — the
+/// caller then replays that source's original receipt via
+/// [`keyed_source_id`]. The partial unique index scopes keys per org.
+#[allow(clippy::too_many_arguments)] // one extra arg over insert_source
+pub async fn insert_source_idempotent(
+    conn: &mut PgConnection,
+    id: Uuid,
+    org_id: Uuid,
+    team_id: Option<Uuid>,
+    kind: &str,
+    raw_text: &str,
+    created_by: Option<Uuid>,
+    idempotency_key: &str,
+) -> Result<Option<Uuid>> {
+    let row = sqlx::query(
+        "INSERT INTO sources (id, org_id, team_id, kind, raw_text, created_by, idempotency_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (org_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+         DO NOTHING
+         RETURNING id",
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(team_id)
+    .bind(kind)
+    .bind(raw_text)
+    .bind(created_by)
+    .bind(idempotency_key)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|r| r.get::<Uuid, _>("id")))
+}
+
+/// The id of the source that already claims `(org_id, idempotency_key)` under
+/// the caller's RLS — the replay target when [`insert_source_idempotent`]
+/// reports a conflict. `None` only if the row is invisible to the caller
+/// (impossible on the conflict path, where org_id matches the principal).
+pub async fn keyed_source_id(
+    conn: &mut PgConnection,
+    idempotency_key: &str,
+) -> Result<Option<Uuid>> {
+    let row = sqlx::query("SELECT id FROM sources WHERE idempotency_key = $1")
+        .bind(idempotency_key)
+        .fetch_optional(conn)
+        .await?;
+    Ok(row.map(|r| r.get::<Uuid, _>("id")))
+}
+
 pub async fn get_source_text(
     conn: &mut PgConnection,
     id: Uuid,

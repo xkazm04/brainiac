@@ -68,6 +68,7 @@ impl Modify for BearerAuth {
         // memories
         http::search,
         http::memory_add,
+        http::memory_add_bulk,
         http::memory_feedback,
         http::memory_provenance,
         http::source_status,
@@ -119,6 +120,9 @@ impl Modify for BearerAuth {
         http::SearchResponse,
         http::MemoryAddBody,
         http::MemoryAcceptedResponse,
+        http::BulkAddBody,
+        http::BulkItemResult,
+        http::BulkAcceptedResponse,
         http::FeedbackBody,
         http::FeedbackVerdictCount,
         http::FeedbackRecordedResponse,

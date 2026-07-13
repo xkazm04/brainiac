@@ -169,8 +169,25 @@ export interface paths {
         /** @description Browse the memory archive, optionally as-of an instant (time travel over the validity windows). Returns the filtered total alongside the page. */
         get: operations["memories_list"];
         put?: never;
-        /** @description Ingest raw content as a source and enqueue the extraction pipeline (async). */
+        /** @description Ingest raw content as a source and enqueue the extraction pipeline (async). Pass an `Idempotency-Key` header to make retries safe: the same key (scoped to your org, for the source's lifetime) replays the ORIGINAL receipt instead of minting a duplicate source. */
         post: operations["memory_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Ingest up to 100 items in one request (org imports). Each item is validated and enqueued independently: the response carries a per-item result in request order, so one bad item ({error, code}) never sinks the others ({source_id, job_id}). This route accepts a larger request body than single add. */
+        post: operations["memory_add_bulk"];
         delete?: never;
         options?: never;
         head?: never;
@@ -720,6 +737,27 @@ export interface components {
              *     independent of the page window.
              */
             total: number;
+        };
+        BulkAcceptedResponse: {
+            /** @description Per-item results, in request order. */
+            results: components["schemas"]["BulkItemResult"][];
+        };
+        BulkAddBody: {
+            /** @description Up to `MAX_BULK_ITEMS` (100) items, each the same shape as a single add. */
+            items: components["schemas"]["MemoryAddBody"][];
+        };
+        /**
+         * @description One item's outcome, positionally aligned with the request `items`. Either a
+         *     success (`source_id` + `job_id`) or a per-item error (`error` + `code`) —
+         *     a bad item never sinks the rest of the batch.
+         */
+        BulkItemResult: {
+            code?: string | null;
+            error?: string | null;
+            /** Format: int64 */
+            job_id?: number | null;
+            /** Format: uuid */
+            source_id?: string | null;
         };
         CanonicalDetailResponse: {
             canonical: components["schemas"]["CanonicalSummary"];
@@ -1827,7 +1865,10 @@ export interface operations {
     memory_add: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Opaque retry token (≤200 chars). Same key + org ⇒ the original source_id/job_id, no duplicate source. */
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1837,7 +1878,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Source stored and job enqueued */
+            /** @description Source stored and job enqueued (or the original receipt replayed for a repeated Idempotency-Key) */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -1846,7 +1887,52 @@ export interface operations {
                     "application/json": components["schemas"]["MemoryAcceptedResponse"];
                 };
             };
-            /** @description Empty content */
+            /** @description Empty content, or an oversized content / Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `write` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memory_add_bulk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkAddBody"];
+            };
+        };
+        responses: {
+            /** @description Batch accepted; see per-item results (mix of receipts and errors) */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkAcceptedResponse"];
+                };
+            };
+            /** @description Empty batch or more than 100 items */
             400: {
                 headers: {
                     [name: string]: unknown;

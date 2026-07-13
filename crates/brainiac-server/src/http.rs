@@ -68,6 +68,13 @@ pub async fn router(
         .route("/openapi.json", get(crate::openapi::openapi_json))
         .route("/v1/memories/search", post(search))
         .route("/v1/memories", post(memory_add))
+        // Bulk import carries its own larger body limit (a full page of items
+        // exceeds the single-statement global cap). The per-route layer sits
+        // inside the global one, so it wins for this route only.
+        .route(
+            "/v1/memories/bulk",
+            post(memory_add_bulk).layer(DefaultBodyLimit::max(BULK_MAX_BODY_BYTES)),
+        )
         .route("/v1/memories/{id}/feedback", post(memory_feedback))
         .route("/v1/memories/{id}/provenance", get(memory_provenance))
         .route("/v1/sources/{id}", get(source_status))
@@ -105,6 +112,19 @@ const MAX_NOTE_CHARS: usize = 2_000;
 /// Bounded excerpt of a source's raw text on the provenance endpoint — a
 /// citation handle, never the whole transcript (mcp.rs SOURCE_EXCERPT_CHARS).
 const SOURCE_EXCERPT_CHARS: usize = 500;
+/// `Idempotency-Key` header — an opaque client-chosen token (typically a UUID
+/// or short hash). Bounded so a caller can't stash an unbounded blob in the
+/// index. Scope is the org; lifetime is the source's lifetime.
+const MAX_IDEMPOTENCY_KEY_CHARS: usize = 200;
+/// Per-request item ceiling on `POST /v1/memories/bulk` — an org import is a
+/// page, not the whole corpus. Each item's content still obeys
+/// `MAX_CONTENT_CHARS`.
+const MAX_BULK_ITEMS: usize = 100;
+/// Body ceiling for the `/v1/memories/bulk` route specifically. The global
+/// `MAX_BODY_BYTES` (1 MiB) is sized for a single statement; a full bulk page
+/// (100 × 8000 chars, worst-case 4-byte UTF-8, plus JSON framing) needs more,
+/// so the route carries its own larger `DefaultBodyLimit`.
+const BULK_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 /// Enforce a documented character cap on a free-text field; oversized input is
 /// a clear 400, never silent truncation or unbounded work.
@@ -398,15 +418,79 @@ pub(crate) struct MemoryAcceptedResponse {
     job_id: i64,
 }
 
+/// Read + validate the optional `Idempotency-Key` header. Absent or blank ⇒
+/// `None` (the non-idempotent path). Present ⇒ trimmed, length-capped, and any
+/// violation is a clear 400.
+fn idempotency_key(headers: &HeaderMap) -> Result<Option<String>, HttpError> {
+    let Some(raw) = headers.get("idempotency-key") else {
+        return Ok(None);
+    };
+    let key = raw
+        .to_str()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Idempotency-Key must be valid text".to_string(),
+            )
+        })?
+        .trim();
+    if key.is_empty() {
+        return Ok(None);
+    }
+    within_cap(key, MAX_IDEMPOTENCY_KEY_CHARS, "Idempotency-Key")?;
+    Ok(Some(key.to_string()))
+}
+
+/// Validate one item of content, write its source, and enqueue extraction —
+/// the shared, non-idempotent ingest path behind single-add (no key) and every
+/// bulk item. An empty or oversized body is a 400 before any DB work.
+async fn ingest_source(
+    state: &AppState,
+    principal: &Principal,
+    content: &str,
+    team_id: Option<Uuid>,
+) -> Result<MemoryAcceptedResponse, HttpError> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "content must not be empty".to_string(),
+        )
+            .into());
+    }
+    within_cap(content, MAX_CONTENT_CHARS, "content")?;
+    let team_id = team_id.or_else(|| principal.team_ids.first().copied());
+    let source_id = Uuid::new_v4();
+    let mut tx = state.store.scoped_tx(principal).await.map_err(internal)?;
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        principal.org_id,
+        team_id,
+        "manual",
+        content,
+        Some(principal.user_id),
+    )
+    .await
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    let job_id =
+        brainiac_pipeline::worker::enqueue_source(&state.store, principal.org_id, source_id)
+            .await
+            .map_err(internal)?;
+    Ok(MemoryAcceptedResponse { source_id, job_id })
+}
+
 #[utoipa::path(
     post,
     path = "/v1/memories",
     tag = "memories",
-    description = "Ingest raw content as a source and enqueue the extraction pipeline (async).",
+    description = "Ingest raw content as a source and enqueue the extraction pipeline (async). Pass an `Idempotency-Key` header to make retries safe: the same key (scoped to your org, for the source's lifetime) replays the ORIGINAL receipt instead of minting a duplicate source.",
     request_body = MemoryAddBody,
+    params(("Idempotency-Key" = Option<String>, Header, description = "Opaque retry token (≤200 chars). Same key + org ⇒ the original source_id/job_id, no duplicate source.")),
     responses(
-        (status = 202, description = "Source stored and job enqueued", body = MemoryAcceptedResponse),
-        (status = 400, description = "Empty content"),
+        (status = 202, description = "Source stored and job enqueued (or the original receipt replayed for a repeated Idempotency-Key)", body = MemoryAcceptedResponse),
+        (status = 400, description = "Empty content, or an oversized content / Idempotency-Key"),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `write` scope"),
     )
@@ -417,37 +501,177 @@ pub(crate) async fn memory_add(
     Json(body): Json<MemoryAddBody>,
 ) -> Result<(StatusCode, Json<MemoryAcceptedResponse>), HttpError> {
     let principal = auth_of(&state, &headers, "write").await?.principal;
-    if body.content.trim().is_empty() {
+    let Some(key) = idempotency_key(&headers)? else {
+        // No key: the plain async ingest.
+        let receipt = ingest_source(&state, &principal, &body.content, body.team_id).await?;
+        return Ok((StatusCode::ACCEPTED, Json(receipt)));
+    };
+
+    // Keyed: validate the body up front so even a first use of a bad body is a
+    // clean 400 (never a stored, un-processable source).
+    let content = body.content.trim();
+    if content.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             "content must not be empty".to_string(),
         )
             .into());
     }
-    within_cap(body.content.trim(), MAX_CONTENT_CHARS, "content")?;
+    within_cap(content, MAX_CONTENT_CHARS, "content")?;
     let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    brainiac_store::governance::insert_source(
+    let inserted = brainiac_store::governance::insert_source_idempotent(
         &mut tx,
         source_id,
         principal.org_id,
         team_id,
         "manual",
-        body.content.trim(),
+        content,
         Some(principal.user_id),
+        &key,
     )
     .await
     .map_err(internal)?;
-    tx.commit().await.map_err(internal)?;
-    let job_id =
-        brainiac_pipeline::worker::enqueue_source(&state.store, principal.org_id, source_id)
-            .await
-            .map_err(internal)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(MemoryAcceptedResponse { source_id, job_id }),
-    ))
+    match inserted {
+        // Fresh key: this call wrote the source — enqueue and return the receipt.
+        Some(id) => {
+            tx.commit().await.map_err(internal)?;
+            let job_id =
+                brainiac_pipeline::worker::enqueue_source(&state.store, principal.org_id, id)
+                    .await
+                    .map_err(internal)?;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(MemoryAcceptedResponse {
+                    source_id: id,
+                    job_id,
+                }),
+            ))
+        }
+        // Repeated key: an earlier call already claimed it. Replay that
+        // source's ORIGINAL receipt — no second source, no second pipeline run.
+        None => {
+            let existing = brainiac_store::governance::keyed_source_id(&mut tx, &key)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| internal("idempotency conflict without a visible source"))?;
+            drop(tx);
+            // The original job, live or archived. `None` only if that first
+            // call's enqueue never landed (failed or a sub-ms race) — recover
+            // by enqueuing now, which still points at the one existing source.
+            let job_id =
+                match brainiac_store::queue::job_id_for_source(state.store.pool(), existing)
+                    .await
+                    .map_err(internal)?
+                {
+                    Some(job_id) => job_id,
+                    None => brainiac_pipeline::worker::enqueue_source(
+                        &state.store,
+                        principal.org_id,
+                        existing,
+                    )
+                    .await
+                    .map_err(internal)?,
+                };
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(MemoryAcceptedResponse {
+                    source_id: existing,
+                    job_id,
+                }),
+            ))
+        }
+    }
+}
+
+// ── bulk ingest ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct BulkAddBody {
+    /// Up to `MAX_BULK_ITEMS` (100) items, each the same shape as a single add.
+    items: Vec<MemoryAddBody>,
+}
+
+/// One item's outcome, positionally aligned with the request `items`. Either a
+/// success (`source_id` + `job_id`) or a per-item error (`error` + `code`) —
+/// a bad item never sinks the rest of the batch.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct BulkItemResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    job_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct BulkAcceptedResponse {
+    /// Per-item results, in request order.
+    results: Vec<BulkItemResult>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/memories/bulk",
+    tag = "memories",
+    description = "Ingest up to 100 items in one request (org imports). Each item is validated and enqueued independently: the response carries a per-item result in request order, so one bad item ({error, code}) never sinks the others ({source_id, job_id}). This route accepts a larger request body than single add.",
+    request_body = BulkAddBody,
+    responses(
+        (status = 202, description = "Batch accepted; see per-item results (mix of receipts and errors)", body = BulkAcceptedResponse),
+        (status = 400, description = "Empty batch or more than 100 items"),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `write` scope"),
+    )
+)]
+pub(crate) async fn memory_add_bulk(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<BulkAddBody>,
+) -> Result<(StatusCode, Json<BulkAcceptedResponse>), HttpError> {
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    if body.items.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "items must not be empty".to_string(),
+        )
+            .into());
+    }
+    if body.items.len() > MAX_BULK_ITEMS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "too many items ({}); the limit is {MAX_BULK_ITEMS}",
+                body.items.len()
+            ),
+        )
+            .into());
+    }
+    let mut results = Vec::with_capacity(body.items.len());
+    for item in &body.items {
+        match ingest_source(&state, &principal, &item.content, item.team_id).await {
+            Ok(r) => results.push(BulkItemResult {
+                source_id: Some(r.source_id),
+                job_id: Some(r.job_id),
+                error: None,
+                code: None,
+            }),
+            // A systemic fault (500) sinks the request; a per-item business
+            // error (empty/oversized content) is reported inline and the batch
+            // carries on.
+            Err(e) if e.status == StatusCode::INTERNAL_SERVER_ERROR => return Err(e),
+            Err(e) => results.push(BulkItemResult {
+                source_id: None,
+                job_id: None,
+                error: Some(e.message),
+                code: Some(e.code.to_string()),
+            }),
+        }
+    }
+    Ok((StatusCode::ACCEPTED, Json(BulkAcceptedResponse { results })))
 }
 
 // ── memory feedback (REST mirror of MCP memory_feedback) ─────────────────

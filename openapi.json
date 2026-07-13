@@ -303,8 +303,22 @@
         "tags": [
           "memories"
         ],
-        "description": "Ingest raw content as a source and enqueue the extraction pipeline (async).",
+        "description": "Ingest raw content as a source and enqueue the extraction pipeline (async). Pass an `Idempotency-Key` header to make retries safe: the same key (scoped to your org, for the source's lifetime) replays the ORIGINAL receipt instead of minting a duplicate source.",
         "operationId": "memory_add",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Opaque retry token (≤200 chars). Same key + org ⇒ the original source_id/job_id, no duplicate source.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -317,7 +331,7 @@
         },
         "responses": {
           "202": {
-            "description": "Source stored and job enqueued",
+            "description": "Source stored and job enqueued (or the original receipt replayed for a repeated Idempotency-Key)",
             "content": {
               "application/json": {
                 "schema": {
@@ -327,7 +341,47 @@
             }
           },
           "400": {
-            "description": "Empty content"
+            "description": "Empty content, or an oversized content / Idempotency-Key"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `write` scope"
+          }
+        }
+      }
+    },
+    "/v1/memories/bulk": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "description": "Ingest up to 100 items in one request (org imports). Each item is validated and enqueued independently: the response carries a per-item result in request order, so one bad item ({error, code}) never sinks the others ({source_id, job_id}). This route accepts a larger request body than single add.",
+        "operationId": "memory_add_bulk",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkAddBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Batch accepted; see per-item results (mix of receipts and errors)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty batch or more than 100 items"
           },
           "401": {
             "description": "Missing or unknown bearer token"
@@ -1665,6 +1719,68 @@
             "type": "integer",
             "format": "int64",
             "description": "Total governance actions visible to the caller — the full feed length,\nindependent of the page window."
+          }
+        }
+      },
+      "BulkAcceptedResponse": {
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkItemResult"
+            },
+            "description": "Per-item results, in request order."
+          }
+        }
+      },
+      "BulkAddBody": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryAddBody"
+            },
+            "description": "Up to `MAX_BULK_ITEMS` (100) items, each the same shape as a single add."
+          }
+        }
+      },
+      "BulkItemResult": {
+        "type": "object",
+        "description": "One item's outcome, positionally aligned with the request `items`. Either a\nsuccess (`source_id` + `job_id`) or a per-item error (`error` + `code`) —\na bad item never sinks the rest of the batch.",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },

@@ -366,6 +366,25 @@ pub async fn dead_letters_count(pool: &PgPool, queue: &str) -> Result<i64> {
     Ok(row.get("n"))
 }
 
+/// The queue job id that carries this source — the original ingest job,
+/// whether it is still live (`queue.jobs`) or has finished (`queue.archive`,
+/// which this codebase never time-prunes). Backs the idempotent-replay path:
+/// when a retried `memory_add` hits an existing keyed source, its ORIGINAL
+/// job_id is served from here. `None` only in the sub-millisecond window
+/// between a source commit and its enqueue.
+pub async fn job_id_for_source(pool: &PgPool, source_id: uuid::Uuid) -> Result<Option<i64>> {
+    let row = sqlx::query(
+        "SELECT id FROM queue.jobs   WHERE payload->>'source_id' = $1
+         UNION ALL
+         SELECT id FROM queue.archive WHERE payload->>'source_id' = $1
+         ORDER BY id ASC LIMIT 1",
+    )
+    .bind(source_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.get::<i64, _>("id")))
+}
+
 /// Move a dead-lettered job back into the live queue with a fresh attempt
 /// budget. Returns false when the id isn't a dead letter. Reusing the id is
 /// safe: bigserial never re-issues consumed ids, so no collision.
