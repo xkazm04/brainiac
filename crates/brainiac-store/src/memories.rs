@@ -122,6 +122,18 @@ pub async fn search_vector(
     filters: &crate::retrieval::RetrievalFilters,
 ) -> Result<Vec<(Uuid, f32)>> {
     let dim = query.len();
+    // HNSW scan hygiene. The scan returns at most `hnsw.ef_search` rows
+    // (default 40 < limit 50), and the version/RLS/status conditions are
+    // POST-filters — rows they discard leave the frontier and pgvector won't
+    // fetch replacements unless iterative scanning is on. Neither matters on
+    // a fixture-sized corpus, but at scale both silently starve the candidate
+    // pool. No-op (with a warning) outside a transaction or on a seq scan.
+    sqlx::query("SET LOCAL hnsw.ef_search = 200")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("SET LOCAL hnsw.iterative_scan = strict_order")
+        .execute(&mut *conn)
+        .await?;
     let rows = sqlx::query(&format!(
         "SELECT m.id, 1 - (e.embedding::vector({dim}) <=> $1::vector({dim})) AS score
          FROM memory_embeddings e
@@ -145,10 +157,26 @@ pub async fn search_vector(
     .bind(filters.min_confidence)
     .fetch_all(conn)
     .await?;
-    Ok(rows
+    let mut hits: Vec<(Uuid, f32)> = rows
         .into_iter()
         .map(|r| (r.get::<Uuid, _>("id"), r.get::<f64, _>("score") as f32))
-        .collect())
+        .collect();
+    sort_candidates(&mut hits);
+    Ok(hits)
+}
+
+/// Deterministic candidate ordering: score descending, id ascending on ties.
+/// Postgres leaves tie order to the access path (heap order on a seq scan,
+/// graph order on an HNSW scan), and the deterministic test embedder produces
+/// many exact ties — without this, eval rankings shift whenever the planner
+/// changes its mind. Fixture IDs are deterministic, so this keeps eval runs
+/// reproducible across plans.
+fn sort_candidates(hits: &mut [(Uuid, f32)]) {
+    hits.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
 }
 
 /// Full-text candidates via websearch-style parsing + ts_rank.
@@ -189,10 +217,12 @@ pub async fn search_fts(
     .bind(filters.min_confidence)
     .fetch_all(conn)
     .await?;
-    Ok(rows
+    let mut hits: Vec<(Uuid, f32)> = rows
         .into_iter()
         .map(|r| (r.get::<Uuid, _>("id"), r.get::<f32, _>("score")))
-        .collect())
+        .collect();
+    sort_candidates(&mut hits);
+    Ok(hits)
 }
 
 /// `None` when no kind filter applies (SQL treats NULL as "all kinds").

@@ -1,12 +1,12 @@
 {
   "embedding_model": "deterministic-bow-v1",
   "fixture_version": "v1",
-  "overall_ndcg_at_10": 0.6900047660188834,
+  "overall_ndcg_at_10": 0.6879226944629574,
   "per_stratum_ndcg_at_10": {
     "cross_team_graph": 0.7722906056181168,
     "czech": 0.5603166056265816,
-    "exact_identifier": 0.9608729609840343,
-    "semantic": 0.4129488350117516,
+    "exact_identifier": 0.9313365213681505,
+    "semantic": 0.4270089225798941,
     "temporal": 0.9384882922619097
   },
   "temporal_rank1_accuracy": 0.7857142857142857
