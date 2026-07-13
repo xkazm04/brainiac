@@ -30,7 +30,15 @@ export interface LiveStats {
   openContradictions: number;
   canonicalCount: number;
   embeddingModel: string;
+  /** Real team lobes (name + memory volume), busiest first. */
+  teams: { name: string; memories: number }[];
+  /** The most-bound canonical entity — what best sells "constructive". */
+  topCanonical: { name: string; teams: number } | null;
+  /** Org-wide memory total (sum over team lobes). */
+  totalMemories: number;
 }
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 interface Emitter {
   id: string;
@@ -207,12 +215,31 @@ export default function Home({ live }: { live: LiveStats | null }) {
 
   const emitters = emittersRef.current;
 
+  // The scroll story tells the live truth when the server is up: real team
+  // names + counts, the real open-contradiction tally, the actual canonical
+  // graph. The demo fiction (labelled as such in the stats strip + footer)
+  // survives only when `live` is null. The wave art itself is untouched.
+  const teamNames =
+    live && live.teams.length > 0
+      ? live.teams.slice(0, 3).map((t) => t.name).join(", ")
+      : "payments, platform, data";
+
   const STATIONS = [
     {
       n: "01",
       title: "Every team is a source.",
-      body: "Payments, platform, data — each session broadcasts what it learned. Raw memories, provenance attached, nothing lost in the noise floor.",
-      artifact: QUEUE[0].content,
+      body: live
+        ? `${teamNames} — each session broadcasts what it learned. Raw memories, provenance attached, nothing lost in the noise floor.`
+        : "Payments, platform, data — each session broadcasts what it learned. Raw memories, provenance attached, nothing lost in the noise floor.",
+      artifact:
+        live && live.teams.length > 0
+          ? live.teams
+              .slice(0, 3)
+              .map((t) => `${t.name} · ${t.memories} mem`)
+              .join("   ")
+          : live
+            ? `${live.totalMemories} memories captured across the org`
+            : QUEUE[0].content,
       tone: GOLD,
       wave: "in" as const,
       href: "/reviews",
@@ -222,7 +249,11 @@ export default function Home({ live }: { live: LiveStats | null }) {
       n: "02",
       title: "Disagreement is visible.",
       body: "Two claims out of phase don't average out — they cancel. Brainiac finds the dark seams and files them as contradictions, with a suggested resolution.",
-      artifact: `− ${CONTRADICTION.a}   + ${CONTRADICTION.b}`,
+      artifact: live
+        ? live.openContradictions > 0
+          ? `${plural(live.openContradictions, "open contradiction")} in the review queue · each with a suggested resolution`
+          : "0 open contradictions — every source currently in phase"
+        : `− ${CONTRADICTION.a}   + ${CONTRADICTION.b}`,
       tone: MAGENTA,
       wave: "anti" as const,
       href: "/reviews",
@@ -231,8 +262,14 @@ export default function Home({ live }: { live: LiveStats | null }) {
     {
       n: "03",
       title: "Phase-lock makes it canonical.",
-      body: `A maintainer signs the resolution and the sources align: ${CANONICAL_DEMO.aliases.map((a) => `“${a.name}”`).join(", ")} — one bright node, ${CANONICAL_DEMO.name}, visible to everyone cleared to see it.`,
-      artifact: `${CANONICAL_DEMO.name} ⇐ ${CANONICAL_DEMO.aliases.map((a) => a.team).join(" + ")} · constructive`,
+      body: live
+        ? `A maintainer signs the resolution and the sources align: ${plural(live.canonicalCount, "canonical node")} the whole org can see, each bound from the teams that named it.`
+        : `A maintainer signs the resolution and the sources align: ${CANONICAL_DEMO.aliases.map((a) => `“${a.name}”`).join(", ")} — one bright node, ${CANONICAL_DEMO.name}, visible to everyone cleared to see it.`,
+      artifact: live
+        ? live.topCanonical
+          ? `${live.topCanonical.name} ⇐ bound across ${plural(live.topCanonical.teams, "team")} · constructive`
+          : `${plural(live.canonicalCount, "canonical node")} · constructive`
+        : `${CANONICAL_DEMO.name} ⇐ ${CANONICAL_DEMO.aliases.map((a) => a.team).join(" + ")} · constructive`,
       tone: "#f6ecd0",
       wave: "locked" as const,
       href: "/graph",
@@ -410,7 +447,14 @@ export default function Home({ live }: { live: LiveStats | null }) {
           <Link href="/demo" className="transition hover:text-[#f3c74f]">
             → live demo · fixture org
           </Link>
-          <span style={{ color: GOLD }}>0 leaks · every phase-lock signed</span>
+          {/* No existing endpoint exposes eval/gate/RLS-leak results, so the
+              "0 leaks" claim is unverifiable — in live mode we state real,
+              checkable numbers instead. The fiction stays only in demo mode. */}
+          <span style={{ color: GOLD }}>
+            {live
+              ? `${plural(live.canonicalCount, "canonical")} · ${plural(live.openContradictions, "open contradiction")}`
+              : "0 leaks · every phase-lock signed"}
+          </span>
         </footer>
       </div>
     </div>
