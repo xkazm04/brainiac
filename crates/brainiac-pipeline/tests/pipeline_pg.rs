@@ -292,6 +292,182 @@ async fn full_pipeline_over_seed_transcripts() {
     );
 }
 
+/// Direction 1: a governance supersession must feed the temporal engine —
+/// after `apply_supersession`, retrieval serves the winner and never the
+/// deprecated loser, and the transition lands in the promotions audit log.
+#[tokio::test]
+async fn supersession_serves_only_the_winner() {
+    use brainiac_core::{MemoryKind, MemoryStatus, Principal, Visibility};
+    use brainiac_store::{memories, orgs, retrieval};
+    use chrono::Utc;
+    use sqlx::Row;
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
+         CASCADE",
+    )
+    .execute(&admin)
+    .await
+    .expect("truncate");
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([7u8; 16]);
+    let team = Uuid::from_bytes([8u8; 16]);
+    let user = Uuid::from_bytes([9u8; 16]);
+    let principal = Principal {
+        org_id,
+        user_id: user,
+        team_ids: vec![team],
+    };
+    let winner = Uuid::from_bytes([1u8; 16]);
+    let loser = Uuid::from_bytes([2u8; 16]);
+    let win_txt = "psp-gateway retry cap is five attempts";
+    let lose_txt = "psp-gateway retry cap is three attempts";
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    orgs::upsert_user(&mut tx, user, org_id, "u@x")
+        .await
+        .expect("user");
+    orgs::upsert_member(&mut tx, team, user, "maintainer")
+        .await
+        .expect("member");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let mk = |id: Uuid, content: &str| memories::NewMemory {
+        id,
+        org_id,
+        team_id: Some(team),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: Some(Utc::now()),
+        valid_to: None,
+        superseded_by: None,
+        confidence: Some(0.9),
+        provenance_id: None,
+    };
+    for (id, txt) in [(winner, win_txt), (loser, lose_txt)] {
+        memories::insert(&mut tx, &mk(id, txt))
+            .await
+            .expect("insert");
+        memories::upsert_embedding(
+            &mut tx,
+            id,
+            version,
+            &embedder.embed(txt).await.expect("embed"),
+        )
+        .await
+        .expect("embed row");
+    }
+    tx.commit().await.expect("commit");
+
+    let req = retrieval::RetrievalRequest {
+        query: "psp-gateway retry cap".into(),
+        k: 10,
+        as_of: None,
+        filters: Default::default(),
+    };
+
+    // Before: the conflict is live — both are served.
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    let before: Vec<Uuid> = retrieval::search(&mut tx, &embedder, version, &req)
+        .await
+        .expect("search")
+        .iter()
+        .map(|h| h.memory.id)
+        .collect();
+    assert!(
+        before.contains(&winner) && before.contains(&loser),
+        "both memories live before supersede: {before:?}"
+    );
+
+    // Apply the supersession as the maintainer.
+    let applied = brainiac_store::governance::apply_supersession(
+        &mut tx,
+        org_id,
+        loser,
+        winner,
+        Some(user),
+        "contradiction_supersede",
+    )
+    .await
+    .expect("apply");
+    assert!(applied, "supersession applied");
+    let again = brainiac_store::governance::apply_supersession(
+        &mut tx,
+        org_id,
+        loser,
+        winner,
+        Some(user),
+        "contradiction_supersede",
+    )
+    .await
+    .expect("apply again");
+    assert!(!again, "already-superseded memory is a no-op (idempotent)");
+    tx.commit().await.expect("commit");
+
+    // After: retrieval serves ONLY the winner (the temporal chain is real now).
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    let after: Vec<Uuid> = retrieval::search(&mut tx, &embedder, version, &req)
+        .await
+        .expect("search")
+        .iter()
+        .map(|h| h.memory.id)
+        .collect();
+    assert!(after.contains(&winner), "winner still served: {after:?}");
+    assert!(
+        !after.contains(&loser),
+        "deprecated loser must not be served: {after:?}"
+    );
+
+    // Loser row carries the applied supersession.
+    let row = sqlx::query(
+        "SELECT status::text AS s, superseded_by, valid_to FROM memories WHERE id = $1",
+    )
+    .bind(loser)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("row");
+    assert_eq!(row.get::<String, _>("s"), "deprecated");
+    assert_eq!(row.get::<Option<Uuid>, _>("superseded_by"), Some(winner));
+    assert!(row
+        .get::<Option<chrono::DateTime<Utc>>, _>("valid_to")
+        .is_some());
+
+    // Audit: the deprecation is in the promotions log, naming who applied it.
+    let audit = sqlx::query(
+        "SELECT reviewer_id, to_status::text AS t, policy_decision
+         FROM promotions WHERE memory_id = $1 AND policy_rule = 'contradiction_supersede'",
+    )
+    .bind(loser)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("audit row");
+    assert_eq!(audit.get::<Option<Uuid>, _>("reviewer_id"), Some(user));
+    assert_eq!(audit.get::<String, _>("t"), "deprecated");
+    assert_eq!(audit.get::<String, _>("policy_decision"), "approved");
+
+    let _ = &admin;
+}
+
 #[tokio::test]
 #[allow(clippy::assertions_on_constants)] // deliberate: tuning-coherence guard
 async fn resolve_thresholds_are_ordered() {

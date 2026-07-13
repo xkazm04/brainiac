@@ -112,6 +112,74 @@ pub async fn set_memory_status(
     Ok(())
 }
 
+/// Apply a governance-decided supersession: the losing memory is deprecated,
+/// pointed at the winner, and its validity window closed at `now()` so the
+/// temporal dedupe (retrieval stage 5) serves ONLY the winner from now on —
+/// the piece ARCHITECTURE.md §5 row 5 promised but no code path delivered.
+///
+/// The deprecation is recorded in `promotions`, the same status-transition
+/// audit log every other status change flows through, stamped with who/what
+/// applied it (`reviewer_id`): a human maintainer (`applied_by = Some`, decided
+/// `approved`) or a policy actor (`None`, `auto_approved`). `rule` names the
+/// trigger, e.g. `contradiction_supersede`.
+///
+/// Idempotent and RLS-safe: a memory already superseded, or not updatable
+/// under the caller's scope, is left untouched and returns `false`.
+pub async fn apply_supersession(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    loser: Uuid,
+    winner: Uuid,
+    applied_by: Option<Uuid>,
+    rule: &str,
+) -> Result<bool> {
+    // Snapshot the pre-transition status (also the existence + RLS gate) before
+    // the update overwrites it; a live supersession is final, so skip rows that
+    // already carry a forward pointer.
+    let Some(from_status) = sqlx::query_scalar::<_, String>(
+        "SELECT status::text FROM memories WHERE id = $1 AND superseded_by IS NULL",
+    )
+    .bind(loser)
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(false);
+    };
+
+    sqlx::query(
+        "UPDATE memories
+         SET valid_to = now(), superseded_by = $2,
+             status = 'deprecated'::memory_status, updated_at = now()
+         WHERE id = $1 AND superseded_by IS NULL",
+    )
+    .bind(loser)
+    .bind(winner)
+    .execute(&mut *conn)
+    .await?;
+
+    let decision = if applied_by.is_some() {
+        "approved"
+    } else {
+        "auto_approved"
+    };
+    sqlx::query(
+        "INSERT INTO promotions
+            (id, org_id, memory_id, from_status, to_status,
+             policy_decision, policy_rule, reviewer_id, reviewed_at)
+         VALUES ($1,$2,$3,$4::memory_status,'deprecated'::memory_status,$5,$6,$7, now())",
+    )
+    .bind(Uuid::new_v4())
+    .bind(org_id)
+    .bind(loser)
+    .bind(from_status)
+    .bind(decision)
+    .bind(rule)
+    .bind(applied_by)
+    .execute(&mut *conn)
+    .await?;
+    Ok(true)
+}
+
 pub async fn insert_contradiction(
     conn: &mut PgConnection,
     org_id: Uuid,

@@ -37,8 +37,16 @@ pub struct ContradictStats {
 
 /// Compare `memory` against its nearest visible neighbors (same embedding
 /// space, shared entity anchors) and open contradiction rows for genuine
-/// conflicts. Suggested resolution is recorded in the note; a human (or the
-/// promote flow) applies it.
+/// conflicts. The suggested supersession direction is recorded in the note; a
+/// human maintainer applies it through the governance resolve path, which calls
+/// [`brainiac_store::governance::apply_supersession`] to close the loser.
+///
+/// The pipeline deliberately does NOT auto-apply a supersede verdict. Applying
+/// one deprecates a memory (removes a truth from retrieval), and the adjudicator
+/// returns no calibrated confidence to gate on — so there is no clean policy
+/// hook, and auto-applying would bypass the maintainer-of-the-losing-team gate
+/// that the governance path enforces. Detection stays advisory; application
+/// stays human. (Direction 1: governance-path-only, by design.)
 pub async fn run_contradict(
     conn: &mut PgConnection,
     provider: &dyn ChatProvider,
