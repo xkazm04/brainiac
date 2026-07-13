@@ -1,0 +1,9 @@
+{
+  "embedding_model": "deterministic-bow-v1",
+  "provider": "mock:deterministic",
+  "fixture_version": "v1",
+  "detection_recall": 0.75,
+  "detection_precision": 1.0,
+  "direction_accuracy": 1.0,
+  "false_positive_rate": 0.0
+}

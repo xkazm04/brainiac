@@ -539,8 +539,11 @@ async fn eval(
     write_baseline_path: Option<&str>,
 ) -> Result<()> {
     anyhow::ensure!(
-        matches!(profile, "retrieval" | "resolution" | "pipeline"),
-        "v0 CLI supports profile=retrieval|resolution|pipeline"
+        matches!(
+            profile,
+            "retrieval" | "resolution" | "pipeline" | "contradiction"
+        ),
+        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction"
     );
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
@@ -586,6 +589,18 @@ async fn eval(
         return eval_pipeline(
             &store,
             &admin,
+            &fx,
+            embedder.as_ref(),
+            out,
+            baseline_path,
+            write_baseline_path,
+        )
+        .await;
+    }
+
+    if profile == "contradiction" {
+        return eval_contradiction(
+            &store,
             &fx,
             embedder.as_ref(),
             out,
@@ -853,6 +868,74 @@ async fn eval_pipeline(
             std::process::exit(1);
         }
         tracing::info!(path, "pipeline regression gates passed");
+    }
+    Ok(())
+}
+
+/// The `contradiction` profile (EVAL.md §2.3/§3): seed the gold contradiction
+/// pairs into isolated orgs, drive the REAL contradict stage with a gold-oracle
+/// verdict mock, and score detection recall/precision, false-positive rate, and
+/// supersede-direction accuracy. Soft regression gate only (cross-config
+/// comparison refused). `store`/`fx`/`embedder` are set up and the tenant
+/// truncated by the caller.
+async fn eval_contradiction(
+    store: &Store,
+    fx: &brainiac_fixtures::Fixtures,
+    embedder: &dyn Embedder,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::contradiction_profile::{regression_failures, run, ContradictionBaseline};
+
+    let report = run(store, fx, embedder).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "contradiction report written");
+        }
+        None => println!("{json}"),
+    }
+
+    // No hard gate (see ContradictionReport::gate_failures) — over-flagging is a
+    // soft quality regression, not a zero-tolerance invariant.
+    let failures = report.gate_failures();
+    if !failures.is_empty() {
+        eprintln!("HARD GATES FAILED:\n{}", failures.join("\n"));
+        std::process::exit(1);
+    }
+
+    if let Some(path) = write_baseline_path {
+        let baseline = ContradictionBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "contradiction baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: ContradictionBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "REGRESSION GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "contradiction regression gates passed");
     }
     Ok(())
 }
