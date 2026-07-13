@@ -18,7 +18,9 @@
 
 use anyhow::Result;
 use brainiac_core::embed::Embedder;
-use brainiac_core::fusion::reciprocal_rank_fusion;
+use brainiac_core::fusion::{
+    query_is_identifier_heavy, reciprocal_rank_fusion, weighted_reciprocal_rank_fusion,
+};
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
 use brainiac_core::{Memory, MemoryStatus};
 use chrono::{DateTime, Utc};
@@ -33,6 +35,14 @@ const GRAPH_ANCHOR_TOP: usize = 10;
 const GRAPH_EXTRA_MEMORIES: i64 = 10;
 const GRAPH_HOPS: u8 = 2;
 const RRF_K: f64 = 60.0;
+
+// Fusion weights for identifier-heavy queries (repo/service names, dotted
+// paths, error codes): exact lexical matches should lead, so the FTS list
+// pulls harder than the vector list. Plain queries bypass these entirely and
+// use unweighted RRF — byte-identical to prior behavior. Order mirrors the
+// `[vector, fts]` list order passed to the fusion.
+const IDENT_VECTOR_WEIGHT: f64 = 1.0;
+const IDENT_FTS_WEIGHT: f64 = 2.0;
 
 /// Metadata narrowing on top of relevance. All fields are conjunctive;
 /// the default filters nothing (beyond the standing `rejected` exclusion).
@@ -201,8 +211,19 @@ pub async fn search(
     let vector_ranked: Vec<Uuid> = vector_hits.iter().map(|(id, _)| *id).collect();
     let fts_ranked: Vec<Uuid> = fts_hits.iter().map(|(id, _)| *id).collect();
 
-    // Stage 3: fusion.
-    let fused = reciprocal_rank_fusion(&[vector_ranked, fts_ranked], RRF_K, FUSED_POOL);
+    // Stage 3: fusion. Identifier-heavy queries bias toward the lexical list;
+    // plain queries use unweighted RRF (byte-identical to prior behavior).
+    let lists = [vector_ranked, fts_ranked];
+    let fused = if query_is_identifier_heavy(&req.query) {
+        weighted_reciprocal_rank_fusion(
+            &lists,
+            &[IDENT_VECTOR_WEIGHT, IDENT_FTS_WEIGHT],
+            RRF_K,
+            FUSED_POOL,
+        )
+    } else {
+        reciprocal_rank_fusion(&lists, RRF_K, FUSED_POOL)
+    };
     let fused_ids: Vec<Uuid> = fused.iter().map(|(id, _)| *id).collect();
     let fused_score: std::collections::HashMap<Uuid, f64> = fused.iter().cloned().collect();
 

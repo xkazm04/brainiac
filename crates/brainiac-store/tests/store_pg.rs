@@ -7,8 +7,9 @@
 //! - The pgvector scan and FTS scan inherit RLS — no leak at the SQL layer.
 //! - Queue: claim invisibility, crash-redelivery, dead-lettering.
 
+use brainiac_core::embed::{DeterministicEmbedder, Embedder};
 use brainiac_core::{MemoryKind, MemoryStatus, Principal, Visibility};
-use brainiac_store::{entities, feedback, memories, orgs, queue, Store};
+use brainiac_store::{entities, feedback, memories, orgs, queue, retrieval, Store};
 use uuid::Uuid;
 
 fn database_url() -> Option<String> {
@@ -255,6 +256,77 @@ async fn rls_visibility_matrix_and_search_leaks() {
     assert!(
         visible.is_empty(),
         "private row visible to non-owner teammate"
+    );
+}
+
+#[tokio::test]
+async fn identifier_query_ranks_exact_match_first() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await; // org / teams / users
+    let p = pay_dev();
+    let embedder = DeterministicEmbedder::default();
+
+    // Two org-visible memories: one carries the exact identifier, the other is
+    // about the same topic (parsing/validation) without the literal token.
+    let exact = "the zeta-parser-9000 service validates inbound payment schemas";
+    let distractor = "our parser service validates inbound payment message shapes";
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let mk = |id: u8, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+    };
+    memories::insert(c, &mk(160, exact)).await.expect("m160");
+    memories::insert(c, &mk(161, distractor))
+        .await
+        .expect("m161");
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    memories::upsert_embedding(c, uuid(160), ver, &embedder.embed_sync(exact))
+        .await
+        .expect("e160");
+    memories::upsert_embedding(c, uuid(161), ver, &embedder.embed_sync(distractor))
+        .await
+        .expect("e161");
+    // Must commit before search: the candidate retrievers run on separate
+    // pooled connections and would not see this tx's uncommitted rows.
+    tx.commit().await.expect("commit");
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let hits = retrieval::search(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        &retrieval::RetrievalRequest {
+            query: "zeta-parser-9000".into(),
+            k: 10,
+            as_of: None,
+            filters: Default::default(),
+        },
+    )
+    .await
+    .expect("search");
+    assert!(
+        !hits.is_empty() && hits[0].memory.id == uuid(160),
+        "exact identifier match must rank first, got {:?}",
+        hits.iter().map(|h| h.memory.id).collect::<Vec<_>>()
     );
 }
 
