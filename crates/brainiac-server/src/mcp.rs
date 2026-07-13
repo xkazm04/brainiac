@@ -173,6 +173,17 @@ fn tool_definitions() -> Value {
             }
         },
         {
+            "name": "knowledge_propose",
+            "description": "Nominate a raw or candidate memory for promotion to the next status tier. A maintainer of the owning team reviews it — nothing becomes canonical without a human. Use after memory_add once you believe a captured learning deserves org-wide standing.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memory_id": { "type": "string", "description": "The memory id (memory:<uuid> citations or search results)" }
+                },
+                "required": ["memory_id"]
+            }
+        },
+        {
             "name": "memory_feedback",
             "description": "Report how a retrieved memory held up in practice: helpful (it was right and useful), wrong (factually incorrect), or outdated (was true, no longer is). This closes the retrieval loop — verdicts drive ranking and re-verification.",
             "inputSchema": {
@@ -204,6 +215,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, String> {
         "memory_add" => memory_add(state, &args).await,
         "entity_lookup" => entity_lookup(state, &args).await,
         "memory_feedback" => memory_feedback(state, &args).await,
+        "knowledge_propose" => knowledge_propose(state, &args).await,
         other => return Err(format!("unknown tool: {other}")),
     };
 
@@ -352,6 +364,66 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value> {
         "source_id": source_id,
         "job_id": job_id,
         "note": "queued for extraction; it becomes searchable after the pipeline runs and is subject to review before promotion"
+    }))
+}
+
+async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value> {
+    use sqlx::Row;
+    let memory_id: Uuid = args
+        .get("memory_id")
+        .and_then(|v| v.as_str())
+        .context("memory_id is required")?
+        .parse()
+        .context("memory_id must be a UUID")?;
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    // Visibility gate under the caller's RLS — proposing a memory you can't
+    // read is refused as not-found (no existence oracle).
+    let row = sqlx::query("SELECT status::text AS status FROM memories WHERE id = $1")
+        .bind(memory_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .context("memory not found")?;
+    let status: String = row.get("status");
+    let (from, to) = match status.as_str() {
+        "raw" => (
+            brainiac_core::MemoryStatus::Raw,
+            brainiac_core::MemoryStatus::Candidate,
+        ),
+        "candidate" => (
+            brainiac_core::MemoryStatus::Candidate,
+            brainiac_core::MemoryStatus::Canonical,
+        ),
+        other => {
+            anyhow::bail!("only raw or candidate memories can be proposed (this one is {other})")
+        }
+    };
+    let pending = sqlx::query(
+        "SELECT 1 FROM promotions
+         WHERE memory_id = $1 AND policy_decision = 'needs_review' AND reviewed_at IS NULL",
+    )
+    .bind(memory_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    anyhow::ensure!(pending.is_none(), "already awaiting review");
+
+    brainiac_store::governance::insert_promotion(
+        &mut tx,
+        state.principal.org_id,
+        memory_id,
+        from,
+        to,
+        brainiac_core::PolicyDecision::NeedsReview,
+        "mcp.knowledge_propose",
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(json!({
+        "proposed": true,
+        "memory_id": memory_id,
+        "from_status": from.as_str(),
+        "to_status": to.as_str(),
+        "review": "a maintainer of the owning team must approve",
     }))
 }
 

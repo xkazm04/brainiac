@@ -91,6 +91,7 @@ async fn mcp_handshake_and_tools() {
             "memory_context",
             "memory_add",
             "entity_lookup",
+            "knowledge_propose",
             "memory_feedback"
         ]
     );
@@ -243,7 +244,10 @@ async fn mcp_handshake_and_tools() {
     assert_eq!(rated["feedback"]["outdated"], 1);
     assert_eq!(rated["feedback"]["disputed"], true);
     assert!(
-        rated["warning"].as_str().expect("warning").contains("re-verified"),
+        rated["warning"]
+            .as_str()
+            .expect("warning")
+            .contains("re-verified"),
         "a disputed memory must warn the agent reading it"
     );
 
@@ -283,8 +287,90 @@ async fn mcp_handshake_and_tools() {
         .expect("text")
         .contains("not found"));
 
+    // knowledge_propose: a raw data-team memory the analyst CAN read gets a
+    // needs_review promotion row; re-proposing is refused; an invisible
+    // memory reads as not-found (no oracle).
+    let raw_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+         VALUES ($1, $2, $3, 'team', 'raw', 'howto',
+                 'raw: rotate the feast serving cache before schema bumps')",
+    )
+    .bind(raw_id)
+    .bind(stable_uuid(&fx.org.org))
+    .bind(stable_uuid("team-data"))
+    .execute(&admin)
+    .await
+    .expect("raw memory");
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            12,
+            "tools/call",
+            json!({
+                "name": "knowledge_propose",
+                "arguments": { "memory_id": raw_id.to_string() }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], false, "propose failed: {r}");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["proposed"], true);
+    assert_eq!(payload["from_status"], "raw");
+    assert_eq!(payload["to_status"], "candidate");
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM promotions
+         WHERE memory_id = $1 AND policy_decision = 'needs_review' AND reviewed_at IS NULL",
+    )
+    .bind(raw_id)
+    .fetch_one(&admin)
+    .await
+    .expect("count");
+    assert_eq!(pending, 1, "one review-queue row per proposal");
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            13,
+            "tools/call",
+            json!({
+                "name": "knowledge_propose",
+                "arguments": { "memory_id": raw_id.to_string() }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], true);
+    assert!(r["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .contains("already awaiting review"));
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            14,
+            "tools/call",
+            json!({
+                "name": "knowledge_propose",
+                "arguments": { "memory_id": stable_uuid("mem-pay-0055").to_string() }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], true);
+    assert!(r["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .contains("not found"));
+
     // unknown method → error
-    let r = handle_message(&state, &rpc(11, "resources/list", json!({})))
+    let r = handle_message(&state, &rpc(15, "resources/list", json!({})))
         .await
         .expect("response");
     assert!(r["error"]["message"]
