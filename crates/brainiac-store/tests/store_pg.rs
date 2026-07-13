@@ -955,6 +955,126 @@ async fn queue_reaps_crash_poison() {
     let _ = &ctx.admin;
 }
 
+/// Direction 2: per-org fair claiming. Org A floods the queue with 100 jobs,
+/// then org B enqueues a single job afterwards. Under the old strict-FIFO
+/// (ORDER BY id) claim, org B would wait behind all 100 of org A's jobs. Fair
+/// claiming ranks per org, so org B's one job rides in the FIRST claimed batch —
+/// while FIFO WITHIN org A is still preserved.
+#[tokio::test]
+async fn queue_fair_claiming_interleaves_orgs() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    let pool = ctx.store.pool();
+
+    let org_a = "11111111-1111-1111-1111-111111111111";
+    let org_b = "22222222-2222-2222-2222-222222222222";
+
+    // Org A floods 100 jobs first, then org B enqueues exactly one.
+    let mut a_ids = Vec::new();
+    for i in 0..100 {
+        let id = queue::send(
+            pool,
+            "fair",
+            &serde_json::json!({"org_id": org_a, "seq": i}),
+        )
+        .await
+        .expect("send a");
+        a_ids.push(id);
+    }
+    let b_id = queue::send(pool, "fair", &serde_json::json!({"org_id": org_b}))
+        .await
+        .expect("send b");
+
+    // First claimed batch of 10.
+    let batch = queue::read(pool, "fair", 10, 30).await.expect("read");
+    let claimed_ids: Vec<i64> = batch.iter().map(|j| j.id).collect();
+    assert!(
+        claimed_ids.contains(&b_id),
+        "org B's job must ride in the FIRST batch, not queue behind org A's flood: {claimed_ids:?}"
+    );
+
+    // Within-org FIFO preserved: fairness only reorders ACROSS orgs — the org A
+    // jobs that got claimed are exactly its OLDEST (lowest-id) ones, never a
+    // later job jumping ahead of an earlier same-org one. (RETURNING order from
+    // an UPDATE is unspecified, so compare the claimed SET, sorted.)
+    let mut claimed_a: Vec<i64> = batch
+        .iter()
+        .filter(|j| j.payload["org_id"] == org_a)
+        .map(|j| j.id)
+        .collect();
+    claimed_a.sort();
+    let mut oldest_a = a_ids.clone();
+    oldest_a.sort();
+    oldest_a.truncate(claimed_a.len());
+    assert_eq!(
+        claimed_a, oldest_a,
+        "org A's claimed jobs are its oldest N, in FIFO id order (no later job jumps ahead)"
+    );
+    let oldest_a_id = a_ids.iter().min().copied().expect("org A has jobs");
+    assert!(
+        claimed_a.contains(&oldest_a_id),
+        "org A's very oldest job is among the first claimed"
+    );
+
+    let _ = &ctx.admin;
+}
+
+/// Direction 2: the fair-claiming rewrite keeps FOR UPDATE SKIP LOCKED correct —
+/// two workers reading the same queue at the same instant must never both claim
+/// the same job. Fire many concurrent readers at a small pool of jobs and assert
+/// each job is claimed by exactly one reader.
+#[tokio::test]
+async fn queue_concurrent_readers_never_double_claim() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    let pool = ctx.store.pool();
+
+    // A mix of orgs so the ranking subquery is exercised, not just one bucket.
+    let mut ids = std::collections::HashSet::new();
+    for i in 0..40 {
+        let org = format!("org-{}", i % 4);
+        let id = queue::send(pool, "race", &serde_json::json!({"org_id": org, "n": i}))
+            .await
+            .expect("send");
+        ids.insert(id);
+    }
+
+    // Eight readers claim concurrently; SKIP LOCKED must partition the jobs.
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let pool = pool.clone();
+        handles.push(tokio::spawn(async move {
+            let mut claimed = Vec::new();
+            loop {
+                let jobs = queue::read(&pool, "race", 5, 30).await.expect("read");
+                if jobs.is_empty() {
+                    break;
+                }
+                claimed.extend(jobs.into_iter().map(|j| j.id));
+            }
+            claimed
+        }));
+    }
+
+    let mut all_claimed = Vec::new();
+    for h in handles {
+        all_claimed.extend(h.await.expect("join"));
+    }
+
+    // Every job claimed exactly once: no duplicates, none lost.
+    let unique: std::collections::HashSet<i64> = all_claimed.iter().copied().collect();
+    assert_eq!(
+        all_claimed.len(),
+        unique.len(),
+        "no job claimed twice under concurrent readers (double-claim)"
+    );
+    assert_eq!(unique, ids, "every job claimed exactly once, none lost");
+
+    let _ = &ctx.admin;
+}
+
 #[tokio::test]
 async fn ttl_expiring_queue_and_reverification() {
     let Some((ctx, _guard)) = setup().await else {

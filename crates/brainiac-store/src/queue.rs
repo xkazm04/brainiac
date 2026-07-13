@@ -82,6 +82,35 @@ pub async fn send(pool: &PgPool, queue: &str, payload: &Value) -> Result<i64> {
 /// under budget, so a deterministic crasher terminates instead of looping
 /// forever. Reap + claim run in one transaction so a claimed job can never
 /// slip past the ceiling.
+///
+/// Per-org fair claiming (Direction 2): the claim does NOT take jobs in strict
+/// global id order — that let one org's flood of 100 transcripts head-of-line
+/// block every other tenant until it drained. Instead ready jobs are ranked
+/// *per org* (`ROW_NUMBER() OVER (PARTITION BY payload->>'org_id' ORDER BY id)`)
+/// and claimed by `(rank, id)`, so every org's head job is served before any
+/// org's second — a round-robin across tenants — while FIFO **within** an org
+/// is preserved (rank follows id). Jobs with no `org_id` in their payload share
+/// one bucket (`payload->>'org_id'` is NULL and all NULLs collapse into a single
+/// partition), FIFO among themselves.
+///
+/// Locking: `FOR UPDATE SKIP LOCKED` cannot sit in the same query level as the
+/// `ROW_NUMBER()` window, so this is a two-step within one statement — an inner
+/// ranking subquery picks the fair top-`n` ids (no lock), then a wrapping
+/// `SELECT ... FOR UPDATE SKIP LOCKED` re-selects exactly those ids by primary
+/// key and takes the row locks, skipping any a concurrent worker already holds.
+/// Correctness: two workers may compute overlapping candidate id sets, but the
+/// row lock is the arbiter — only one can lock a given row; the other SKIP-LOCKs
+/// it. So no job is ever double-claimed. The only cost is that when a candidate
+/// is already locked this worker claims fewer than `n` that round (it simply
+/// retries next tick) — never a correctness issue.
+///
+/// Performance: the ranking subquery scans the ready set of the queue each call.
+/// At current scale (thousands of ready jobs at most) this is trivial and the
+/// `idx_queue_jobs_ready(queue_name, visible_at)` index still serves the
+/// `WHERE queue_name = $1 AND visible_at <= now()` predicate that bounds the
+/// scan; the per-org ROW_NUMBER sort is over that already-filtered set. No new
+/// index is warranted until the ready backlog grows large enough for the sort
+/// to show in EXPLAIN — see migration notes.
 pub async fn read(pool: &PgPool, queue: &str, n: i64, visibility_secs: i64) -> Result<Vec<Job>> {
     let mut tx = pool.begin().await?;
 
@@ -108,10 +137,30 @@ pub async fn read(pool: &PgPool, queue: &str, n: i64, visibility_secs: i64) -> R
          SET visible_at = now() + make_interval(secs => $3::double precision),
              attempts = j.attempts + 1
          WHERE j.id IN (
+             -- Lock exactly the fair top-n ids picked by the inner ranking.
+             -- FOR UPDATE SKIP LOCKED lives here (a level with no window fn);
+             -- it is the arbiter that prevents concurrent double-claims. The
+             -- readiness predicate (visible_at/attempts) is RE-STATED here, not
+             -- only in the inner ranking: the ranking runs unlocked, so between
+             -- ranking and locking another worker may have claimed a candidate
+             -- and moved its visible_at into the future. Postgres re-checks this
+             -- WHERE against the freshly-locked row version (EvalPlanQual), so
+             -- the now-invisible row is dropped instead of being double-claimed.
              SELECT id FROM queue.jobs
              WHERE queue_name = $1 AND visible_at <= now() AND attempts < $4
+               AND id IN (
+                 SELECT id FROM (
+                     SELECT id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY payload->>'org_id' ORDER BY id
+                            ) AS org_rank
+                     FROM queue.jobs
+                     WHERE queue_name = $1 AND visible_at <= now() AND attempts < $4
+                 ) ranked
+                 ORDER BY org_rank, id
+                 LIMIT $2
+             )
              ORDER BY id
-             LIMIT $2
              FOR UPDATE SKIP LOCKED
          )
          RETURNING j.id, j.queue_name, j.payload, j.attempts",
