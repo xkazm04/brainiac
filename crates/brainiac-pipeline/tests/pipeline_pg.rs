@@ -193,7 +193,11 @@ async fn full_pipeline_over_seed_transcripts() {
             .await
             .expect("enqueue");
     }
-    let stats = worker::tick(&store, &provider, &embedder, version, 32)
+    let cfg = worker::WorkerConfig {
+        batch: 32,
+        ..Default::default()
+    };
+    let stats = worker::tick(&store, &provider, &embedder, version, &cfg)
         .await
         .expect("tick");
 
@@ -487,7 +491,11 @@ async fn failed_job_records_a_failed_run_row() {
     worker::enqueue_source(&store, org_id, source_id)
         .await
         .expect("enqueue");
-    let stats = worker::tick(&store, &provider, &embedder, version, 4)
+    let cfg = worker::WorkerConfig {
+        batch: 4,
+        ..Default::default()
+    };
+    let stats = worker::tick(&store, &provider, &embedder, version, &cfg)
         .await
         .expect("tick");
     assert_eq!(stats.jobs, 1);
@@ -1474,5 +1482,129 @@ async fn extraction_firewall_types_entities_and_relations() {
         relations,
         vec!["uses".to_string()],
         "only the canonical relation is stored, got {relations:?}"
+    );
+}
+
+/// Direction 1: jobs within one claimed batch process CONCURRENTLY, not
+/// sequentially. Proven with a ChatProvider that records the maximum number of
+/// simultaneously in-flight `complete()` calls: because a single job's LLM
+/// calls are awaited one-at-a-time, a max in-flight > 1 can only come from
+/// multiple JOBS overlapping. A pre-Direction-1 sequential tick would peak at 1.
+#[tokio::test]
+async fn batch_jobs_process_concurrently() {
+    use brainiac_gateway::{ChatProvider, ChatRequest, ChatResponse};
+    use brainiac_store::{memories, orgs};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    // Provider that returns an empty extraction quickly but holds each call open
+    // long enough to overlap with siblings, tracking peak concurrency.
+    struct CountingProvider {
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl ChatProvider for CountingProvider {
+        fn model_ref(&self) -> String {
+            "counting:mock".into()
+        }
+        async fn complete(&self, _req: &ChatRequest) -> anyhow::Result<ChatResponse> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_in_flight.fetch_max(now, Ordering::SeqCst);
+            // Long enough that a sequential drain could not hide the overlap.
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            Ok(ChatResponse {
+                // Empty extraction → no entities/memories → no downstream
+                // provider calls: one complete() per job, cleanly countable.
+                text: r#"{"memories":[]}"#.to_string(),
+                model_ref: self.model_ref(),
+                input_tokens: 1,
+                output_tokens: 1,
+            })
+        }
+    }
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([71u8; 16]);
+    let team = Uuid::from_bytes([72u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    let counter = Arc::new(CountingProvider {
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+    });
+    let provider = brainiac_gateway::ProviderRouter::single(counter.clone());
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    // Six sources, six jobs — enough to exercise a concurrency of 4.
+    let mut sources = Vec::new();
+    for i in 0..6u8 {
+        let sid = Uuid::from_bytes([80 + i; 16]);
+        brainiac_store::governance::insert_source(
+            &mut tx,
+            sid,
+            org_id,
+            Some(team),
+            "session_transcript",
+            "a short transcript",
+            None,
+        )
+        .await
+        .expect("source");
+        sources.push(sid);
+    }
+    tx.commit().await.expect("commit");
+
+    for sid in &sources {
+        worker::enqueue_source(&store, org_id, *sid)
+            .await
+            .expect("enqueue");
+    }
+
+    let cfg = worker::WorkerConfig {
+        concurrency: 4,
+        batch: 6,
+        ..Default::default()
+    };
+    let stats = worker::tick(&store, &provider, &embedder, version, &cfg)
+        .await
+        .expect("tick");
+    assert_eq!(stats.jobs, 6, "every job processed");
+
+    let peak = counter.max_in_flight.load(Ordering::SeqCst);
+    assert!(
+        peak > 1,
+        "jobs must overlap in flight (peak = {peak}); sequential drain would be 1"
+    );
+    assert!(
+        peak <= 4,
+        "concurrency bound respected (peak = {peak}, limit = 4)"
+    );
+
+    // Queue fully drained (every job acked despite running concurrently).
+    assert_eq!(
+        brainiac_store::queue::depth(store.pool(), worker::INGEST_QUEUE)
+            .await
+            .expect("depth"),
+        0
     );
 }

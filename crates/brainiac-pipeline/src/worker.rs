@@ -9,17 +9,74 @@ use brainiac_store::{queue, Store};
 use serde_json::json;
 use uuid::Uuid;
 
+use futures::stream::StreamExt;
+
 use crate::policy::PolicyEngine;
 use crate::{contradict, extract, pipeline_principal, resolve};
 
 pub const INGEST_QUEUE: &str = "ingest";
-const VISIBILITY_SECS: i64 = 300;
 
-/// First-retry backoff handed to [`queue::fail`]; it doubles per attempt and is
-/// capped inside the queue (`queue::BACKOFF_CAP_SECS`). A transient failure
-/// retries quickly, a persistent one backs off toward the cap before the
-/// attempt budget dead-letters it.
-const FAIL_BASE_BACKOFF_SECS: i64 = 30;
+/// Tunables for the drain loop. Every field is env-overridable (see
+/// [`WorkerConfig::from_env`]); [`Default`] reproduces the pre-Direction-1
+/// hardcoded behaviour so nothing changes for a caller that doesn't opt in.
+#[derive(Debug, Clone)]
+pub struct WorkerConfig {
+    /// How many jobs from one claimed batch run at once (Direction 1). The
+    /// SKIP-LOCKED claim already makes each job's own transaction independent,
+    /// so this is pure IO-concurrency: while one job awaits an LLM call another
+    /// makes progress. Default 4 — a middle ground that overlaps the LLM-bound
+    /// stalls of a handful of jobs without opening a connection per job (each
+    /// in-flight job holds one pool connection for its chain).
+    pub concurrency: usize,
+    /// Jobs claimed per [`queue::read`] (one visibility window). Default 8.
+    pub batch: i64,
+    /// Visibility window a claimed job is hidden for before redelivery.
+    /// Default 300s — must comfortably exceed the slowest full chain.
+    pub visibility_secs: i64,
+    /// First-retry backoff handed to [`queue::fail`]; doubles per attempt and is
+    /// capped inside the queue (`queue::BACKOFF_CAP_SECS`). Default 30s.
+    pub backoff_base_secs: i64,
+}
+
+pub const DEFAULT_CONCURRENCY: usize = 4;
+pub const DEFAULT_BATCH: i64 = 8;
+pub const DEFAULT_VISIBILITY_SECS: i64 = 300;
+pub const DEFAULT_BACKOFF_BASE_SECS: i64 = 30;
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            concurrency: DEFAULT_CONCURRENCY,
+            batch: DEFAULT_BATCH,
+            visibility_secs: DEFAULT_VISIBILITY_SECS,
+            backoff_base_secs: DEFAULT_BACKOFF_BASE_SECS,
+        }
+    }
+}
+
+impl WorkerConfig {
+    /// Read overrides from the environment, falling back to [`Default`] for any
+    /// unset/unparseable var:
+    /// - `BRAINIAC_WORKER_CONCURRENCY` (default 4, floored at 1)
+    /// - `BRAINIAC_WORKER_BATCH` (default 8, floored at 1)
+    /// - `BRAINIAC_WORKER_VISIBILITY_SECS` (default 300)
+    /// - `BRAINIAC_WORKER_BACKOFF_BASE_SECS` (default 30)
+    pub fn from_env() -> Self {
+        fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
+            std::env::var(key)
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(default)
+        }
+        let d = Self::default();
+        Self {
+            concurrency: env_parse("BRAINIAC_WORKER_CONCURRENCY", d.concurrency).max(1),
+            batch: env_parse("BRAINIAC_WORKER_BATCH", d.batch).max(1),
+            visibility_secs: env_parse("BRAINIAC_WORKER_VISIBILITY_SECS", d.visibility_secs),
+            backoff_base_secs: env_parse("BRAINIAC_WORKER_BACKOFF_BASE_SECS", d.backoff_base_secs),
+        }
+    }
+}
 
 /// Enqueue a source for the pipeline.
 pub async fn enqueue_source(store: &Store, org_id: Uuid, source_id: Uuid) -> Result<i64> {
@@ -84,78 +141,47 @@ fn summarize_error(e: &anyhow::Error) -> String {
     }
 }
 
-/// Process up to `batch` ingest jobs. Returns per-tick stats; callers loop.
+/// Process up to `cfg.batch` ingest jobs, up to `cfg.concurrency` at a time.
+/// Returns per-tick stats; callers loop.
+///
+/// Concurrency (Direction 1): the claimed batch is drained with
+/// `buffer_unordered`, so `cfg.concurrency` jobs are in flight at once. This is
+/// IO-concurrency on the single worker task — while one job awaits an LLM call
+/// or a DB round-trip, others make progress — which is exactly the bottleneck
+/// (the chain is LLM-bound, not CPU-bound). Per-job isolation is total: each job
+/// owns its own transaction ([`process_job`] opens a fresh `worker_tx`) and the
+/// SKIP-LOCKED claim already guaranteed no two jobs share a row, so one job's
+/// `Err` → its own `fail()` and never touches another's transaction. Only an
+/// *infrastructure* failure (a queue/DB write in the ack path) propagates out of
+/// a job future and aborts the tick — the same jobs would fail the old
+/// sequential loop's `?` too.
 pub async fn tick(
     store: &Store,
     providers: &ProviderRouter,
     embedder: &dyn Embedder,
     embedding_version: i32,
-    batch: i64,
+    cfg: &WorkerConfig,
 ) -> Result<TickStats> {
+    let jobs = queue::read(store.pool(), INGEST_QUEUE, cfg.batch, cfg.visibility_secs).await?;
+    let concurrency = cfg.concurrency.max(1);
+
+    // Each job future resolves to Result<RunStats>: Ok carries what the run
+    // produced (folded below), Err is an infrastructure failure that aborts the
+    // whole tick. A job's *own* processing error is handled inside the future
+    // (recorded + fail()) and yields Ok(RunStats) — it never aborts the tick or
+    // disturbs a sibling. Ordering of completion is irrelevant: the fold is
+    // commutative and TickStats is built only here, after every future settles.
+    let outcomes: Vec<Result<RunStats>> =
+        futures::stream::iter(jobs.into_iter().map(|job| {
+            process_claimed_job(store, providers, embedder, embedding_version, cfg, job)
+        }))
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
     let mut stats = TickStats::default();
-    let jobs = queue::read(store.pool(), INGEST_QUEUE, batch, VISIBILITY_SECS).await?;
-    for job in jobs {
-        // Identity + run id up front: a pipeline_runs row is written for this
-        // source whether the job succeeds or fails, and it must be org-scoped.
-        let parsed = parse_job_ids(&job);
-        let run_id = Uuid::new_v4();
-        let started_at = chrono::Utc::now();
-        let mut run = RunStats::default();
-
-        match parsed {
-            Ok((org_id, source_id)) => {
-                match process_job(
-                    store,
-                    providers,
-                    embedder,
-                    embedding_version,
-                    org_id,
-                    source_id,
-                    run_id,
-                    &mut run,
-                )
-                .await
-                {
-                    Ok(()) => {
-                        // Run record written AFTER the job's own transaction
-                        // commits (see write_pipeline_run docs for the atomicity
-                        // choice): the memories exist and carry this run_id via
-                        // provenance, and now the run row records the outcome.
-                        write_pipeline_run(
-                            store, org_id, source_id, run_id, started_at, "ok", None, &run,
-                        )
-                        .await?;
-                        queue::complete(store.pool(), &job).await?;
-                    }
-                    Err(e) => {
-                        tracing::error!(job = job.id, error = %e, "ingest job failed");
-                        // The job tx rolled back (its memories/provenance are
-                        // gone), but we still record a failed run row with the
-                        // error summary — the whole point of writing the row
-                        // outside the job transaction.
-                        write_pipeline_run(
-                            store,
-                            org_id,
-                            source_id,
-                            run_id,
-                            started_at,
-                            "failed",
-                            Some(&summarize_error(&e)),
-                            &run,
-                        )
-                        .await?;
-                        queue::fail(store.pool(), &job, FAIL_BASE_BACKOFF_SECS).await?;
-                    }
-                }
-            }
-            Err(e) => {
-                // Unparseable payload: no org to scope a run row to, so none is
-                // written — just fail the job through the attempt-aware path.
-                tracing::error!(job = job.id, error = %e, "ingest job payload unparseable");
-                queue::fail(store.pool(), &job, FAIL_BASE_BACKOFF_SECS).await?;
-            }
-        }
-
+    for outcome in outcomes {
+        let run = outcome?;
         stats.memories += run.memories;
         stats.auto_promoted += run.auto_promoted;
         stats.needs_review += run.needs_review;
@@ -167,6 +193,81 @@ pub async fn tick(
         stats.jobs += 1;
     }
     Ok(stats)
+}
+
+/// Run one claimed job end-to-end and ack it. Returns the run's stats on
+/// success OR on an adjudicated job failure (both are normal tick outcomes);
+/// returns `Err` only when the ack-path infrastructure (run-row write, queue
+/// complete/fail) itself fails, which aborts the tick.
+async fn process_claimed_job(
+    store: &Store,
+    providers: &ProviderRouter,
+    embedder: &dyn Embedder,
+    embedding_version: i32,
+    cfg: &WorkerConfig,
+    job: queue::Job,
+) -> Result<RunStats> {
+    // Identity + run id up front: a pipeline_runs row is written for this
+    // source whether the job succeeds or fails, and it must be org-scoped.
+    let run_id = Uuid::new_v4();
+    let started_at = chrono::Utc::now();
+    let mut run = RunStats::default();
+
+    match parse_job_ids(&job) {
+        Ok((org_id, source_id)) => {
+            match process_job(
+                store,
+                providers,
+                embedder,
+                embedding_version,
+                org_id,
+                source_id,
+                run_id,
+                &mut run,
+            )
+            .await
+            {
+                Ok(()) => {
+                    // Run record written AFTER the job's own transaction
+                    // commits (see write_pipeline_run docs for the atomicity
+                    // choice): the memories exist and carry this run_id via
+                    // provenance, and now the run row records the outcome.
+                    write_pipeline_run(
+                        store, org_id, source_id, run_id, started_at, "ok", None, &run,
+                    )
+                    .await?;
+                    queue::complete(store.pool(), &job).await?;
+                }
+                Err(e) => {
+                    tracing::error!(job = job.id, error = %e, "ingest job failed");
+                    // The job tx rolled back (its memories/provenance are
+                    // gone), but we still record a failed run row with the
+                    // error summary — the whole point of writing the row
+                    // outside the job transaction.
+                    write_pipeline_run(
+                        store,
+                        org_id,
+                        source_id,
+                        run_id,
+                        started_at,
+                        "failed",
+                        Some(&summarize_error(&e)),
+                        &run,
+                    )
+                    .await?;
+                    queue::fail(store.pool(), &job, cfg.backoff_base_secs).await?;
+                }
+            }
+        }
+        Err(e) => {
+            // Unparseable payload: no org to scope a run row to, so none is
+            // written — just fail the job through the attempt-aware path.
+            tracing::error!(job = job.id, error = %e, "ingest job payload unparseable");
+            queue::fail(store.pool(), &job, cfg.backoff_base_secs).await?;
+        }
+    }
+
+    Ok(run)
 }
 
 /// Write the pipeline_runs record for one processed source.

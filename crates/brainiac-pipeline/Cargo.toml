@@ -14,11 +14,13 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
+futures = { workspace = true }
 tracing = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]
 brainiac-fixtures = { workspace = true }
+async-trait = { workspace = true }
 
 [lints]
 workspace = true

@@ -353,8 +353,14 @@ async fn worker(mock: bool) -> Result<()> {
     worker_loop(store, embedder, mock, shutdown_rx).await
 }
 
-/// Idle poll interval when the queue is empty.
-const WORKER_IDLE_SLEEP: std::time::Duration = std::time::Duration::from_secs(2);
+/// Adaptive idle polling bounds (Direction 1): when the queue is empty the loop
+/// sleeps `IDLE_MIN` and doubles the wait per consecutive empty tick up to
+/// `IDLE_MAX`, resetting to `IDLE_MIN` the moment a tick does work. This keeps
+/// latency low when jobs are flowing (a freshly-enqueued source is picked up in
+/// ~500ms) while an idle worker settles to one poll every few seconds instead
+/// of hammering the DB twice a second forever.
+const WORKER_IDLE_MIN: std::time::Duration = std::time::Duration::from_millis(500);
+const WORKER_IDLE_MAX: std::time::Duration = std::time::Duration::from_secs(5);
 /// Self-heal backoff bounds for a failing tick (DB hiccup, provider outage):
 /// first retry waits BASE, doubling per consecutive failure up to CAP.
 const WORKER_SELFHEAL_BASE: std::time::Duration = std::time::Duration::from_secs(1);
@@ -418,24 +424,30 @@ async fn worker_loop(
         v
     };
 
-    tracing::info!(providers = %providers.describe(), embedder = embedder.model_name(), "brainiac worker started");
+    let cfg = brainiac_pipeline::worker::WorkerConfig::from_env();
+    tracing::info!(providers = %providers.describe(), embedder = embedder.model_name(), ?cfg, "brainiac worker started");
     let mut consecutive_failures: u32 = 0;
+    let mut idle_backoff = WORKER_IDLE_MIN;
     loop {
         if *shutdown.borrow() {
             break;
         }
         // Let the in-flight batch run to completion before honouring shutdown —
         // we don't cancel a tick mid-source, we just stop starting new ones.
-        match brainiac_pipeline::worker::tick(&store, &providers, embedder.as_ref(), version, 8)
+        match brainiac_pipeline::worker::tick(&store, &providers, embedder.as_ref(), version, &cfg)
             .await
         {
             Ok(stats) => {
                 consecutive_failures = 0;
                 if stats.jobs == 0 {
-                    if sleep_or_shutdown(&mut shutdown, WORKER_IDLE_SLEEP).await {
+                    if sleep_or_shutdown(&mut shutdown, idle_backoff).await {
                         break;
                     }
+                    // Back off geometrically while the queue stays empty.
+                    idle_backoff = (idle_backoff * 2).min(WORKER_IDLE_MAX);
                 } else {
+                    // Work found — snap back to a tight poll for low latency.
+                    idle_backoff = WORKER_IDLE_MIN;
                     tracing::info!(?stats, "pipeline tick");
                 }
             }
