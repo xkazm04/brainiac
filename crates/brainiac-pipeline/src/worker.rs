@@ -104,12 +104,13 @@ async fn process_job(
     // resolve every NEW entity this source introduced
     for entity_id in &extracted.entities_created {
         use sqlx::Row;
-        let row = sqlx::query("SELECT name, kind FROM entities WHERE id = $1")
+        let row = sqlx::query("SELECT name, kind, aliases FROM entities WHERE id = $1")
             .bind(entity_id)
             .fetch_one(&mut *tx)
             .await?;
         let name: String = row.get("name");
         let kind: String = row.get("kind");
+        let aliases: Vec<String> = row.get("aliases");
         resolve::resolve_entity(
             &mut tx,
             providers.for_stage(Stage::Resolve),
@@ -119,6 +120,7 @@ async fn process_job(
             *entity_id,
             &name,
             &kind,
+            &aliases,
         )
         .await?;
     }

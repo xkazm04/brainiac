@@ -14,6 +14,18 @@ use brainiac_store::Store;
 use serde_json::json;
 use uuid::Uuid;
 
+/// These tests share one database (truncate + seed), so serialize them —
+/// cargo runs test fns in parallel by default, which would let one test's
+/// TRUNCATE tear down another's seed mid-run.
+static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    DB_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
 fn gold_extraction_json(fx: &Fixtures, transcript_id: &str) -> String {
     let t = fx
         .transcripts
@@ -104,6 +116,7 @@ async fn full_pipeline_over_seed_transcripts() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
+    let _guard = db_guard().await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -331,6 +344,7 @@ async fn supersession_serves_only_the_winner() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
+    let _guard = db_guard().await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -490,6 +504,183 @@ async fn supersession_serves_only_the_winner() {
     assert_eq!(audit.get::<String, _>("t"), "deprecated");
     assert_eq!(audit.get::<String, _>("policy_decision"), "approved");
 
+    let _ = &admin;
+}
+
+/// Direction 3: extraction captures surface-form aliases, and resolution
+/// matches them lexically across teams — proven WITHOUT any hand-seeded
+/// alias (the whole point). One team's transcript names "psp-gateway (PSP)";
+/// another team's bare "PSP" then resolves to the same canonical.
+#[tokio::test]
+async fn alias_capture_and_resolution() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_pipeline::{extract, resolve};
+    use brainiac_store::{entities, memories, orgs};
+    use sqlx::Row;
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
+         CASCADE",
+    )
+    .execute(&admin)
+    .await
+    .expect("truncate");
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([5u8; 16]);
+    let team_a = Uuid::from_bytes([6u8; 16]);
+    let team_b = Uuid::from_bytes([7u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // Mock extractor: one memory whose entity declares aliases.
+    let mock = MockProvider::new(|req: &ChatRequest| {
+        if req.system.contains("distill organizational knowledge") {
+            return r#"{"memories":[{"kind":"fact",
+                "content":"psp-gateway owns retry backoff for refunds",
+                "visibility":"team","confidence":0.9,
+                "entities":[{"name":"psp-gateway","kind":"service",
+                    "aliases":["PSP","payment service provider"]}],
+                "relations":[]}]}"#
+                .to_string();
+        }
+        "{}".to_string()
+    });
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team_a, org_id, "payments")
+        .await
+        .expect("team_a");
+    orgs::upsert_team(&mut tx, team_b, org_id, "data")
+        .await
+        .expect("team_b");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let source_id = Uuid::from_bytes([10u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team_a),
+        "session_transcript",
+        "psp-gateway (PSP) owns retry backoff",
+        None,
+    )
+    .await
+    .expect("source");
+
+    // Extraction persists the captured aliases on the raw entity.
+    let stats = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team_a),
+        source_id,
+        "psp-gateway (PSP) owns retry backoff",
+    )
+    .await
+    .expect("extract");
+    let ent_a = *stats.entities_created.first().expect("entity created");
+    let row = sqlx::query("SELECT name, kind, aliases FROM entities WHERE id = $1")
+        .bind(ent_a)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("entity row");
+    let name_a: String = row.get("name");
+    let kind_a: String = row.get("kind");
+    let aliases_a: Vec<String> = row.get("aliases");
+    assert!(
+        aliases_a.iter().any(|a| a == "PSP"),
+        "extraction persisted surface-form aliases: {aliases_a:?}"
+    );
+
+    // Resolve it → bootstraps a canonical that accumulates the aliases.
+    let outcome = resolve::resolve_entity(
+        &mut tx, &mock, &embedder, version, org_id, ent_a, &name_a, &kind_a, &aliases_a,
+    )
+    .await
+    .expect("resolve a");
+    let canonical_a = match outcome {
+        resolve::ResolveOutcome::NewCanonical { canonical_id } => canonical_id,
+        other => panic!("expected NewCanonical, got {other:?}"),
+    };
+    let canon_aliases: Vec<String> =
+        sqlx::query("SELECT aliases FROM canonical_entities WHERE id = $1")
+            .bind(canonical_a)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("canon")
+            .get("aliases");
+    assert!(
+        canon_aliases.iter().any(|a| a == "PSP"),
+        "canonical accumulated the alias: {canon_aliases:?}"
+    );
+
+    // A DIFFERENT team later mentions bare "PSP" — no shared embedding needed,
+    // no fixture seeding: it resolves to the same canonical via the alias.
+    let ent_b = Uuid::from_bytes([20u8; 16]);
+    entities::insert_entity(
+        &mut tx,
+        ent_b,
+        org_id,
+        Some(team_b),
+        "PSP",
+        "service",
+        &[],
+        None,
+    )
+    .await
+    .expect("insert b");
+    let outcome_b = resolve::resolve_entity(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        ent_b,
+        "PSP",
+        "service",
+        &[],
+    )
+    .await
+    .expect("resolve b");
+    match outcome_b {
+        resolve::ResolveOutcome::Linked {
+            canonical_id,
+            method,
+        } => {
+            assert_eq!(canonical_id, canonical_a, "linked to the same canonical");
+            assert_eq!(method, "alias_lexical", "resolved by alias, not embedding");
+        }
+        other => panic!("expected alias-linked, got {other:?}"),
+    }
+
+    // Both raw forms share one canonical — the cross-team bridge is built.
+    let shared: i64 = sqlx::query(
+        "SELECT count(DISTINCT canonical_id) AS n FROM entity_links WHERE entity_id = ANY($1)",
+    )
+    .bind(vec![ent_a, ent_b])
+    .fetch_one(&mut *tx)
+    .await
+    .expect("q")
+    .get("n");
+    assert_eq!(shared, 1, "both forms linked into exactly one canonical");
+
+    tx.commit().await.expect("commit");
     let _ = &admin;
 }
 

@@ -203,6 +203,70 @@ pub async fn list_canonicals(
         .collect())
 }
 
+// ── alias-aware resolution (Direction 3) ────────────────────────────────
+
+/// Exact (case-insensitive) lexical resolution: find a canonical whose name OR
+/// a previously-captured alias matches any of the raw entity's surface forms
+/// (`surface_forms` must already be lowercased). An alias is a curated known
+/// name for the thing, so an exact hit is unambiguous — cheaper and more
+/// precise than embedding similarity, and independent of hand-seeded fixtures.
+/// RLS-scoped to the org via canonical_entities.
+pub async fn find_canonical_by_name_or_alias(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    surface_forms: &[String],
+) -> Result<Option<(Uuid, String)>> {
+    if surface_forms.is_empty() {
+        return Ok(None);
+    }
+    let row = sqlx::query(
+        "SELECT id, kind FROM canonical_entities
+         WHERE org_id = $1
+           AND (
+               lower(name) = ANY($2::text[])
+               OR EXISTS (
+                   SELECT 1 FROM unnest(aliases) al WHERE lower(al) = ANY($2::text[])
+               )
+           )
+         LIMIT 1",
+    )
+    .bind(org_id)
+    .bind(surface_forms)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|r| (r.get::<Uuid, _>("id"), r.get::<String, _>("kind"))))
+}
+
+/// Fold new surface forms into a canonical's alias set (set-union, dedup),
+/// dropping blanks and any form equal to the canonical name — so a canonical
+/// merge accumulates the aliases of every raw form linked into it.
+pub async fn accumulate_canonical_aliases(
+    conn: &mut PgConnection,
+    canonical_id: Uuid,
+    new_aliases: &[String],
+) -> Result<()> {
+    if new_aliases.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE canonical_entities c
+         SET aliases = ARRAY(
+             SELECT DISTINCT a FROM (
+                 SELECT unnest(c.aliases) AS a
+                 UNION
+                 SELECT unnest($2::text[]) AS a
+             ) t
+             WHERE btrim(a) <> '' AND lower(a) <> lower(c.name)
+         )
+         WHERE c.id = $1",
+    )
+    .bind(canonical_id)
+    .bind(new_aliases)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 // ── persisted canonical embeddings (Direction 2) ────────────────────────
 
 /// pgvector text literal ("[1,2,3]"), bound as text and cast with ::vector —

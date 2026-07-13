@@ -47,6 +47,20 @@ pub enum ResolveOutcome {
     NewCanonical { canonical_id: Uuid },
 }
 
+/// Fold this raw form (name + captured aliases) into the canonical's alias set,
+/// so a canonical merge accumulates every surface form linked into it.
+async fn record_aliases(
+    conn: &mut PgConnection,
+    canonical_id: Uuid,
+    entity_name: &str,
+    entity_aliases: &[String],
+) -> Result<()> {
+    let mut all: Vec<String> = Vec::with_capacity(entity_aliases.len() + 1);
+    all.push(entity_name.to_string());
+    all.extend(entity_aliases.iter().cloned());
+    brainiac_store::entities::accumulate_canonical_aliases(conn, canonical_id, &all).await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn resolve_entity(
     conn: &mut PgConnection,
@@ -57,7 +71,30 @@ pub async fn resolve_entity(
     entity_id: Uuid,
     entity_name: &str,
     entity_kind: &str,
+    entity_aliases: &[String],
 ) -> Result<ResolveOutcome> {
+    // Alias-aware lexical fast-path: an exact hit on a canonical name or a
+    // previously-captured alias is unambiguous — link with neither an embedding
+    // round-trip nor a model call. This is what makes cross-team acronyms
+    // ("PSP" ↔ "psp-gateway") resolve without hand-seeded aliases.
+    let surface_forms: Vec<String> = std::iter::once(entity_name.to_string())
+        .chain(entity_aliases.iter().cloned())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if let Some((canonical_id, _kind)) =
+        brainiac_store::entities::find_canonical_by_name_or_alias(conn, org_id, &surface_forms)
+            .await?
+    {
+        brainiac_store::entities::link(conn, entity_id, canonical_id, 1.0, "alias_lexical", None)
+            .await?;
+        record_aliases(conn, canonical_id, entity_name, entity_aliases).await?;
+        return Ok(ResolveOutcome::Linked {
+            canonical_id,
+            method: "alias_lexical",
+        });
+    }
+
     let query_vec = embedder.embed(entity_name).await?;
 
     // Lazy backfill: any canonical without a persisted embedding for this
@@ -93,6 +130,7 @@ pub async fn resolve_entity(
                 None,
             )
             .await?;
+            record_aliases(conn, canonical_id, entity_name, entity_aliases).await?;
             Ok(ResolveOutcome::Linked {
                 canonical_id,
                 method: "embedding_block",
@@ -121,6 +159,7 @@ pub async fn resolve_entity(
                     None,
                 )
                 .await?;
+                record_aliases(conn, canonical_id, entity_name, entity_aliases).await?;
                 Ok(ResolveOutcome::Linked {
                     canonical_id,
                     method: "llm_adjudicated",
@@ -153,6 +192,9 @@ pub async fn resolve_entity(
                 &query_vec,
             )
             .await?;
+            // Seed the canonical's alias set with this form's captured aliases
+            // (its name is already the canonical name).
+            record_aliases(conn, canonical_id, entity_name, entity_aliases).await?;
             brainiac_store::entities::link(
                 conn,
                 entity_id,

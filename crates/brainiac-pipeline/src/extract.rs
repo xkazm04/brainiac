@@ -23,13 +23,15 @@ Respond with ONLY a JSON object:
   \"content\":\"one self-contained natural-language statement\",
   \"visibility\":\"team|org\",
   \"confidence\":0.0,
-  \"entities\":[{\"name\":\"...\",\"kind\":\"service|repo|tech|feature|concept|team\"}],
+  \"entities\":[{\"name\":\"...\",\"kind\":\"service|repo|tech|feature|concept|team\",\"aliases\":[\"...\"]}],
   \"relations\":[{\"src\":\"entity name\",\"rel\":\"uses|depends_on|owns|deprecates|relates_to\",\"dst\":\"entity name\"}]
 }]}
 
 Rules: entity names verbatim as the team says them (do NOT normalize across teams);
-relations only between listed entities; confidence reflects how explicitly the
-transcript supports the statement.";
+aliases are OTHER surface forms the transcript uses for that SAME entity (acronyms,
+short names, spelled-out forms) — omit or leave [] when the entity is named only one
+way, never invent synonyms; relations only between listed entities; confidence
+reflects how explicitly the transcript supports the statement.";
 
 #[derive(Debug, Deserialize)]
 struct ExtractionOutput {
@@ -56,6 +58,26 @@ struct ExtractedEntity {
     name: String,
     #[serde(default = "default_entity_kind")]
     kind: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+}
+
+impl ExtractedEntity {
+    /// Surface forms to store as aliases: trimmed, non-empty, de-duplicated,
+    /// and never the entity's own name (that is the canonical anchor).
+    fn clean_aliases(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for a in &self.aliases {
+            let a = a.trim();
+            if a.is_empty() || a.eq_ignore_ascii_case(self.name.trim()) {
+                continue;
+            }
+            if !out.iter().any(|e: &String| e.eq_ignore_ascii_case(a)) {
+                out.push(a.to_string());
+            }
+        }
+        out
+    }
 }
 
 fn default_entity_kind() -> String {
@@ -226,7 +248,7 @@ pub async fn run_extract(
                         team_id,
                         &e.name,
                         &e.kind,
-                        &[],
+                        &e.clean_aliases(),
                         Some(provenance_id),
                     )
                     .await?;
@@ -286,5 +308,24 @@ mod tests {
     fn braces_inside_strings_do_not_confuse() {
         let raw = "{\"memories\":[{\"kind\":\"fact\",\"content\":\"a { b } c\"}]}";
         assert_eq!(extract_json_object(raw), Some(raw));
+    }
+
+    #[test]
+    fn aliases_parse_and_clean() {
+        // Parser captures the aliases array; cleaning trims, drops blanks and
+        // any form equal to the name, and de-duplicates case-insensitively.
+        let e: ExtractedEntity = serde_json::from_str(
+            r#"{"name":"psp-gateway","kind":"service",
+                "aliases":["PSP"," psp-gateway ","psp","PSP",""]}"#,
+        )
+        .expect("parse");
+        assert_eq!(e.clean_aliases(), vec!["PSP".to_string()]);
+    }
+
+    #[test]
+    fn entity_without_aliases_defaults_empty() {
+        let e: ExtractedEntity =
+            serde_json::from_str(r#"{"name":"kafka","kind":"tech"}"#).expect("parse");
+        assert!(e.clean_aliases().is_empty());
     }
 }
