@@ -12,7 +12,7 @@
 //! every tool call: an agent can never retrieve what its operator can't.
 //!
 //! v0 tools: memory_search, memory_context, memory_add, entity_lookup,
-//! memory_feedback.
+//! knowledge_propose, memory_feedback.
 
 use std::sync::Arc;
 
