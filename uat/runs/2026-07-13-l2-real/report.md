@@ -89,3 +89,49 @@ precisely the shape the whole trial predicted the honest product to have — val
 cross-boundary cases, dead weight everywhere else. Combined with the harms now closed, the verdict is
 **`adopt-for-the-cross-boundary-case`**: turn it on for the teams and tasks that cross a boundary,
 keep it off (or expect to pay for nothing) on single-team work its own `CLAUDE.md` already covers.
+
+---
+
+## Next actionable development items (post-real-run)
+
+The real retrieval + real-agent + real-flywheel runs are done; seven fixes are on `master`. What the
+runs *earned* as the next work, in priority order — lead item first, with why-now:
+
+### 1. Per-provider extraction eval — precision AND recall (do this first)
+**Why now:** the flywheel proved extraction *runs* on real Qwen, but it **dropped one of two
+learnings** in the very first session (recall gap), and a `kind:` hint appears to suppress the
+other kinds. The whole product rests on capturing session knowledge faithfully; a store that silently
+loses a fraction of every session erodes trust exactly the way the abandonment literature predicts.
+This is **cheap and directly measurable** — the golden transcripts already carry `must_extract` gold
+— and it would catch recall regressions, the kind-hint bias, and provider drift in one gate. It also
+subsumes the extraction robustness class (the JSON-encoded-array bug was one instance; a real eval
+would have caught it). *Effort: M. Locus: `brainiac-eval` pipeline profile + a per-provider matrix.*
+
+### 2. Close the invocation gap — proactive "what changed in your area"
+**Why now:** the after-the-file win is real and measured, but it still **hinges on the agent choosing
+to call `memory_context`.** In a real session it may not — "you can't retrieve the answer to a
+question you don't know to ask." This is the single feature that converts the *proven latent* value
+into *realized* value: a session-start (or scheduled) push of recent canonical changes/reversals
+touching the developer's repos/entities. *Effort: M–L. Locus: a digest builder over recent canonical
+mutations, entity-anchored; a new MCP surface or session-start injection.*
+
+### 3. H4 — the 4th visibility tier (scoped/contractor)
+**Why now:** redaction shipped, but the structural gap is untouched — a contractor must be a full
+team member (sees the signing-secret runbook by design) or teamless (can't work). This is a
+governance **blocker** for any org that uses contractors, and it also unblocks the cross-team seat
+(P1.3) since both want per-principal scoping beyond the three tiers. *Effort: L. Locus: schema + RLS
++ auth.*
+
+### 4. Harden the auto-promotion gate — confidence calibration
+**Why now:** the flywheel's auto-candidate promotion fired on the model's **self-reported confidence
+of 1.0**. A confidently-wrong extraction walks candidate promotion unchallenged. Small, and it
+directly hardens the write path the flywheel just exercised. *Effort: M. Locus: `extract.rs` +
+`policy.rs`.*
+
+**Operational cluster (do alongside, all small):** raw-memory TTL sweep (P0.3) so an unworked queue
+can't grow unbounded; SLO-breach alerting (P0.4) on the velocity metrics now exposed. These make the
+`harmful-as-shaped` core self-limiting rather than merely observable.
+
+**Recommendation:** go with **#1 now** — it's the highest signal-per-effort, it gates trust in the
+flywheel we just proved, and it turns a class of silent failures into a CI gate. Then **#2**, because
+it's what makes the measured cross-boundary wins actually happen in the field.
