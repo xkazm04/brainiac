@@ -617,6 +617,12 @@ export interface components {
             /** Format: int64 */
             pending_promotions: number;
         };
+        /** @description A canonical entity anchoring a hit (id + name). */
+        AnchorRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         AnchoredMemory: {
             content: string;
             /** Format: uuid */
@@ -1235,6 +1241,11 @@ export interface components {
             team_id?: string | null;
         };
         SearchHit: {
+            /**
+             * @description Canonical entities anchoring this hit; for via_graph hits, the bridge it
+             *     surfaced through. Empty when the memory has no canonical-linked entities.
+             */
+            anchors: components["schemas"]["AnchorRef"][];
             content: string;
             /** Format: uuid */
             id: string;

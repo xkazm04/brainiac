@@ -1320,6 +1320,23 @@
           }
         }
       },
+      "AnchorRef": {
+        "type": "object",
+        "description": "A canonical entity anchoring a hit (id + name).",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AnchoredMemory": {
         "type": "object",
         "required": [
@@ -3169,9 +3186,17 @@
           "kind",
           "status",
           "score",
-          "via_graph"
+          "via_graph",
+          "anchors"
         ],
         "properties": {
+          "anchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnchorRef"
+            },
+            "description": "Canonical entities anchoring this hit; for via_graph hits, the bridge it\nsurfaced through. Empty when the memory has no canonical-linked entities."
+          },
           "content": {
             "type": "string"
           },

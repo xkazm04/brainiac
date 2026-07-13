@@ -6,9 +6,11 @@
 //! 3. reciprocal rank fusion → top 30
 //! 4. graph expansion: anchors of the top hits → 1–2 hop neighbors via the
 //!    canonical bridge → their strongest memories (bounded +10). This is
-//!    where cross-team knowledge surfaces.
+//!    where cross-team knowledge surfaces; each graph extra is scored as a
+//!    decayed fraction of the anchoring direct hit rather than pinned to 0.
 //! 5. assembly: temporal filter + supersession-chain dedupe (as-of aware),
-//!    fused order preserved, graph extras appended.
+//!    then a blended re-rank (relevance dominant, recency/feedback nudges) over
+//!    direct and graph hits alike; entity anchors attached to the emitted set.
 //!
 //! The graph + assembly stages run inside the caller's scoped transaction. The
 //! two candidate retrievers (stage 2) run concurrently on separate pooled
@@ -21,7 +23,7 @@ use brainiac_core::embed::Embedder;
 use brainiac_core::fusion::{
     query_is_identifier_heavy, reciprocal_rank_fusion, weighted_reciprocal_rank_fusion,
 };
-use brainiac_core::scoring::{blended_score, FeedbackSignal};
+use brainiac_core::scoring::{blended_score, graph_relevance, FeedbackSignal};
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
 use brainiac_core::{Memory, MemoryStatus};
 use chrono::{DateTime, Utc};
@@ -108,15 +110,29 @@ pub struct RetrievalRequest {
     pub filters: RetrievalFilters,
 }
 
+/// A canonical entity that anchors a hit (ARCHITECTURE.md §5.1: results carry
+/// "memories + provenance + entity anchors"). For direct hits these are the
+/// query-independent anchors of the memory; for `via_graph` hits they are also
+/// the bridge the hit was surfaced through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityAnchor {
+    pub id: Uuid,
+    pub name: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RetrievalHit {
     pub memory: Memory,
-    /// Final blended ranking key (brainiac-core::scoring): fused RRF relevance
-    /// as the dominant term, nudged by recency decay and net reader feedback.
-    /// Graph-expansion extras have relevance 0.0 (they sink below direct hits)
-    /// until they earn a real graph score.
+    /// Final blended ranking key (brainiac-core::scoring): relevance as the
+    /// dominant term, nudged by recency decay and net reader feedback. Relevance
+    /// is the fused RRF score for direct hits and a graph-derived score (anchor
+    /// strength × hop decay) for graph-expansion extras, so both live on one
+    /// scale and a strong cross-team hit can outrank a weak direct hit.
     pub score: f64,
     pub via_graph: bool,
+    /// Canonical entities anchoring this hit (id + name), name-sorted; empty
+    /// when the memory has no canonical-linked entities.
+    pub anchors: Vec<EntityAnchor>,
 }
 
 /// The RLS scope of the caller's transaction, mirrored onto the pooled
@@ -229,6 +245,10 @@ pub async fn search(
     };
     let fused_ids: Vec<Uuid> = fused.iter().map(|(id, _)| *id).collect();
     let fused_score: std::collections::HashMap<Uuid, f64> = fused.iter().cloned().collect();
+    // Anchor strength for graph-expansion scoring: the strongest direct hit
+    // (fused is score-descending, so the first is the max). Graph extras are
+    // scored as a decayed fraction of this — see `graph_relevance`.
+    let anchor_strength = fused.first().map(|(_, s)| *s).unwrap_or(0.0);
 
     // Stage 4: graph expansion from the strongest direct hits.
     let anchor_source: Vec<Uuid> = fused_ids.iter().take(GRAPH_ANCHOR_TOP).copied().collect();
@@ -279,7 +299,16 @@ pub async fn search(
     let mut ranked: Vec<RetrievalHit> = deduped
         .into_iter()
         .map(|m| {
-            let relevance = fused_score.get(&m.id).copied().unwrap_or(0.0);
+            // Direct hits carry their fused RRF score; graph extras (fused 0.0)
+            // earn a graph-derived relevance = anchor strength × hop decay, so a
+            // strong cross-team hit can outrank a weak direct hit instead of
+            // always sinking. Both then feed the same recency/feedback blend.
+            let via_graph = graph_ids.contains(&m.id);
+            let relevance = match fused_score.get(&m.id) {
+                Some(s) => *s,
+                None if via_graph => graph_relevance(anchor_strength),
+                None => 0.0,
+            };
             let t = trust.get(&m.id).cloned().unwrap_or_default();
             let feedback = FeedbackSignal {
                 helpful: t.helpful,
@@ -289,7 +318,8 @@ pub async fn search(
             let blended = blended_score(relevance, age_days(&m, as_of), feedback);
             RetrievalHit {
                 score: blended,
-                via_graph: graph_ids.contains(&m.id),
+                via_graph,
+                anchors: Vec::new(),
                 memory: m,
             }
         })
@@ -302,6 +332,14 @@ pub async fn search(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     ranked.truncate(req.k);
+
+    // Attach entity anchors to the emitted hits (ARCHITECTURE.md §5.1). Batched
+    // over just the final top-k, RLS-scoped like every read.
+    let hit_ids: Vec<Uuid> = ranked.iter().map(|h| h.memory.id).collect();
+    let mut anchors = entities::canonical_anchors_for(tx, &hit_ids).await?;
+    for h in &mut ranked {
+        h.anchors = anchors.remove(&h.memory.id).unwrap_or_default();
+    }
     Ok(ranked)
 }
 

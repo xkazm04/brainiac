@@ -180,6 +180,13 @@ fn default_k() -> usize {
     10
 }
 
+/// A canonical entity anchoring a hit (id + name).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct AnchorRef {
+    id: Uuid,
+    name: String,
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct SearchHit {
     id: Uuid,
@@ -189,6 +196,9 @@ pub(crate) struct SearchHit {
     score: f64,
     via_graph: bool,
     provenance_id: Option<Uuid>,
+    /// Canonical entities anchoring this hit; for via_graph hits, the bridge it
+    /// surfaced through. Empty when the memory has no canonical-linked entities.
+    anchors: Vec<AnchorRef>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -241,6 +251,14 @@ pub(crate) async fn search(
             score: h.score,
             via_graph: h.via_graph,
             provenance_id: h.memory.provenance_id,
+            anchors: h
+                .anchors
+                .into_iter()
+                .map(|a| AnchorRef {
+                    id: a.id,
+                    name: a.name,
+                })
+                .collect(),
         })
         .collect();
     Ok(Json(SearchResponse { hits: out }))

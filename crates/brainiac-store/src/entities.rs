@@ -3,7 +3,46 @@
 
 use anyhow::Result;
 use sqlx::{PgConnection, Row};
+use std::collections::HashMap;
 use uuid::Uuid;
+
+use crate::retrieval::EntityAnchor;
+
+/// The canonical entities anchoring each of `memory_ids`, batched (one query
+/// for the whole result set — never an N+1). A memory anchors on a canonical
+/// entity when one of its linked raw entities soft-merges to that canonical:
+/// `memory_entities → entity_links → canonical_entities`. RLS-scoped like every
+/// read; a memory with no canonical-linked entities simply gets an empty list.
+/// Anchors are deduped per memory and returned name-sorted for stable output.
+pub async fn canonical_anchors_for(
+    conn: &mut PgConnection,
+    memory_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<EntityAnchor>>> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        "SELECT DISTINCT me.memory_id, c.id AS canonical_id, c.name AS canonical_name
+         FROM memory_entities me
+         JOIN entity_links l ON l.entity_id = me.entity_id
+         JOIN canonical_entities c ON c.id = l.canonical_id
+         WHERE me.memory_id = ANY($1)
+         ORDER BY me.memory_id, c.name",
+    )
+    .bind(memory_ids)
+    .fetch_all(conn)
+    .await?;
+    let mut out: HashMap<Uuid, Vec<EntityAnchor>> = HashMap::new();
+    for r in rows {
+        out.entry(r.get::<Uuid, _>("memory_id"))
+            .or_default()
+            .push(EntityAnchor {
+                id: r.get::<Uuid, _>("canonical_id"),
+                name: r.get::<String, _>("canonical_name"),
+            });
+    }
+    Ok(out)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_entity(

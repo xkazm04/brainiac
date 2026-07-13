@@ -469,6 +469,156 @@ async fn graph_neighbors_cross_canonical_bridge() {
 }
 
 #[tokio::test]
+async fn graph_surfaced_hit_scores_and_carries_anchors() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await; // org / teams / users
+    let p = pay_dev();
+    let embedder = DeterministicEmbedder::default();
+    let query = "kafka retry semantics for payment events";
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+
+    // Two raw entities in different teams bridged by one canonical: payments'
+    // "Kafka" and data's "the event bus".
+    entities::insert_entity(
+        c,
+        uuid(31),
+        org(),
+        Some(uuid(21)),
+        "Kafka",
+        "tech",
+        &[],
+        None,
+    )
+    .await
+    .expect("e31");
+    entities::insert_entity(
+        c,
+        uuid(32),
+        org(),
+        Some(uuid(22)),
+        "the event bus",
+        "tech",
+        &[],
+        None,
+    )
+    .await
+    .expect("e32");
+    entities::insert_canonical(c, uuid(41), org(), "kafka", "tech")
+        .await
+        .expect("c41");
+    entities::link(c, uuid(31), uuid(41), 0.95, "human", None)
+        .await
+        .expect("l31");
+    entities::link(c, uuid(32), uuid(41), 0.95, "human", None)
+        .await
+        .expect("l32");
+
+    let mk = |id: u8, team: u8, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(team)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+    };
+    // Direct hit (payments): matches the query, anchored to Kafka, embedded so
+    // it leads the candidate lists and seeds graph expansion from entity 31.
+    let direct = "kafka retry semantics for payment events and idempotent consumers";
+    memories::insert(c, &mk(180, 21, direct))
+        .await
+        .expect("m180");
+    memories::link_entity(c, uuid(180), uuid(31))
+        .await
+        .expect("le180");
+    // Graph-only hit (data team): anchored to the sibling entity, but with NO
+    // embedding and content that shares no query terms — so it is absent from
+    // BOTH candidate retrievers and can only surface by walking the canonical
+    // bridge Kafka↔event-bus. This is the cross-team hit that used to sink at
+    // score 0.0.
+    let cross = "the observability runbook for consumer lag dashboards and paging";
+    memories::insert(c, &mk(181, 22, cross))
+        .await
+        .expect("m181");
+    memories::link_entity(c, uuid(181), uuid(32))
+        .await
+        .expect("le181");
+
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    // Only the direct hit gets an embedding (the exact query vector).
+    memories::upsert_embedding(c, uuid(180), ver, &embedder.embed_sync(query))
+        .await
+        .expect("e180");
+    tx.commit().await.expect("commit");
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let hits = retrieval::search(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        &retrieval::RetrievalRequest {
+            query: query.into(),
+            k: 10,
+            as_of: None,
+            filters: Default::default(),
+        },
+    )
+    .await
+    .expect("search");
+
+    let direct_hit = hits
+        .iter()
+        .find(|h| h.memory.id == uuid(180))
+        .expect("direct hit present");
+    assert!(!direct_hit.via_graph, "180 is a direct hit");
+    assert!(
+        direct_hit
+            .anchors
+            .iter()
+            .any(|a| a.id == uuid(41) && a.name == "kafka"),
+        "direct hit carries its canonical anchor, got {:?}",
+        direct_hit.anchors
+    );
+
+    let graph_hit = hits
+        .iter()
+        .find(|h| h.memory.id == uuid(181))
+        .expect("cross-team memory surfaced via graph");
+    assert!(graph_hit.via_graph, "181 surfaced only through the graph");
+    assert!(
+        graph_hit.score > 0.0,
+        "graph-surfaced hit must carry a real (non-zero) score, got {}",
+        graph_hit.score
+    );
+    assert!(
+        graph_hit.score < direct_hit.score,
+        "one hop removed: graph hit sits below its anchoring direct hit"
+    );
+    assert!(
+        graph_hit
+            .anchors
+            .iter()
+            .any(|a| a.id == uuid(41) && a.name == "kafka"),
+        "graph hit carries the bridging canonical anchor, got {:?}",
+        graph_hit.anchors
+    );
+}
+
+#[tokio::test]
 async fn queue_claim_redeliver_and_dead_letter() {
     let Some((ctx, _guard)) = setup().await else {
         return;

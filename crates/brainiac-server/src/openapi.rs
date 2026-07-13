@@ -108,6 +108,7 @@ impl Modify for BearerAuth {
         http::HealthResponse,
         // memories
         http::SearchBody,
+        http::AnchorRef,
         http::SearchHit,
         http::SearchResponse,
         http::MemoryAddBody,

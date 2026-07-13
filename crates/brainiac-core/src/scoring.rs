@@ -46,6 +46,30 @@ pub fn recency_decay(age_days: f64) -> f64 {
     (-std::f64::consts::LN_2 * age / RECENCY_HALF_LIFE_DAYS).exp()
 }
 
+/// Decay applied to a graph-expansion hit's relevance relative to the direct
+/// hit that anchored the expansion. A memory surfaced by walking the canonical
+/// entity graph (1–2 hops from the query's own anchors) is real signal —
+/// cross-team knowledge the query never lexically or semantically matched — but
+/// it is one inferential step removed, so it should sit BELOW a direct hit of
+/// the same strength. At 0.3 a graph hit is worth 30% of the strongest direct
+/// hit's fused score: enough that a strongly-anchored (consensus) hit clears
+/// the weak tail of the direct list (the whole point of expansion — cross-team
+/// hits used to sink to 0), but not so much that graph hits swamp the
+/// directly-relevant ones. Tuned against the eval gates: at 0.4 the extra graph
+/// hits displaced graded memories in the temporal stratum past its regression
+/// gate; 0.3 keeps every stratum green (temporal and cross-team both hold at
+/// baseline) while still lifting graph hits off the floor.
+pub const GRAPH_HOP_DECAY: f64 = 0.3;
+
+/// Relevance for a graph-surfaced memory: the anchoring direct hit's fused
+/// score, decayed by [`GRAPH_HOP_DECAY`]. Replaces the old hard-coded 0.0 that
+/// made cross-team graph hits always sink below every direct hit. Feeds the
+/// same [`blended_score`] as direct hits, so graph and direct results share one
+/// ranking scale.
+pub fn graph_relevance(anchor_score: f64) -> f64 {
+    anchor_score * GRAPH_HOP_DECAY
+}
+
 /// Reader-verdict counts attached to one memory (all-time, RLS-scoped at the
 /// query site). Mirrors [`crate`]'s store-side `Trust` without depending on it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -191,6 +215,21 @@ mod tests {
         assert!(
             strong_stale > weak_fresh,
             "relevance stays dominant: {strong_stale} vs {weak_fresh}"
+        );
+    }
+
+    #[test]
+    fn graph_hit_scores_below_its_anchor_but_can_beat_a_weak_direct() {
+        // A strong (consensus, both-list) anchor.
+        let anchor = 2.0 / 61.0;
+        let g = graph_relevance(anchor);
+        assert!(g < anchor, "a graph hit is worth less than its anchor");
+        assert!(g > 0.0, "but no longer sinks to zero");
+        // A weak direct hit deep in a single candidate list can be overtaken.
+        let weak_direct = 1.0 / 108.0;
+        assert!(
+            g > weak_direct,
+            "a strong anchor lifts its graph neighbor over weak directs: {g} vs {weak_direct}"
         );
     }
 

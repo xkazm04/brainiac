@@ -271,6 +271,9 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
                 "content": h.memory.content,
                 "via_graph": h.via_graph,
                 "provenance_id": h.memory.provenance_id,
+                "entity_anchors": h.anchors.iter().map(|a| json!({
+                    "id": a.id, "name": a.name,
+                })).collect::<Vec<_>>(),
             });
             if !t.is_empty() {
                 m["feedback"] = json!({
