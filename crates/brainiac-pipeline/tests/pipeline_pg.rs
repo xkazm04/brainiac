@@ -427,7 +427,7 @@ async fn supersession_serves_only_the_winner() {
 
     // Before: the conflict is live — both are served.
     let mut tx = store.scoped_tx(&principal).await.expect("tx");
-    let before: Vec<Uuid> = retrieval::search(&mut tx, &embedder, version, &req)
+    let before: Vec<Uuid> = retrieval::search(&mut tx, store.pool(), &embedder, version, &req)
         .await
         .expect("search")
         .iter()
@@ -465,7 +465,7 @@ async fn supersession_serves_only_the_winner() {
 
     // After: retrieval serves ONLY the winner (the temporal chain is real now).
     let mut tx = store.scoped_tx(&principal).await.expect("tx");
-    let after: Vec<Uuid> = retrieval::search(&mut tx, &embedder, version, &req)
+    let after: Vec<Uuid> = retrieval::search(&mut tx, store.pool(), &embedder, version, &req)
         .await
         .expect("search")
         .iter()

@@ -452,15 +452,18 @@ pub(crate) async fn resolve_contradiction(
                     "supersede requires a maintainer of the losing memory's team".into(),
                 ));
             }
-            sqlx::query(
-                "UPDATE memories
-                 SET valid_to = now(), superseded_by = $2,
-                     status = 'deprecated'::memory_status, updated_at = now()
-                 WHERE id = $1",
+            // Store-owned primitive: deprecates the loser, closes valid_to,
+            // sets superseded_by, AND records the transition in the
+            // promotions audit log — the inline SQL this replaces skipped
+            // the audit row.
+            brainiac_store::governance::apply_supersession(
+                &mut tx,
+                principal.org_id,
+                loser,
+                winner,
+                Some(principal.user_id),
+                "contradiction_supersede",
             )
-            .bind(loser)
-            .bind(winner)
-            .execute(&mut *tx)
             .await
             .map_err(internal)?;
             "resolved_supersede"
