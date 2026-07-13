@@ -40,6 +40,16 @@ enum Command {
     },
     /// Run the MCP server on stdio (agent surface).
     Mcp,
+    /// Backfill embeddings for a swapped embedder (ARCHITECTURE.md §3 stage 8).
+    /// Ensures the target version (auto-creating its HNSW index) and re-embeds
+    /// every memory + canonical entity that lacks an embedding in it — a
+    /// cross-org OPERATOR sweep. Resumable and idempotent: safe to interrupt and
+    /// re-run. Point it at the production database.
+    Reembed {
+        /// Target embedding backend: `deterministic` (default) or `qwen`.
+        #[arg(long)]
+        embedder: Option<String>,
+    },
     /// Run the pipeline worker loop.
     Worker {
         /// Use the deterministic mock provider (demo/dev only).
@@ -163,6 +173,7 @@ async fn main() -> Result<()> {
             reranker,
         } => serve(&bind, with_worker, mock, reranker.as_deref()).await,
         Command::Mcp => mcp().await,
+        Command::Reembed { embedder } => reembed(embedder.as_deref()).await,
         Command::Worker { mock } => worker(mock).await,
         Command::Eval {
             fixtures,
@@ -336,6 +347,27 @@ async fn mcp() -> Result<()> {
     let embedder = embedder_select(None)?;
     let state = brainiac_server::mcp::McpState::from_env(store, embedder).await?;
     brainiac_server::mcp::serve_stdio(std::sync::Arc::new(state)).await
+}
+
+/// Reembed backfill (ARCHITECTURE.md §3 stage 8). Runs on the admin
+/// (RLS-bypassing) pool because it is a cross-org operator sweep; it writes only
+/// derived embeddings. Resumable + idempotent.
+async fn reembed(embedder_name: Option<&str>) -> Result<()> {
+    let url = database_url()?;
+    brainiac_store::migrate(&url).await?;
+    let pool = brainiac_store::admin_pool(&url).await?;
+    let embedder = embedder_select(embedder_name)?;
+    let batch = brainiac_pipeline::reembed::batch_from_env();
+    let stats = brainiac_pipeline::reembed::reembed(&pool, embedder.as_ref(), batch).await?;
+    pool.close().await;
+    tracing::info!(
+        version = stats.version_id,
+        memories = stats.memories,
+        canonicals = stats.canonicals,
+        batches = stats.batches,
+        "reembed backfill finished"
+    );
+    Ok(())
 }
 
 async fn worker(mock: bool) -> Result<()> {

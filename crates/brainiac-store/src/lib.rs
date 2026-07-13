@@ -50,6 +50,26 @@ pub async fn migrate(database_url: &str) -> Result<()> {
     Ok(())
 }
 
+/// A pool that connects as the URL's (table-owner) role WITHOUT the
+/// `SET ROLE brainiac_app` demotion — so it BYPASSES row-level security. This
+/// exists for cross-org OPERATOR maintenance that is intentionally tenant-blind:
+/// the reembed backfill (re-derives embeddings for every org's memories in a
+/// freshly activated embedding version). It writes only DERIVED data
+/// (memory_embeddings / canonical_entity_embeddings — vectors recomputed from
+/// content the operator already stored), never new knowledge, so the RLS bypass
+/// discloses nothing a tenant didn't already own. End-user and pipeline paths
+/// MUST use [`Store::connect`] + [`Store::scoped_tx`]; never route request
+/// handling through this pool.
+pub async fn admin_pool(database_url: &str) -> Result<PgPool> {
+    let opts =
+        PgConnectOptions::from_str(database_url)?.log_statements(tracing::log::LevelFilter::Debug);
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts)
+        .await
+        .context("connecting admin pool")
+}
+
 impl Store {
     /// Runtime pool: every session is demoted to `brainiac_app` on connect.
     pub async fn connect(database_url: &str) -> Result<Self> {

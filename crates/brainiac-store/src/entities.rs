@@ -398,6 +398,37 @@ pub async fn canonicals_missing_embedding(
         .collect())
 }
 
+/// Canonicals (across ALL orgs) with NO persisted embedding for `version_id`,
+/// capped at `limit` — the reembed-backfill worklist for canonical embeddings
+/// and its resume point. Deliberately NOT org-scoped, for the same reason as
+/// [`crate::memories::missing_embedding`]: reembed is a cross-org operator sweep
+/// on the RLS-bypassing admin connection. The resolve stage depends on these,
+/// so a model swap must backfill canonicals too or cross-team resolution goes
+/// blind in the new vector space.
+pub async fn all_canonicals_missing_embedding(
+    conn: &mut PgConnection,
+    version_id: i32,
+    limit: i64,
+) -> Result<Vec<(Uuid, String)>> {
+    let rows = sqlx::query(
+        "SELECT c.id, c.name FROM canonical_entities c
+         WHERE NOT EXISTS (
+               SELECT 1 FROM canonical_entity_embeddings ce
+               WHERE ce.canonical_id = c.id AND ce.embedding_version_id = $1
+           )
+         ORDER BY c.created_at, c.id
+         LIMIT $2",
+    )
+    .bind(version_id)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get::<Uuid, _>("id"), r.get::<String, _>("name")))
+        .collect())
+}
+
 /// Nearest canonicals to `query_vec` by cosine similarity over persisted
 /// embeddings — one SQL round-trip, no live re-embedding of canonicals.
 /// RLS-scoped through the join to canonical_entities. Returns

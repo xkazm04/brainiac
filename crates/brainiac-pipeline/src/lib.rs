@@ -9,6 +9,7 @@
 pub mod contradict;
 pub mod extract;
 pub mod policy;
+pub mod reembed;
 pub mod resolve;
 pub mod worker;
 

@@ -105,6 +105,40 @@ pub async fn ensure_hnsw_index_for_dim(conn: &mut PgConnection, dim: i32) -> Res
     Ok(())
 }
 
+/// Memories that have NO embedding for `version_id`, oldest first, capped at
+/// `limit` — the reembed-backfill worklist AND its resume point (re-running
+/// after an interruption just re-reads whatever is still missing). Deliberately
+/// NOT org-scoped: reembed is a cross-org OPERATOR sweep run on the migration/
+/// admin (table-owner) connection, which bypasses RLS. Under the demoted
+/// `brainiac_app` role this same query self-limits to the transaction's org —
+/// safe either way, but the operator path needs the whole corpus. Soft-deleted
+/// rows are skipped; a re-embedding of a deleted memory would never be served.
+pub async fn missing_embedding(
+    conn: &mut PgConnection,
+    version_id: i32,
+    limit: i64,
+) -> Result<Vec<(Uuid, String)>> {
+    let rows = sqlx::query(
+        "SELECT m.id, m.content
+         FROM memories m
+         WHERE m.deleted_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM memory_embeddings e
+               WHERE e.memory_id = m.id AND e.embedding_version_id = $1
+           )
+         ORDER BY m.created_at, m.id
+         LIMIT $2",
+    )
+    .bind(version_id)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get::<Uuid, _>("id"), r.get::<String, _>("content")))
+        .collect())
+}
+
 pub async fn upsert_embedding(
     conn: &mut PgConnection,
     memory_id: Uuid,
