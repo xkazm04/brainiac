@@ -92,7 +92,8 @@ async fn mcp_handshake_and_tools() {
             "memory_add",
             "entity_lookup",
             "knowledge_propose",
-            "memory_feedback"
+            "memory_feedback",
+            "memory_provenance"
         ]
     );
 
@@ -574,4 +575,87 @@ async fn mcp_handshake_and_tools() {
     let mb = find(&payload["memories"], &b_str);
     assert!(ma["contradicted"].is_null(), "A flag must clear: {payload}");
     assert!(mb["contradicted"].is_null(), "B flag must clear: {payload}");
+
+    // ── memory_provenance: the evidence chain tool (Direction 3) ────────
+    // Seed a full chain the analyst CAN read: source → provenance → memory.
+    let sid = uuid::Uuid::new_v4();
+    let pid = uuid::Uuid::new_v4();
+    let mpid = uuid::Uuid::new_v4();
+    let long_source = "s".repeat(600); // > SOURCE_EXCERPT_CHARS, forces truncation
+    sqlx::query(
+        "INSERT INTO sources (id, org_id, team_id, kind, raw_text)
+         VALUES ($1, $2, $3, 'manual', $4)",
+    )
+    .bind(sid)
+    .bind(org)
+    .bind(team)
+    .bind(&long_source)
+    .execute(&admin)
+    .await
+    .expect("source");
+    sqlx::query(
+        "INSERT INTO provenance (id, org_id, actor_kind, actor_id, model_ref, source_id)
+         VALUES ($1, $2, 'agent', 'claude-code', 'claude-opus', $3)",
+    )
+    .bind(pid)
+    .bind(org)
+    .bind(sid)
+    .execute(&admin)
+    .await
+    .expect("provenance");
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content, provenance_id)
+         VALUES ($1, $2, $3, 'team', 'canonical', 'fact', 'provenance-chain probe memory', $4)",
+    )
+    .bind(mpid)
+    .bind(org)
+    .bind(team)
+    .bind(pid)
+    .execute(&admin)
+    .await
+    .expect("memory with provenance");
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            26,
+            "tools/call",
+            json!({ "name": "memory_provenance", "arguments": { "memory_id": mpid.to_string() } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], false, "provenance failed: {r}");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["actor_kind"], "agent");
+    assert_eq!(payload["actor_ref"], "claude-code");
+    assert_eq!(payload["model_ref"], "claude-opus");
+    assert!(payload["created_at"].is_string(), "chain time: {payload}");
+    assert_eq!(payload["source"]["kind"], "manual");
+    let excerpt = payload["source"]["excerpt"].as_str().expect("excerpt");
+    assert!(excerpt.ends_with('…'), "excerpt must be bounded: {excerpt}");
+    assert!(
+        excerpt.chars().count() <= 501,
+        "excerpt over cap: {}",
+        excerpt.chars().count()
+    );
+    assert!(payload["entity_anchors"].is_array());
+
+    // Leak case: provenance for an RLS-invisible memory reads as not-found —
+    // the SAME answer as a nonexistent id (no existence oracle).
+    let r = handle_message(
+        &state,
+        &rpc(
+            27,
+            "tools/call",
+            json!({ "name": "memory_provenance", "arguments": { "memory_id": stable_uuid("mem-pay-0055").to_string() } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], true);
+    assert!(r["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .contains("not found"));
 }

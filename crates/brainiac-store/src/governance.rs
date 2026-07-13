@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use brainiac_core::{ActorKind, MemoryStatus, PolicyDecision};
+use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -239,6 +240,51 @@ pub async fn open_contradictions_for(
         }
     }
     Ok(out)
+}
+
+/// The evidence chain behind a memory: who/what recorded it, the model used,
+/// when, and the originating source (if any). All fields but the memory's own
+/// existence are optional — a memory may carry no provenance row, or a
+/// provenance row with no source.
+#[derive(Debug, Clone)]
+pub struct ProvenanceView {
+    pub actor_kind: Option<String>,
+    pub actor_ref: Option<String>,
+    pub model_ref: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub source_kind: Option<String>,
+    /// The source's full raw text; the caller bounds it into an excerpt.
+    pub source_text: Option<String>,
+}
+
+/// The provenance chain for one memory, RLS-scoped. `None` means the memory is
+/// not visible to the caller — the SAME answer as a nonexistent memory, so the
+/// tool gives no existence oracle. The memories SELECT policy gates the lead
+/// row; provenance and sources are org-scoped and reached by LEFT JOIN, so a
+/// visible memory with no provenance still resolves (all-None fields).
+pub async fn provenance_for_memory(
+    conn: &mut PgConnection,
+    memory_id: Uuid,
+) -> Result<Option<ProvenanceView>> {
+    let row = sqlx::query(
+        "SELECT p.actor_kind, p.actor_id, p.model_ref, p.created_at AS prov_created_at,
+                s.kind AS source_kind, s.raw_text AS source_text
+         FROM memories m
+         LEFT JOIN provenance p ON p.id = m.provenance_id
+         LEFT JOIN sources s ON s.id = p.source_id
+         WHERE m.id = $1",
+    )
+    .bind(memory_id)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|r| ProvenanceView {
+        actor_kind: r.get("actor_kind"),
+        actor_ref: r.get("actor_id"),
+        model_ref: r.get("model_ref"),
+        created_at: r.get("prov_created_at"),
+        source_kind: r.get("source_kind"),
+        source_text: r.get("source_text"),
+    }))
 }
 
 pub async fn insert_contradiction(

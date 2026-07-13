@@ -12,7 +12,7 @@
 //! every tool call: an agent can never retrieve what its operator can't.
 //!
 //! v0 tools: memory_search, memory_context, memory_add, entity_lookup,
-//! knowledge_propose, memory_feedback.
+//! knowledge_propose, memory_feedback, memory_provenance.
 
 use std::sync::Arc;
 
@@ -41,6 +41,9 @@ const MAX_QUERY_CHARS: usize = 2_000;
 const MAX_NAME_CHARS: usize = 200;
 /// `memory_feedback` note — a short human explanation.
 const MAX_NOTE_CHARS: usize = 2_000;
+/// Bounded excerpt of a source's raw text returned by `memory_provenance` — a
+/// citation handle, never the whole (possibly huge) transcript.
+const SOURCE_EXCERPT_CHARS: usize = 500;
 
 /// A JSON-RPC-level error (maps to an `error` object with a spec code). Distinct
 /// from a *tool* error, which is a successful response carrying `isError: true`.
@@ -353,6 +356,17 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["memory_id", "verdict"]
             }
+        },
+        {
+            "name": "memory_provenance",
+            "description": "Trace a memory's evidence chain for citation: who or what recorded it (human, agent, or pipeline), the model used, when, the originating source with a short excerpt, and the canonical entities it anchors. Use to justify or attribute a memory you were served. Scoped to you: a memory you cannot see returns 'not found'.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memory_id": { "type": "string", "description": "The memory id you were given (memory:<uuid> citations or search results)" }
+                },
+                "required": ["memory_id"]
+            }
         }
     ])
 }
@@ -374,6 +388,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
         "entity_lookup" => entity_lookup(state, &args).await,
         "memory_feedback" => memory_feedback(state, &args).await,
         "knowledge_propose" => knowledge_propose(state, &args).await,
+        "memory_provenance" => memory_provenance(state, &args).await,
         other => return Err(RpcError::new(-32602, format!("unknown tool: {other}"))),
     };
 
@@ -726,5 +741,56 @@ async fn entity_lookup(state: &McpState, args: &Value) -> Result<Value, ToolErro
         "memories": memories.iter().map(|m| json!({
             "id": m.id, "kind": m.kind.as_str(), "content": m.content
         })).collect::<Vec<_>>()
+    }))
+}
+
+/// The evidence chain behind a memory (ARCHITECTURE.md §2.2): actor, model,
+/// time, originating source (bounded excerpt), and the canonical entities it
+/// anchors — everything an agent needs to cite or attribute a served memory.
+async fn memory_provenance(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let memory_id = required_uuid(args, "memory_id")?;
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+
+    // RLS gate: a memory invisible to the caller resolves to None — the SAME
+    // "not found" as a nonexistent id, so this tool is no existence oracle.
+    let Some(view) = brainiac_store::governance::provenance_for_memory(&mut tx, memory_id).await?
+    else {
+        return Err(rejected("memory not found"));
+    };
+
+    // Canonical entities anchoring the memory — reuse the batched helper.
+    let anchors = brainiac_store::entities::canonical_anchors_for(&mut tx, &[memory_id]).await?;
+    let entity_anchors = anchors
+        .get(&memory_id)
+        .map(|a| {
+            a.iter()
+                .map(|e| json!({ "id": e.id, "name": e.name }))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    // Bound the source excerpt to a documented cap (char-boundary safe): a
+    // citation handle, never the whole transcript.
+    let source = view.source_kind.as_ref().map(|kind| {
+        let excerpt = view.source_text.as_deref().map(|text| {
+            let trimmed = text.trim();
+            let excerpt: String = trimmed.chars().take(SOURCE_EXCERPT_CHARS).collect();
+            if trimmed.chars().count() > SOURCE_EXCERPT_CHARS {
+                format!("{excerpt}…")
+            } else {
+                excerpt
+            }
+        });
+        json!({ "kind": kind, "excerpt": excerpt })
+    });
+
+    Ok(json!({
+        "memory_id": memory_id,
+        "actor_kind": view.actor_kind,
+        "actor_ref": view.actor_ref,
+        "model_ref": view.model_ref,
+        "created_at": view.created_at,
+        "source": source,
+        "entity_anchors": entity_anchors,
     }))
 }
