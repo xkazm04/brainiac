@@ -1428,6 +1428,7 @@ async fn extraction_firewall_types_entities_and_relations() {
         Some(team_id),
         source_id,
         "gizmo-svc calls widget-svc",
+        None,
     )
     .await
     .expect("extract");
