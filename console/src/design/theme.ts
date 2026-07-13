@@ -43,6 +43,7 @@ export const MODULE_BAND: Record<string, BandKey> = {
   demo: "beta",
   memories: "delta",
   ingest: "theta",
+  disputes: "theta", // contested memories — theta IS the contradiction band
 };
 
 export const band = (key: BandKey, lightness = 68, alpha = 1) =>

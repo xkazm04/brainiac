@@ -20,6 +20,24 @@ async function call<T>(cfg: ApiConfig, path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function post<T>(cfg: ApiConfig, path: string, body: unknown): Promise<T> {
+  const doFetch = cfg.fetchImpl ?? fetch;
+  const res = await doFetch(`${cfg.baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${cfg.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiError(res.status, text || res.statusText);
+  }
+  return (await res.json()) as T;
+}
+
 // ── promotions ──────────────────────────────────────────────────────────
 
 export interface PromotionMemory {
@@ -123,6 +141,32 @@ export async function auditTrail(cfg: ApiConfig, limit = 50): Promise<AuditEvent
   return out.events;
 }
 
+// ── disputed memories (feedback triage) ─────────────────────────────────
+
+export interface FlaggedMemory {
+  memory_id: string;
+  content: string;
+  kind: string;
+  status: string;
+  team_id: string | null;
+  valid_to: string | null;
+  claims: { wrong: number; outdated: number };
+  /** Reporter notes on the open claims (newest first, capped server-side). */
+  notes: string[];
+  oldest_claim_secs: number;
+}
+
+export type DisputeResolution = "reverified" | "deprecated" | "dismissed";
+
+/** The triage queue: memories with unresolved wrong/outdated reports. */
+export async function feedbackQueue(cfg: ApiConfig, limit = 50): Promise<FlaggedMemory[]> {
+  const out = await call<{ flagged: FlaggedMemory[] }>(
+    cfg,
+    `/v1/reviews/feedback?limit=${limit}`,
+  );
+  return out.flagged;
+}
+
 // ── shared formatting ───────────────────────────────────────────────────
 
 /** Compact age like the Observatory's: 12m / 3.4h / 2.1d. */
@@ -131,4 +175,21 @@ export function formatAge(secs: number): string {
   if (secs < 3600) return `${Math.round(secs / 60)}m`;
   if (secs < 86400) return `${(secs / 3600).toFixed(1)}h`;
   return `${(secs / 86400).toFixed(1)}d`;
+}
+
+/**
+ * Answer the open claims against a memory. `reverified` extends its validity
+ * window, `deprecated` ends it now, `dismissed` leaves the memory standing —
+ * all three close every open claim on it.
+ */
+export async function resolveDispute(
+  cfg: ApiConfig,
+  memoryId: string,
+  resolution: DisputeResolution,
+  days?: number,
+): Promise<{ memory_id: string; resolution: string; claims_closed: number }> {
+  return post(cfg, `/v1/reviews/feedback/${memoryId}/resolve`, {
+    resolution,
+    ...(days ? { days } : {}),
+  });
 }

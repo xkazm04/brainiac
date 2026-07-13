@@ -36,6 +36,9 @@ export default function Chrome() {
         <Link href="/reviews" className="transition hover:text-white">
           reviews
         </Link>
+        <Link href="/disputes" className="transition hover:text-white">
+          disputes
+        </Link>
         <Link href="/graph" className="transition hover:text-white">
           graph
         </Link>
