@@ -265,6 +265,9 @@ export default function Home({ live }: { live: LiveStats | null }) {
           <Link href="/analytics" className="transition hover:text-[#f3c74f]">
             analytics
           </Link>
+          <Link href="/keys" className="transition hover:text-[#f3c74f]">
+            keys
+          </Link>
         </nav>
       </header>
 

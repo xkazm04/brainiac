@@ -69,6 +69,35 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface MintedToken extends ApiToken {
+  user_id: string;
+  /** The full secret — shown exactly once, never retrievable again. */
+  token: string;
+}
+
+export interface OrgUser {
+  id: string;
+  email: string;
+  teams: { id: string; name: string; role: string }[];
+}
+
+export interface TokenPreview {
+  user_id: string;
+  email: string;
+  teams: string[];
+  visible: { total: number; org: number; team: number; private: number; canonical: number };
+}
+
 export interface SourceFeedItem {
   id: string;
   kind: string;

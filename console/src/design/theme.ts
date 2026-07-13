@@ -57,6 +57,14 @@ export const GOLD_GLOW = bandGlow("gamma");
 export const MAGENTA = "#ff5da2";
 export const MAGENTA_GLOW = "rgba(255,93,162,0.35)";
 
+/**
+ * Ground (0 Hz) — the accent for identity/access surfaces (keys). No
+ * oscillation without a reference: deliberately outside the band spectrum,
+ * a desaturated ink instead of a hue.
+ */
+export const GROUND = "#dfe6f2";
+export const GROUND_DIM = "rgba(223,230,242,0.45)";
+
 /** Shared micro-typography: uppercase tracked mono label. */
 export const LABEL = `${FONT_MONO} text-[11px] uppercase tracking-[0.2em]`;
 

@@ -7,6 +7,7 @@ import "server-only";
 
 import type {
   Analytics,
+  ApiToken,
   CanonicalDetail,
   Contradiction,
   ContradictionResolution,
@@ -14,13 +15,16 @@ import type {
   GraphOverview,
   MemoriesList,
   MemoryDetail,
+  MintedToken,
   ObservatoryPayload,
+  OrgUser,
   PendingPromotion,
   PipelineRun,
   QueueHealth,
   ReviewedPromotion,
   SearchHit,
   SourceFeedItem,
+  TokenPreview,
 } from "./types";
 
 export class ApiError extends Error {
@@ -171,6 +175,37 @@ export async function submitMemory(
   content: string,
 ): Promise<{ source_id: string; job_id: number }> {
   return call(cfg, "POST", "/v1/memories", { content });
+}
+
+export async function listTokens(cfg: ApiConfig): Promise<ApiToken[]> {
+  const out = await call<{ tokens: ApiToken[] }>(cfg, "GET", "/v1/tokens");
+  return out.tokens;
+}
+
+export async function createToken(
+  cfg: ApiConfig,
+  name: string,
+  userId?: string,
+  scopes?: string[],
+): Promise<MintedToken> {
+  return call(cfg, "POST", "/v1/tokens", {
+    name,
+    ...(userId ? { user_id: userId } : {}),
+    ...(scopes ? { scopes } : {}),
+  });
+}
+
+export async function revokeToken(cfg: ApiConfig, id: string): Promise<void> {
+  await call(cfg, "POST", `/v1/tokens/${id}/revoke`);
+}
+
+export async function getOrgUsers(cfg: ApiConfig): Promise<OrgUser[]> {
+  const out = await call<{ users: OrgUser[] }>(cfg, "GET", "/v1/org/users");
+  return out.users;
+}
+
+export async function previewToken(cfg: ApiConfig, userId: string): Promise<TokenPreview> {
+  return call(cfg, "POST", "/v1/tokens/preview", { user_id: userId });
 }
 
 export async function getGraphCanonical(
