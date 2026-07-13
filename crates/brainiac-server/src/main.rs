@@ -63,6 +63,15 @@ enum Command {
         fixtures: String,
         #[arg(long, default_value = "retrieval")]
         profile: String,
+        /// Bake-off grid (EVAL.md §3.1): run the `retrieval` profile across the
+        /// cross-product of AVAILABLE backends (embedders {deterministic, qwen}
+        /// × rerankers {none, lexical}) and write ONE decision-table artifact
+        /// (JSON + markdown) to `--out`. EXPLORATORY: no baselines or regression
+        /// gates are evaluated — it surfaces cross-config trade-offs. Unavailable
+        /// backends (qwen without an API key) are listed as skipped-with-reason.
+        /// Ignores `--profile`, `--embedder`, `--reranker`, `--baseline`.
+        #[arg(long)]
+        grid: bool,
         /// Embedding backend: `deterministic` (default) or `qwen`
         /// (DashScope text-embedding-v4; needs QWEN_API_KEY/DASHSCOPE_API_KEY).
         #[arg(long)]
@@ -184,6 +193,7 @@ async fn main() -> Result<()> {
         Command::Eval {
             fixtures,
             profile,
+            grid,
             embedder,
             reranker,
             out,
@@ -194,6 +204,7 @@ async fn main() -> Result<()> {
             eval(
                 &fixtures,
                 &profile,
+                grid,
                 embedder.as_deref(),
                 reranker.as_deref(),
                 out.as_deref(),
@@ -519,6 +530,7 @@ async fn worker_loop(
 async fn eval(
     fixtures_dir: &str,
     profile: &str,
+    grid: bool,
     embedder_name: Option<&str>,
     reranker_name: Option<&str>,
     out: Option<&str>,
@@ -548,6 +560,13 @@ async fn eval(
 
     let store = Store::connect(&url).await?;
     let fx = brainiac_fixtures::load(fixtures_dir).context("loading fixtures")?;
+
+    // Bake-off grid (§3.1): its own driver builds the backend axes and runs the
+    // retrieval profile per config on a fresh tenant. Exploratory — no gates.
+    if grid {
+        return eval_grid(&store, &admin, &fx, out).await;
+    }
+
     let embedder = embedder_select(embedder_name)?;
     tracing::info!(embedder = embedder.model_name(), profile, "running eval");
 
@@ -652,6 +671,53 @@ async fn eval(
             std::process::exit(1);
         }
         tracing::info!(path, "regression gates passed");
+    }
+    Ok(())
+}
+
+/// The bake-off grid (EVAL.md §3.1): run the `retrieval` profile across the
+/// cross-product of available backends and write ONE decision-table artifact —
+/// `<stem>.json` (all reports keyed by config) and `<stem>.md` (the rendered
+/// table). `--out` is treated as an extension-less stem (a trailing `.json`/`.md`
+/// is stripped); the default is `results/grid/<date>-grid`. Exploratory: no gates.
+async fn eval_grid(
+    store: &Store,
+    admin: &sqlx::PgPool,
+    fx: &brainiac_fixtures::Fixtures,
+    out: Option<&str>,
+) -> Result<()> {
+    let artifact = brainiac_eval::grid::run(store, admin, fx).await?;
+
+    // Resolve the stem: strip a trailing .json/.md so `--out foo.json` and
+    // `--out foo` both land the pair at `foo.{json,md}`.
+    let stem = match out {
+        Some(p) => {
+            let path = std::path::Path::new(p);
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("json") | Some("md") => path.with_extension("").to_string_lossy().into_owned(),
+                _ => p.to_string(),
+            }
+        }
+        None => brainiac_eval::grid::default_out_stem(),
+    };
+    if let Some(parent) = std::path::Path::new(&stem).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let json_path = format!("{stem}.json");
+    let md_path = format!("{stem}.md");
+    std::fs::write(&json_path, serde_json::to_string_pretty(&artifact)?)?;
+    std::fs::write(&md_path, artifact.to_markdown())?;
+    tracing::info!(
+        json = json_path,
+        md = md_path,
+        cells = artifact.cells.len(),
+        skipped = artifact.skipped.len(),
+        "bake-off grid written (exploratory — no gates evaluated)"
+    );
+    for s in &artifact.skipped {
+        tracing::info!(config = s.config, reason = s.reason, "grid config skipped");
     }
     Ok(())
 }

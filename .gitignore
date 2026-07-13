@@ -3,6 +3,8 @@
 .env
 .env.local
 results/local/
+# Bake-off grid artifacts are exploratory, per-run, and machine-generated.
+results/grid/
 node_modules/
 .DS_Store
 

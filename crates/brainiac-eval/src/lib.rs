@@ -11,6 +11,7 @@
 //!   against gold.
 
 pub mod gates;
+pub mod grid;
 pub mod pipeline_profile;
 pub mod report;
 pub mod resolution_profile;
