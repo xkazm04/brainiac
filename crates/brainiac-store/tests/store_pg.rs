@@ -259,6 +259,58 @@ async fn rls_visibility_matrix_and_search_leaks() {
 }
 
 #[tokio::test]
+async fn czech_fts_honors_language_config() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    // A Czech, org-visible memory under the payments team. Under the old
+    // english-only index its distinctive Czech words would be english-stemmed
+    // (and any that collide with english stopwords dropped); the language-aware
+    // index (0007) builds it under the 'simple' config instead.
+    let p = pay_dev();
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let cs = memories::NewMemory {
+        id: uuid(150),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        content: "nasazení nové platební služby do produkčního prostředí vyžaduje schválení".into(),
+        language: "cs".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+    };
+    memories::insert(&mut tx, &cs).await.expect("insert cs");
+    tx.commit().await.expect("commit");
+
+    // Search a Czech phrase: the cs memory must surface via the 'simple' query.
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let hits = memories::search_fts(&mut tx, "nasazení produkčního", 10, &Default::default())
+        .await
+        .expect("fts cs");
+    assert!(
+        hits.iter().any(|(id, _)| *id == uuid(150)),
+        "Czech memory must be retrievable by a Czech phrase, got {hits:?}"
+    );
+
+    // English retrieval still works through the same call path.
+    let hits = memories::search_fts(&mut tx, "webhook signing secret", 10, &Default::default())
+        .await
+        .expect("fts en");
+    assert!(
+        hits.iter().any(|(id, _)| *id == uuid(102)),
+        "English memory still retrievable, got {hits:?}"
+    );
+}
+
+#[tokio::test]
 async fn graph_neighbors_cross_canonical_bridge() {
     let Some((ctx, _guard)) = setup().await else {
         return;

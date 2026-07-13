@@ -152,6 +152,14 @@ pub async fn search_vector(
 }
 
 /// Full-text candidates via websearch-style parsing + ts_rank.
+///
+/// The stored tsvector is built per row under the memory's own language config
+/// (0007: 'english' for English, 'simple' for Czech/unknown). The query
+/// language is unknown at call time, so we parse it BOTH ways with
+/// `websearch_to_tsquery` (quotes, OR, `-term` all honored) and match with an
+/// OR: the 'english' query hits English-indexed rows, the 'simple' query hits
+/// Czech/unknown-indexed rows. Score is the stronger of the two ranks so a row
+/// isn't penalized for the config it did not match under.
 pub async fn search_fts(
     conn: &mut PgConnection,
     query: &str,
@@ -159,9 +167,12 @@ pub async fn search_fts(
     filters: &crate::retrieval::RetrievalFilters,
 ) -> Result<Vec<(Uuid, f32)>> {
     let rows = sqlx::query(
-        "SELECT m.id, ts_rank(m.content_fts, q) AS score
-         FROM memories m, plainto_tsquery('english', $1) q
-         WHERE m.content_fts @@ q
+        "SELECT m.id,
+                greatest(ts_rank(m.content_fts, qe), ts_rank(m.content_fts, qs)) AS score
+         FROM memories m,
+              websearch_to_tsquery('english', $1) qe,
+              websearch_to_tsquery('simple', $1) qs
+         WHERE (m.content_fts @@ qe OR m.content_fts @@ qs)
            AND m.status <> 'rejected'
            AND ($3::text[] IS NULL OR m.kind = ANY($3))
            AND ($4::text[] IS NULL OR m.status::text = ANY($4))
