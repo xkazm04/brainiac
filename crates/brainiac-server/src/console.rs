@@ -41,7 +41,9 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/graph/overview", get(graph_overview))
         .route("/v1/graph/canonical/{id}", get(graph_canonical))
         .route("/v1/memories", get(memories_list))
+        .route("/v1/memories/expiring", get(memories_expiring))
         .route("/v1/memories/{id}", get(memory_detail))
+        .route("/v1/memories/{id}/reverify", post(memory_reverify))
         .route("/v1/sources", get(sources_list))
         .route("/v1/pipeline/runs", get(pipeline_runs))
         .route("/v1/org/users", get(org_users))
@@ -353,6 +355,99 @@ async fn resolve_contradiction(
     .map_err(internal)?;
     tx.commit().await.map_err(internal)?;
     Ok(Json(json!({ "contradiction_id": id, "status": status })))
+}
+
+// ── freshness lifecycle (TTL + re-verification) ─────────────────────────
+
+#[derive(Deserialize)]
+struct ExpiringQuery {
+    /// Window in days (default 30; 0 = only already-expired).
+    days: Option<i64>,
+    limit: Option<i64>,
+}
+
+/// The re-verification queue: live candidate/canonical memories whose
+/// validity window closes within the horizon, oldest boundary first.
+async fn memories_expiring(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ExpiringQuery>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let days = q.days.unwrap_or(30).clamp(0, 3650);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let rows = brainiac_store::memories::expiring(&mut tx, days, q.limit.unwrap_or(50))
+        .await
+        .map_err(internal)?;
+    let now = chrono::Utc::now();
+    Ok(Json(json!({
+        "window_days": days,
+        "memories": rows.iter().map(|m| json!({
+            "id": m.id,
+            "kind": m.kind.as_str(),
+            "status": m.status.as_str(),
+            "content": m.content,
+            "team_id": m.team_id,
+            "confidence": m.confidence,
+            "valid_to": m.valid_to,
+            "days_left": m.valid_to.map(|to| (to - now).num_days()),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct ReverifyBody {
+    /// New validity budget from now; defaults to the kind's standard TTL.
+    days: Option<i64>,
+}
+
+/// Re-verification is a governance act: like promotion review, it requires
+/// a maintainer of the owning team (org-wide memories: any org principal
+/// with write scope).
+async fn memory_reverify(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Option<Json<ReverifyBody>>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let row = sqlx::query(
+        "SELECT team_id, kind FROM memories WHERE id = $1 AND superseded_by IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal)?
+    .ok_or((
+        StatusCode::NOT_FOUND,
+        "memory not found (or superseded — supersessions are final)".into(),
+    ))?;
+    if let Some(team_id) = row.get::<Option<Uuid>, _>("team_id") {
+        if !is_maintainer(&mut tx, &principal, team_id).await? {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "re-verification requires a maintainer of the owning team".into(),
+            ));
+        }
+    }
+    let kind = brainiac_core::MemoryKind::parse(&row.get::<String, _>("kind"));
+    let default_days = kind.map_or(365, |k| i64::from(k.default_ttl_days()));
+    let days = body
+        .and_then(|b| b.days)
+        .unwrap_or(default_days)
+        .clamp(1, 3650);
+    let new_valid_to = brainiac_store::memories::extend_validity(&mut tx, id, days)
+        .await
+        .map_err(internal)?
+        .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(json!({
+        "memory_id": id,
+        "reverified": true,
+        "valid_to": new_valid_to,
+        "days": days,
+    })))
 }
 
 // ── audit trail ─────────────────────────────────────────────────────────

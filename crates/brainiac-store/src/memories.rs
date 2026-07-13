@@ -264,6 +264,56 @@ pub async fn link_entity(conn: &mut PgConnection, memory_id: Uuid, entity_id: Uu
     Ok(())
 }
 
+
+// ── freshness lifecycle (TTL + re-verification) ─────────────────────────
+
+/// Live memories whose validity window closes within `within_days` (or has
+/// already closed), oldest boundary first — the re-verification queue.
+/// Only candidate/canonical rows: raw/rejected aren't worth re-confirming
+/// and deprecated rows already ended deliberately.
+pub async fn expiring(
+    conn: &mut PgConnection,
+    within_days: i64,
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {MEMORY_COLUMNS} FROM memories
+         WHERE valid_to IS NOT NULL
+           AND valid_to <= now() + make_interval(days => $1::int)
+           AND status IN ('candidate', 'canonical')
+           AND superseded_by IS NULL
+         ORDER BY valid_to ASC
+         LIMIT $2"
+    ))
+    .bind(within_days)
+    .bind(limit.clamp(1, 200))
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.iter().map(row_to_memory).collect())
+}
+
+/// Re-verify a memory: extend its validity window `days` from now (not from
+/// the old boundary, so a long-expired row doesn't come back pre-stale).
+/// Returns the new boundary, or None when the id doesn't resolve under the
+/// caller's RLS (or the row is superseded — supersessions are final).
+pub async fn extend_validity(
+    conn: &mut PgConnection,
+    id: Uuid,
+    days: i64,
+) -> Result<Option<DateTime<Utc>>> {
+    let row = sqlx::query(
+        "UPDATE memories
+         SET valid_to = now() + make_interval(days => $2::int), updated_at = now()
+         WHERE id = $1 AND superseded_by IS NULL
+         RETURNING valid_to",
+    )
+    .bind(id)
+    .bind(days)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|r| r.get("valid_to")))
+}
+
 /// pgvector text literal ("[1,2,3]") — bound as text and cast with ::vector,
 /// avoiding a pgvector client-crate dependency.
 fn vector_literal(v: &[f32]) -> String {

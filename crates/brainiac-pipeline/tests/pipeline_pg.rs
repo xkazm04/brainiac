@@ -119,8 +119,7 @@ async fn full_pipeline_over_seed_transcripts() {
     let store = Store::connect(&url).await.expect("connect");
     let fx = brainiac_fixtures::load(brainiac_fixtures::loader::default_root()).expect("fixtures");
     let embedder = DeterministicEmbedder::default();
-    let provider =
-        brainiac_gateway::ProviderRouter::single(std::sync::Arc::new(perfect_mock(&fx)));
+    let provider = brainiac_gateway::ProviderRouter::single(std::sync::Arc::new(perfect_mock(&fx)));
 
     // Identity + sources.
     let org_id = brainiac_fixtures::ids::stable_uuid(&fx.org.org);
@@ -199,6 +198,18 @@ async fn full_pipeline_over_seed_transcripts() {
 
     let mut tx = store.scoped_tx(&principal).await.expect("tx");
     use sqlx::Row;
+
+    // Freshness lifecycle: extraction stamps a validity window on every
+    // memory (valid_from = now, valid_to = now + kind TTL).
+    let unstamped: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM memories
+         WHERE valid_from IS NULL OR valid_to IS NULL OR valid_to <= now()",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("q")
+    .get("n");
+    assert_eq!(unstamped, 0, "every extracted memory carries a future validity window");
 
     // Every memory carries provenance pointing at its source + the mock model.
     let orphan: i64 = sqlx::query(

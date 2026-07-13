@@ -107,6 +107,19 @@ impl MemoryKind {
             _ => None,
         }
     }
+
+    /// Default freshness budget per kind (days) — how long extracted
+    /// knowledge stays presumed-true before it needs re-verification.
+    /// Procedures rot fastest; decisions stay binding longest.
+    pub fn default_ttl_days(&self) -> u32 {
+        match self {
+            Self::Fact => 365,
+            Self::Decision => 540,
+            Self::Pattern => 540,
+            Self::Pitfall => 365,
+            Self::Howto => 180,
+        }
+    }
 }
 
 /// Who/what produced an artifact.

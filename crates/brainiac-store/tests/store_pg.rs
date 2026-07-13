@@ -214,9 +214,15 @@ async fn rls_visibility_matrix_and_search_leaks() {
     let version = memories::ensure_embedding_version(&mut tx, "test-model", 4)
         .await
         .expect("ver");
-    let hits = memories::search_vector(&mut tx, version, &[1.0, 0.0, 0.0, 0.0], 10, &Default::default())
-        .await
-        .expect("ann");
+    let hits = memories::search_vector(
+        &mut tx,
+        version,
+        &[1.0, 0.0, 0.0, 0.0],
+        10,
+        &Default::default(),
+    )
+    .await
+    .expect("ann");
     let hit_ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
     assert!(hit_ids.contains(&uuid(101)));
     assert!(
@@ -388,18 +394,70 @@ async fn queue_claim_redeliver_and_dead_letter() {
     // Archive rows carry the DB-recorded claim count (the dead-letter above
     // was forced by forging attempts locally, so only the real claims show).
     assert!(dead[0].attempts >= 1);
-    let requeued = queue::requeue_dead(pool, dead[0].id).await.expect("requeue");
+    let requeued = queue::requeue_dead(pool, dead[0].id)
+        .await
+        .expect("requeue");
     assert!(requeued, "dead letter must requeue");
     assert_eq!(queue::depth(pool, "extract").await.expect("depth"), 1);
     let back = queue::read(pool, "extract", 1, 30).await.expect("read5");
     assert_eq!(back[0].id, dead[0].id, "requeue preserves the job id");
     assert_eq!(back[0].attempts, 1, "attempt budget resets");
     assert!(
-        !queue::requeue_dead(pool, dead[0].id).await.expect("requeue2"),
+        !queue::requeue_dead(pool, dead[0].id)
+            .await
+            .expect("requeue2"),
         "second requeue of the same id is a no-op"
     );
     queue::complete(pool, &back[0]).await.expect("complete2");
 
     // Keep admin pool alive till the end (unused otherwise).
+    let _ = &ctx.admin;
+}
+
+#[tokio::test]
+async fn ttl_expiring_queue_and_reverification() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+    let p = pay_dev();
+
+    // Age one canonical memory to the edge of its window: expires in 5 days.
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    sqlx::query(
+        "UPDATE memories SET valid_from = now() - interval '360 days',
+                             valid_to = now() + interval '5 days'
+         WHERE id = $1",
+    )
+    .bind(uuid(102))
+    .execute(&mut *tx)
+    .await
+    .expect("age");
+    tx.commit().await.expect("commit");
+
+    // Within a 30-day horizon it shows; within 1 day it doesn't.
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let soon = memories::expiring(&mut tx, 30, 50).await.expect("expiring");
+    assert!(soon.iter().any(|m| m.id == uuid(102)), "5-days-out memory queued");
+    let sooner = memories::expiring(&mut tx, 1, 50).await.expect("expiring");
+    assert!(sooner.iter().all(|m| m.id != uuid(102)), "outside 1-day horizon");
+
+    // Re-verify: window extends from NOW, not the old boundary.
+    let new_to = memories::extend_validity(&mut tx, uuid(102), 365)
+        .await
+        .expect("extend")
+        .expect("row updated");
+    assert!(new_to > chrono::Utc::now() + chrono::Duration::days(300));
+    let after = memories::expiring(&mut tx, 30, 50).await.expect("expiring");
+    assert!(after.iter().all(|m| m.id != uuid(102)), "re-verified row left the queue");
+
+    // RLS: another org's/team's caller can't extend what they can't see.
+    drop(tx);
+    let mut tx = ctx.store.scoped_tx(&data_analyst()).await.expect("tx");
+    let denied = memories::extend_validity(&mut tx, uuid(103), 365)
+        .await
+        .expect("query ok");
+    assert!(denied.is_none(), "invisible (private) memory must not extend");
+
     let _ = &ctx.admin;
 }

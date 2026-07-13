@@ -111,6 +111,19 @@ pub fn extract_json_object(s: &str) -> Option<&str> {
     None
 }
 
+/// TTL for a kind in days: `BRAINIAC_TTL_DAYS_<KIND>` overrides the
+/// core default; `0` disables expiry for that kind (valid_to stays NULL).
+fn ttl_days(kind: MemoryKind) -> Option<i64> {
+    let days = std::env::var(format!(
+        "BRAINIAC_TTL_DAYS_{}",
+        kind.as_str().to_uppercase()
+    ))
+    .ok()
+    .and_then(|v| v.trim().parse::<i64>().ok())
+    .unwrap_or(i64::from(kind.default_ttl_days()));
+    (days > 0).then_some(days)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_extract(
     conn: &mut PgConnection,
@@ -170,6 +183,11 @@ pub async fn run_extract(
         let confidence = m.confidence.map(|c| c.clamp(0.0, 1.0));
 
         let memory_id = Uuid::new_v4();
+        // Freshness lifecycle: stamp the validity window at extraction so
+        // knowledge expires from retrieval (temporal::valid_at) instead of
+        // staying presumed-true forever; /v1/memories/expiring surfaces rows
+        // approaching the boundary for re-verification.
+        let now = chrono::Utc::now();
         brainiac_store::memories::insert(
             conn,
             &brainiac_store::memories::NewMemory {
@@ -182,8 +200,8 @@ pub async fn run_extract(
                 kind,
                 content: m.content.trim().to_string(),
                 language: "en".into(),
-                valid_from: None,
-                valid_to: None,
+                valid_from: Some(now),
+                valid_to: ttl_days(kind).map(|d| now + chrono::Duration::days(d)),
                 superseded_by: None,
                 confidence,
                 provenance_id: Some(provenance_id),
