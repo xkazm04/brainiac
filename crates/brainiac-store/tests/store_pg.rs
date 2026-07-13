@@ -438,9 +438,15 @@ async fn ttl_expiring_queue_and_reverification() {
     // Within a 30-day horizon it shows; within 1 day it doesn't.
     let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
     let soon = memories::expiring(&mut tx, 30, 50).await.expect("expiring");
-    assert!(soon.iter().any(|m| m.id == uuid(102)), "5-days-out memory queued");
+    assert!(
+        soon.iter().any(|m| m.id == uuid(102)),
+        "5-days-out memory queued"
+    );
     let sooner = memories::expiring(&mut tx, 1, 50).await.expect("expiring");
-    assert!(sooner.iter().all(|m| m.id != uuid(102)), "outside 1-day horizon");
+    assert!(
+        sooner.iter().all(|m| m.id != uuid(102)),
+        "outside 1-day horizon"
+    );
 
     // Re-verify: window extends from NOW, not the old boundary.
     let new_to = memories::extend_validity(&mut tx, uuid(102), 365)
@@ -449,7 +455,10 @@ async fn ttl_expiring_queue_and_reverification() {
         .expect("row updated");
     assert!(new_to > chrono::Utc::now() + chrono::Duration::days(300));
     let after = memories::expiring(&mut tx, 30, 50).await.expect("expiring");
-    assert!(after.iter().all(|m| m.id != uuid(102)), "re-verified row left the queue");
+    assert!(
+        after.iter().all(|m| m.id != uuid(102)),
+        "re-verified row left the queue"
+    );
 
     // RLS: another org's/team's caller can't extend what they can't see.
     drop(tx);
@@ -457,7 +466,10 @@ async fn ttl_expiring_queue_and_reverification() {
     let denied = memories::extend_validity(&mut tx, uuid(103), 365)
         .await
         .expect("query ok");
-    assert!(denied.is_none(), "invisible (private) memory must not extend");
+    assert!(
+        denied.is_none(),
+        "invisible (private) memory must not extend"
+    );
 
     let _ = &ctx.admin;
 }
@@ -484,12 +496,18 @@ async fn feedback_claims_queue_and_resolution() {
     .await
     .expect("helpful");
     assert!(
-        feedback::flagged(&mut tx, 50).await.expect("flagged").is_empty(),
+        feedback::flagged(&mut tx, 50)
+            .await
+            .expect("flagged")
+            .is_empty(),
         "a helpful verdict must not open a claim"
     );
 
     // Two negative verdicts against one memory = ONE queue row, counts merged.
-    for (verdict, note) in [("wrong", Some("psp changed the endpoint")), ("outdated", None)] {
+    for (verdict, note) in [
+        ("wrong", Some("psp changed the endpoint")),
+        ("outdated", None),
+    ] {
         feedback::insert(
             &mut tx,
             Uuid::new_v4(),
@@ -503,10 +521,17 @@ async fn feedback_claims_queue_and_resolution() {
         .expect("negative verdict");
     }
     let flagged = feedback::flagged(&mut tx, 50).await.expect("flagged");
-    assert_eq!(flagged.len(), 1, "one row per disputed memory, not per verdict");
+    assert_eq!(
+        flagged.len(),
+        1,
+        "one row per disputed memory, not per verdict"
+    );
     assert_eq!(flagged[0].memory_id, uuid(102));
     assert_eq!((flagged[0].wrong, flagged[0].outdated), (1, 1));
-    assert_eq!(flagged[0].notes, vec!["psp changed the endpoint".to_string()]);
+    assert_eq!(
+        flagged[0].notes,
+        vec!["psp changed the endpoint".to_string()]
+    );
     assert_eq!(feedback::flagged_count(&mut tx).await.expect("count"), 1);
 
     // Trust attaches to served memories in one batched lookup.
@@ -515,8 +540,14 @@ async fn feedback_claims_queue_and_resolution() {
         .expect("trust");
     assert_eq!(trust[&uuid(101)].helpful, 1);
     assert!(!trust[&uuid(101)].disputed(), "helpful is not a dispute");
-    assert!(trust[&uuid(102)].disputed(), "open claims mark a memory disputed");
-    assert!(!trust.contains_key(&uuid(104)), "un-rated memories carry no trust row");
+    assert!(
+        trust[&uuid(102)].disputed(),
+        "open claims mark a memory disputed"
+    );
+    assert!(
+        !trust.contains_key(&uuid(104)),
+        "un-rated memories carry no trust row"
+    );
 
     // A maintainer answers: dismissed → claims close, memory untouched.
     let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed")
@@ -524,10 +555,15 @@ async fn feedback_claims_queue_and_resolution() {
         .expect("resolve");
     assert_eq!(closed, 2, "both open claims close together");
     assert!(
-        feedback::flagged(&mut tx, 50).await.expect("flagged").is_empty(),
+        feedback::flagged(&mut tx, 50)
+            .await
+            .expect("flagged")
+            .is_empty(),
         "answered claims leave the queue"
     );
-    let trust = feedback::trust_for(&mut tx, &[uuid(102)]).await.expect("trust");
+    let trust = feedback::trust_for(&mut tx, &[uuid(102)])
+        .await
+        .expect("trust");
     assert_eq!(trust[&uuid(102)].wrong, 1, "history is kept");
     assert!(!trust[&uuid(102)].disputed(), "but the dispute is settled");
 

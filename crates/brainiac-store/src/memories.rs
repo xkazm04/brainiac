@@ -264,7 +264,6 @@ pub async fn link_entity(conn: &mut PgConnection, memory_id: Uuid, entity_id: Uu
     Ok(())
 }
 
-
 // ── freshness lifecycle (TTL + re-verification) ─────────────────────────
 
 /// Live memories whose validity window closes within `within_days` (or has

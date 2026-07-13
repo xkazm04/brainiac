@@ -209,7 +209,10 @@ async fn full_pipeline_over_seed_transcripts() {
     .await
     .expect("q")
     .get("n");
-    assert_eq!(unstamped, 0, "every extracted memory carries a future validity window");
+    assert_eq!(
+        unstamped, 0,
+        "every extracted memory carries a future validity window"
+    );
 
     // Every memory carries provenance pointing at its source + the mock model.
     let orphan: i64 = sqlx::query(

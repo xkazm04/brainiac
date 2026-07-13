@@ -138,7 +138,11 @@ pub async fn run(
             query: q.query.clone(),
             as_of: q.as_of,
             ndcg_at_10: ndcg,
-            reciprocal_rank: if q.relevant.is_empty() { None } else { Some(rr) },
+            reciprocal_rank: if q.relevant.is_empty() {
+                None
+            } else {
+                Some(rr)
+            },
             recall_at_5: recall5,
             expected: q
                 .relevant
@@ -227,8 +231,14 @@ pub async fn run(
                 vec![]
             } else {
                 vec![match expected_rank {
-                    Some(r) => format!("expected {} at rank 1, found at rank {r}", t.expected_memory),
-                    None => format!("expected {} at rank 1, absent from results", t.expected_memory),
+                    Some(r) => format!(
+                        "expected {} at rank 1, found at rank {r}",
+                        t.expected_memory
+                    ),
+                    None => format!(
+                        "expected {} at rank 1, absent from results",
+                        t.expected_memory
+                    ),
                 }]
             },
             pass: rank1_hit,

@@ -161,10 +161,7 @@ impl Resilience {
                 Err(e) => anyhow::Error::new(e).context(format!("{what} request")),
                 Ok(resp) => {
                     let status = resp.status();
-                    let body = resp
-                        .text()
-                        .await
-                        .with_context(|| format!("{what} body"))?;
+                    let body = resp.text().await.with_context(|| format!("{what} body"))?;
                     if status.is_success() {
                         self.breaker.record_success();
                         return Ok(body);

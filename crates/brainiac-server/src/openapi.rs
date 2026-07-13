@@ -263,9 +263,8 @@ mod tests {
         let Ok(committed) = std::fs::read_to_string(&path) else {
             panic!("openapi.json is missing — run `cargo run -p brainiac-server -- openapi`");
         };
-        let current = ApiDoc::openapi()
-            .to_pretty_json()
-            .expect("serialize spec") + "
+        let current = ApiDoc::openapi().to_pretty_json().expect("serialize spec")
+            + "
 ";
         assert_eq!(
             committed.replace("

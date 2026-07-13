@@ -221,7 +221,10 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                     "unknown-entity",
                     F_MERGES,
                     format!("merge_sets[{}].members", set.canonical),
-                    format!("merge set `{}` references unknown entity `{m}`", set.canonical),
+                    format!(
+                        "merge set `{}` references unknown entity `{m}`",
+                        set.canonical
+                    ),
                 );
             }
             if let Some(other) = member_of.insert(m.as_str(), set.canonical.as_str()) {
@@ -283,7 +286,10 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                 "invalid-enum",
                 F_MEMORIES,
                 at("visibility"),
-                format!("memory `{}` has invalid visibility `{}`", m.id, m.visibility),
+                format!(
+                    "memory `{}` has invalid visibility `{}`",
+                    m.id, m.visibility
+                ),
             );
         }
         if brainiac_core::MemoryKind::parse(&m.kind).is_none() {
@@ -337,7 +343,10 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                         "unknown-entity",
                         F_MEMORIES,
                         at("relations"),
-                        format!("memory `{}` relation references unknown entity `{end}`", m.id),
+                        format!(
+                            "memory `{}` relation references unknown entity `{end}`",
+                            m.id
+                        ),
                     );
                 }
             }
@@ -519,7 +528,10 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                 "unknown-memory",
                 F_TEMPORAL,
                 format!("cases[{}].expected_memory", t.id),
-                format!("temporal `{}` expects unknown memory `{}`", t.id, t.expected_memory),
+                format!(
+                    "temporal `{}` expects unknown memory `{}`",
+                    t.id, t.expected_memory
+                ),
             ),
             Some(m) => {
                 let from_ok = m.valid_from.is_none_or(|f| f <= t.as_of);
@@ -612,7 +624,10 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                     "unknown-memory",
                     F_QA,
                     at("forbidden_top3"),
-                    format!("qa `{}` forbidden_top3 references unknown memory `{f}`", q.id),
+                    format!(
+                        "qa `{}` forbidden_top3 references unknown memory `{f}`",
+                        q.id
+                    ),
                 );
             }
         }
@@ -621,7 +636,10 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                 "qa-negative",
                 F_QA,
                 at("relevant"),
-                format!("qa `{}` is negative-stratum but lists relevant memories", q.id),
+                format!(
+                    "qa `{}` is negative-stratum but lists relevant memories",
+                    q.id
+                ),
             );
         }
     }
