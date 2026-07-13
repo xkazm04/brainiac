@@ -26,6 +26,20 @@ cargo run -p brainiac-server -- eval --fixtures fixtures/v1 --profile retrieval
 Without Docker/`DATABASE_URL`, the pure crates (`core`, `fixtures`, `gateway`
 mock, metrics) still build and test — Postgres-backed tests skip themselves.
 
+## Deploy
+
+The whole product — Postgres+pgvector, the Rust server (with the pipeline
+worker in-process), and the Next.js console — runs on **one small VM**:
+
+```bash
+cp .env.deploy.example .env.deploy   # Qwen key, tokens, DB password
+docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d --build
+```
+
+Sized for a 1 vCPU / 1 GB box. **[docs/deploy/alibaba.md](docs/deploy/alibaba.md)**
+walks the free path end to end (Alibaba ECS free trial + Qwen Model Studio
+free quota, Singapore) and lists the gotchas that cost hours.
+
 ## Layout
 
 See `docs/PLAN.md` § Crate map. Fixtures are a synthetic org ("Meridian") —

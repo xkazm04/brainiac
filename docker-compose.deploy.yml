@@ -1,0 +1,85 @@
+# Brainiac — whole-stack deployment on ONE small VM (the Alibaba ECS
+# free-trial recipe; see docs/deploy/alibaba.md).
+#
+# Sized for the 1 vCPU / 1 GB free-tier instance: three containers, not four
+# (the pipeline worker runs in-process via `serve --with-worker`), and
+# Postgres is tuned down from its defaults. Add 2 GB of swap on the host.
+#
+#   cp .env.deploy.example .env.deploy && edit
+#   docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brainiac
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: brainiac
+    # ~200 MB resident instead of the stock ~400 MB+. The corpus is small;
+    # what matters is not swapping the Rust/Node processes out.
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c max_connections=40
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c effective_cache_size=256MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brainiac -d brainiac"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - brainiac-pg:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+
+  # REST + MCP + the pipeline worker, one process.
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://brainiac:${POSTGRES_PASSWORD}@postgres:5432/brainiac
+      BRAINIAC_TOKENS: ${BRAINIAC_TOKENS}
+      # Qwen cloud (Singapore) — LLM engine + embeddings.
+      QWEN_API_KEY: ${QWEN_API_KEY:?set QWEN_API_KEY}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+      BRAINIAC_EMBEDDER: ${BRAINIAC_EMBEDDER:-qwen}
+      RUST_LOG: ${RUST_LOG:-info}
+    command: ["brainiac", "serve", "--bind", "0.0.0.0:8600", "--with-worker"]
+    expose:
+      - "8600"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      BRAINIAC_API_URL: http://server:8600
+      BRAINIAC_API_TOKEN: ${BRAINIAC_API_TOKEN:?set BRAINIAC_API_TOKEN}
+      NODE_OPTIONS: --max-old-space-size=256
+    ports:
+      - "80:3100"
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+
+volumes:
+  brainiac-pg:

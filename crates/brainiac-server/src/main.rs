@@ -24,6 +24,13 @@ enum Command {
     Serve {
         #[arg(long, default_value = "127.0.0.1:8600")]
         bind: String,
+        /// Also drain the pipeline queue in-process. For constrained hosts
+        /// (a 1 GB free-tier VM) — one runtime and one pool instead of two.
+        #[arg(long)]
+        with_worker: bool,
+        /// With --with-worker: use the deterministic mock provider.
+        #[arg(long)]
+        mock: bool,
     },
     /// Run the MCP server on stdio (agent surface).
     Mcp,
@@ -64,6 +71,13 @@ enum Command {
     Fixtures {
         #[command(subcommand)]
         cmd: FixturesCmd,
+    },
+    /// Write the OpenAPI document (the same one `GET /openapi.json` serves).
+    /// The console generates its TypeScript types from this file, so it is
+    /// committed and regenerated whenever a response shape changes.
+    Openapi {
+        #[arg(long, default_value = "openapi.json")]
+        out: String,
     },
 }
 
@@ -120,7 +134,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve { bind } => serve(&bind).await,
+        Command::Serve {
+            bind,
+            with_worker,
+            mock,
+        } => serve(&bind, with_worker, mock).await,
         Command::Mcp => mcp().await,
         Command::Worker { mock } => worker(mock).await,
         Command::Eval {
@@ -143,6 +161,7 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Command::Openapi { out } => openapi_dump(&out),
         Command::Fixtures { cmd } => match cmd {
             FixturesCmd::Lint { fixtures, format } => fixtures_lint(&fixtures, &format),
             FixturesCmd::Schema { out } => fixtures_schema(&out),
@@ -203,6 +222,28 @@ fn fixtures_lint(root: &str, format: &str) -> Result<()> {
     Ok(())
 }
 
+fn openapi_dump(out: &str) -> Result<()> {
+    use utoipa::OpenApi;
+    let doc = brainiac_server::openapi::ApiDoc::openapi();
+    let json = doc.to_pretty_json()?;
+    if let Some(parent) = std::path::Path::new(out).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(
+        out,
+        json + "
+",
+    )?;
+    eprintln!(
+        "openapi: {} paths, {} schemas -> {out}",
+        doc.paths.paths.len(),
+        doc.components.as_ref().map_or(0, |c| c.schemas.len())
+    );
+    Ok(())
+}
+
 fn fixtures_schema(out: &str) -> Result<()> {
     let written = brainiac_fixtures::export::export_schemas(std::path::Path::new(out))?;
     eprintln!("fixtures schema: wrote {} file(s) to {out}", written.len());
@@ -212,14 +253,28 @@ fn fixtures_schema(out: &str) -> Result<()> {
     Ok(())
 }
 
-async fn serve(bind: &str) -> Result<()> {
+async fn serve(bind: &str, with_worker: bool, mock: bool) -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
+
+    // Single-process mode for constrained hosts (a 1 GB free-tier VM can't
+    // afford a second runtime + connection pool). The worker loop is just a
+    // task on the same runtime; it shares the store and the embedder.
+    if with_worker {
+        let store = store.clone();
+        let embedder = Arc::clone(&embedder);
+        tokio::spawn(async move {
+            if let Err(e) = worker_loop(store, embedder, mock).await {
+                tracing::error!(error = %e, "in-process worker stopped");
+            }
+        });
+    }
+
     let app = http::router(store, embedder).await?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!(%bind, "brainiac REST listening");
+    tracing::info!(%bind, with_worker, "brainiac REST listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -238,7 +293,12 @@ async fn worker(mock: bool) -> Result<()> {
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
+    worker_loop(store, embedder, mock).await
+}
 
+/// The pipeline drain loop. Runs standalone (`brainiac worker`) or as a task
+/// inside `serve --with-worker`.
+async fn worker_loop(store: Store, embedder: Arc<dyn Embedder>, mock: bool) -> Result<()> {
     let default_provider: Arc<dyn brainiac_gateway::ChatProvider> = if mock {
         tracing::warn!("worker running with the MOCK provider — dev/demo only");
         Arc::new(brainiac_gateway::MockProvider::new(|_| {

@@ -5,3 +5,6 @@
 results/local/
 node_modules/
 .DS_Store
+
+# deployment secrets
+.env.deploy
