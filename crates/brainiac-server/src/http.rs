@@ -219,6 +219,7 @@ pub(crate) async fn search(
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
+        state.store.pool(),
         state.embedder.as_ref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {

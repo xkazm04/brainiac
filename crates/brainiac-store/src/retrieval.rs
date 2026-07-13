@@ -10,8 +10,11 @@
 //! 5. assembly: temporal filter + supersession-chain dedupe (as-of aware),
 //!    fused order preserved, graph extras appended.
 //!
-//! Every SQL stage runs inside the caller's scoped transaction, so the
-//! principal's RLS applies to ANN, FTS, and graph reads alike.
+//! The graph + assembly stages run inside the caller's scoped transaction. The
+//! two candidate retrievers (stage 2) run concurrently on separate pooled
+//! connections, each re-stamped with the caller's exact RLS scope (org/user,
+//! and the worker escape if set), so the principal's RLS applies to ANN, FTS,
+//! and graph reads alike.
 
 use anyhow::Result;
 use brainiac_core::embed::Embedder;
@@ -19,6 +22,7 @@ use brainiac_core::fusion::reciprocal_rank_fusion;
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
 use brainiac_core::{Memory, MemoryStatus};
 use chrono::{DateTime, Utc};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::{entities, memories};
@@ -102,8 +106,62 @@ pub struct RetrievalHit {
     pub via_graph: bool,
 }
 
+/// The RLS scope of the caller's transaction, mirrored onto the pooled
+/// connections that run the candidate retrievers so they see EXACTLY what the
+/// caller would — scoped_tx or worker_tx alike.
+struct RlsScope {
+    org_id: String,
+    user_id: String,
+    /// `'on'` for worker transactions; absent otherwise.
+    worker: Option<String>,
+}
+
+/// Read the principal's per-connection RLS settings back off the caller's tx.
+/// `set_config(..., true)` made them transaction-local, so `current_setting`
+/// on the same tx recovers them without needing the `Principal` object.
+async fn read_scope(tx: &mut sqlx::PgConnection) -> Result<RlsScope> {
+    let row = sqlx::query(
+        "SELECT current_setting('app.org_id', true) AS org_id,
+                current_setting('app.user_id', true) AS user_id,
+                current_setting('app.worker', true) AS worker",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(RlsScope {
+        org_id: row
+            .try_get::<Option<String>, _>("org_id")?
+            .unwrap_or_default(),
+        user_id: row
+            .try_get::<Option<String>, _>("user_id")?
+            .unwrap_or_default(),
+        worker: row.try_get::<Option<String>, _>("worker")?,
+    })
+}
+
+/// Open a fresh pooled transaction and stamp it with the caller's RLS scope.
+/// The pool's `after_connect` hook has already dropped the session to the
+/// non-owner `brainiac_app` role, so these settings are load-bearing: without
+/// them the candidate query would silently return nothing (or, on a raw
+/// unscoped session, leak). Transaction-local (`set_config(..., true)`) so the
+/// connection returns to the pool clean.
+async fn scoped_pool_tx<'a>(pool: &'a PgPool, scope: &RlsScope) -> Result<crate::Tx<'a>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "SELECT set_config('app.org_id', $1, true),
+                set_config('app.user_id', $2, true),
+                set_config('app.worker', $3, true)",
+    )
+    .bind(&scope.org_id)
+    .bind(&scope.user_id)
+    .bind(scope.worker.as_deref().unwrap_or("off"))
+    .execute(&mut *tx)
+    .await?;
+    Ok(tx)
+}
+
 pub async fn search(
     tx: &mut sqlx::PgConnection,
+    pool: &PgPool,
     embedder: &dyn Embedder,
     embedding_version: i32,
     req: &RetrievalRequest,
@@ -112,18 +170,33 @@ pub async fn search(
 
     // Stage 2: candidate lists (ranked best-first), filters pushed into SQL
     // so narrowed searches don't waste their candidate budget on rows the
-    // assembly stage would drop anyway.
+    // assembly stage would drop anyway. The two retrievers run CONCURRENTLY on
+    // separate pooled connections — a single &mut PgConnection can't be shared
+    // across futures — each re-stamped with the caller's RLS scope so both
+    // still read under the caller's principal.
     let query_vec = embedder.embed(&req.query).await?;
-    let vector_hits = memories::search_vector(
-        tx,
-        embedding_version,
-        &query_vec,
-        CANDIDATES_PER_RETRIEVER,
-        &req.filters,
-    )
-    .await?;
-    let fts_hits =
-        memories::search_fts(tx, &req.query, CANDIDATES_PER_RETRIEVER, &req.filters).await?;
+    let scope = read_scope(tx).await?;
+
+    let vector_fut = async {
+        let mut c = scoped_pool_tx(pool, &scope).await?;
+        let hits = memories::search_vector(
+            &mut c,
+            embedding_version,
+            &query_vec,
+            CANDIDATES_PER_RETRIEVER,
+            &req.filters,
+        )
+        .await?;
+        // Read-only: let the tx roll back as the connection returns to the pool.
+        Ok::<_, anyhow::Error>(hits)
+    };
+    let fts_fut = async {
+        let mut c = scoped_pool_tx(pool, &scope).await?;
+        let hits = memories::search_fts(&mut c, &req.query, CANDIDATES_PER_RETRIEVER, &req.filters)
+            .await?;
+        Ok::<_, anyhow::Error>(hits)
+    };
+    let (vector_hits, fts_hits) = tokio::try_join!(vector_fut, fts_fut)?;
 
     let vector_ranked: Vec<Uuid> = vector_hits.iter().map(|(id, _)| *id).collect();
     let fts_ranked: Vec<Uuid> = fts_hits.iter().map(|(id, _)| *id).collect();

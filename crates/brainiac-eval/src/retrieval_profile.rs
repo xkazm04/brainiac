@@ -85,6 +85,7 @@ pub async fn run(
         let mut tx = store.scoped_tx(&principal).await?;
         let hits = search(
             &mut tx,
+            store.pool(),
             embedder,
             embedding_version,
             &RetrievalRequest {
@@ -190,6 +191,7 @@ pub async fn run(
         let mut tx = store.scoped_tx(&principal).await?;
         let hits = search(
             &mut tx,
+            store.pool(),
             embedder,
             embedding_version,
             &RetrievalRequest {
@@ -252,6 +254,7 @@ pub async fn run(
         let mut tx = store.scoped_tx(&principal).await?;
         let hits = search(
             &mut tx,
+            store.pool(),
             embedder,
             embedding_version,
             &RetrievalRequest {

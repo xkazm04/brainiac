@@ -245,6 +245,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
+        state.store.pool(),
         state.embedder.as_ref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
@@ -297,6 +298,7 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value> {
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
+        state.store.pool(),
         state.embedder.as_ref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {

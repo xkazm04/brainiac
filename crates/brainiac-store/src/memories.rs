@@ -105,6 +105,15 @@ pub async fn upsert_embedding(
 
 /// Vector candidates: cosine distance over the given embedding version,
 /// RLS-scoped via the join to `memories`. Returns (memory_id, similarity).
+///
+/// The query is cast to `vector(dim)` and constrained to rows of that
+/// dimension so the partial per-dimension HNSW index (0006) can serve the
+/// `<=>` ordering. `dim` is the query vector's own length, interpolated as a
+/// literal because a `vector` typmod cannot be a bind parameter; it is derived
+/// from trusted server state (never user input). The `vector_dims` predicate
+/// is a no-op on the result set — every row of one embedding_version already
+/// shares that version's dimension — it exists only to unlock the index; where
+/// no index exists for `dim` the planner falls back to a correct seq scan.
 pub async fn search_vector(
     conn: &mut PgConnection,
     version_id: i32,
@@ -112,19 +121,21 @@ pub async fn search_vector(
     limit: i64,
     filters: &crate::retrieval::RetrievalFilters,
 ) -> Result<Vec<(Uuid, f32)>> {
-    let rows = sqlx::query(
-        "SELECT m.id, 1 - (e.embedding <=> $1::vector) AS score
+    let dim = query.len();
+    let rows = sqlx::query(&format!(
+        "SELECT m.id, 1 - (e.embedding::vector({dim}) <=> $1::vector({dim})) AS score
          FROM memory_embeddings e
          JOIN memories m ON m.id = e.memory_id
          WHERE e.embedding_version_id = $2
+           AND vector_dims(e.embedding) = {dim}
            AND m.status <> 'rejected'
            AND ($4::text[] IS NULL OR m.kind = ANY($4))
            AND ($5::text[] IS NULL OR m.status::text = ANY($5))
            AND ($6::uuid IS NULL OR m.team_id = $6)
            AND ($7::real IS NULL OR m.confidence >= $7)
-         ORDER BY e.embedding <=> $1::vector
-         LIMIT $3",
-    )
+         ORDER BY e.embedding::vector({dim}) <=> $1::vector({dim})
+         LIMIT $3"
+    ))
     .bind(vector_literal(query))
     .bind(version_id)
     .bind(limit)
