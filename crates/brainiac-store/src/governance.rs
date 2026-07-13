@@ -287,6 +287,59 @@ pub async fn provenance_for_memory(
     }))
 }
 
+/// A compact, resolved provenance reference for a served memory: who/what
+/// recorded it and — when LLM-produced — the model. This is the citation handle
+/// ARCHITECTURE.md §4.6 attaches to packed context lines; it is deliberately
+/// leaner than [`ProvenanceView`] (no source excerpt), so a bundle can carry one
+/// per entry cheaply.
+#[derive(Debug, Clone)]
+pub struct ProvenanceRef {
+    pub actor_kind: Option<String>,
+    pub actor_ref: Option<String>,
+    pub model_ref: Option<String>,
+}
+
+/// Batched provenance refs for a result set — ONE query for N memories, never
+/// an N+1 (mirrors [`open_contradictions_for`] / [`feedback::trust_for`]). Used
+/// to attach a citation ref to every packed `memory_context` line without a
+/// per-entry round-trip.
+///
+/// RLS-safe: the lead `memories` join means the caller's SELECT policy gates the
+/// rows, so a memory the caller cannot see contributes nothing. The INNER join
+/// to `provenance` means only memories that actually carry a provenance row
+/// appear in the map — a visible memory with no provenance is simply absent, and
+/// the caller treats absence as "no ref".
+pub async fn provenance_refs_for(
+    conn: &mut PgConnection,
+    memory_ids: &[Uuid],
+) -> Result<HashMap<Uuid, ProvenanceRef>> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        "SELECT m.id AS memory_id, p.actor_kind, p.actor_id, p.model_ref
+         FROM memories m
+         JOIN provenance p ON p.id = m.provenance_id
+         WHERE m.id = ANY($1)",
+    )
+    .bind(memory_ids)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<Uuid, _>("memory_id"),
+                ProvenanceRef {
+                    actor_kind: r.get("actor_kind"),
+                    actor_ref: r.get("actor_id"),
+                    model_ref: r.get("model_ref"),
+                },
+            )
+        })
+        .collect())
+}
+
 pub async fn insert_contradiction(
     conn: &mut PgConnection,
     org_id: Uuid,

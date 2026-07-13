@@ -19,6 +19,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
 use brainiac_core::Principal;
+use brainiac_store::retrieval::RetrievalFilters;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -302,11 +303,12 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "memory_context",
-            "description": "Session-start bundle: the most relevant CANONICAL organizational knowledge for a task, token-budgeted. Call once when starting work on something.",
+            "description": "Session-start bundle: the most relevant CANONICAL organizational knowledge for a task, token-budgeted. Each entry carries a compact provenance ref (who/what recorded it). Call once when starting work on something.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "task_hint": { "type": "string", "description": "Short description of the task/repo/area you are working on" }
+                    "task_hint": { "type": "string", "description": "Short description of the task/repo/area you are working on" },
+                    "as_of": { "type": "string", "description": "RFC3339 timestamp: build the bundle as of this moment in time" }
                 },
                 "required": ["task_hint"]
             }
@@ -486,13 +488,40 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
     }))
 }
 
+/// Render a compact provenance citation handle for a packed context line: the
+/// recording actor kind and its sharpest identifier — the model ref when the
+/// memory was LLM-produced, else the actor ref. `None` when the row carries no
+/// usable identity (so the caller omits the tag entirely).
+fn provenance_tag(p: &brainiac_store::governance::ProvenanceRef) -> Option<String> {
+    let kind = p.actor_kind.as_deref()?;
+    let who = p.model_ref.as_deref().or(p.actor_ref.as_deref());
+    Some(match who {
+        Some(who) => format!("via {kind} ({who})"),
+        None => format!("via {kind}"),
+    })
+}
+
 async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let hint = within_cap(
         required_str(args, "task_hint")?,
         MAX_QUERY_CHARS,
         "task_hint",
     )?;
+    // Optional point-in-time view (same lenient parse as `memory_search`): an
+    // unparseable value is ignored rather than erroring, so a caller that hands
+    // a malformed timestamp still gets a live bundle.
+    let as_of: Option<DateTime<Utc>> = args
+        .get("as_of")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok());
+
     let mut tx = state.store.scoped_tx(&state.principal).await?;
+    // Push the Canonical floor INTO the SQL candidate stage (RetrievalFilters
+    // min_status) rather than filtering post-hoc: the full k-budget is now spent
+    // on servable canonical rows, so a task whose top matches are mostly raw no
+    // longer yields a thin (or empty) bundle. Graph-expansion extras re-apply the
+    // same floor in `RetrievalFilters::admits`, so every returned hit is
+    // canonical and there is nothing left to filter here.
     let hits = brainiac_store::retrieval::search(
         &mut tx,
         state.store.pool(),
@@ -501,32 +530,39 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
         &brainiac_store::retrieval::RetrievalRequest {
             query: hint.to_string(),
             k: 25,
-            as_of: None,
-            filters: Default::default(),
+            as_of,
+            filters: RetrievalFilters {
+                min_status: Some(brainiac_core::MemoryStatus::Canonical),
+                ..Default::default()
+            },
         },
     )
     .await?;
 
-    // Canonical-only, whole entries packed into the char budget.
-    let canonical: Vec<_> = hits
-        .iter()
-        .filter(|h| h.memory.status == brainiac_core::MemoryStatus::Canonical)
-        .collect();
+    // Whole entries packed into the char budget, in blended-score order (the
+    // hits are already ranked and truncated by the retriever).
+    let bundle_ids: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
     // Open contradictions touching this bundle: a text-consuming agent must see
     // the conflict inline, not only in structured search output. One batched,
     // RLS-scoped query.
-    let bundle_ids: Vec<Uuid> = canonical.iter().map(|h| h.memory.id).collect();
     let contradictions =
         brainiac_store::governance::open_contradictions_for(&mut tx, &bundle_ids).await?;
+    // Compact provenance refs for every packed line (ARCHITECTURE.md §4.6
+    // "attach provenance refs"). BATCHED — one query for the whole bundle, never
+    // N single `provenance_for_memory` calls.
+    let provenance = brainiac_store::governance::provenance_refs_for(&mut tx, &bundle_ids).await?;
     let mut bundle = String::new();
     let mut included = 0usize;
-    for h in &canonical {
+    for h in &hits {
         let mut line = format!(
             "- [{}] {} (memory:{})",
             h.memory.kind.as_str(),
             h.memory.content,
             h.memory.id
         );
+        if let Some(tag) = provenance.get(&h.memory.id).and_then(provenance_tag) {
+            line.push_str(&format!(" — {tag}"));
+        }
         if let Some(flags) = contradictions.get(&h.memory.id) {
             for f in flags {
                 line.push_str(&format!(

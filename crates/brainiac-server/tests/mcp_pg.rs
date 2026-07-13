@@ -658,4 +658,138 @@ async fn mcp_handshake_and_tools() {
         .as_str()
         .expect("text")
         .contains("not found"));
+
+    // ── memory_context v2: SQL canonical floor, as_of, provenance refs
+    // (Direction 1) ─────────────────────────────────────────────────────
+    // One CANONICAL row amid a pile of RAW noise sharing a distinctive keyword.
+    // Post-hoc canonical filtering over a k=25 top list would let the raw pile
+    // crowd the servable row out; pushing the floor into the SQL candidate stage
+    // guarantees the full budget is spent on canonical rows, so it survives.
+    let noise_kw = "zzzcanonfloor";
+    let canon_ctx = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+         VALUES ($1, $2, $3, 'team', 'canonical', 'fact', $4)",
+    )
+    .bind(canon_ctx)
+    .bind(org)
+    .bind(team)
+    .bind(format!(
+        "{noise_kw} the canonical widget flush interval is authoritative"
+    ))
+    .execute(&admin)
+    .await
+    .expect("canonical ctx memory");
+    for i in 0..40 {
+        sqlx::query(
+            "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+             VALUES ($1, $2, $3, 'team', 'raw', 'fact', $4)",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(org)
+        .bind(team)
+        .bind(format!("{noise_kw} raw widget note number {i}"))
+        .execute(&admin)
+        .await
+        .expect("raw noise memory");
+    }
+    let r = handle_message(
+        &state,
+        &rpc(
+            28,
+            "tools/call",
+            json!({ "name": "memory_context", "arguments": { "task_hint": format!("{noise_kw} widget flush") } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert!(
+        payload["memories_included"].as_u64().expect("count") >= 1,
+        "canonical floor must survive raw noise: {payload}"
+    );
+    assert!(
+        payload["context"]
+            .as_str()
+            .expect("ctx")
+            .contains(&canon_ctx.to_string()),
+        "the canonical row must be in the bundle despite the raw pile: {payload}"
+    );
+
+    // Each packed line carries a compact provenance ref (§4.6): the canonical
+    // provenance-chain memory (mpid, seeded above with an agent/model chain)
+    // must render its recorder inline.
+    let r = handle_message(
+        &state,
+        &rpc(
+            29,
+            "tools/call",
+            json!({ "name": "memory_context", "arguments": { "task_hint": "provenance-chain probe memory" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ctx = tool_payload(&r)["context"]
+        .as_str()
+        .expect("ctx")
+        .to_string();
+    assert!(
+        ctx.contains("via agent"),
+        "a packed line must carry a resolved provenance ref: {ctx}"
+    );
+
+    // as_of: a canonical memory valid ONLY in the past is absent at "now" and
+    // present when the bundle is built as of a moment inside its window.
+    let past_mem = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content, valid_from, valid_to)
+         VALUES ($1, $2, $3, 'team', 'canonical', 'fact', $4,
+                 now() - interval '10 days', now() - interval '2 days')",
+    )
+    .bind(past_mem)
+    .bind(org)
+    .bind(team)
+    .bind("zzzpasttime historical widget cache setting")
+    .execute(&admin)
+    .await
+    .expect("past-only memory");
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            30,
+            "tools/call",
+            json!({ "name": "memory_context", "arguments": { "task_hint": "zzzpasttime historical widget" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ctx_now = tool_payload(&r)["context"]
+        .as_str()
+        .expect("ctx")
+        .to_string();
+    assert!(
+        !ctx_now.contains(&past_mem.to_string()),
+        "a past-only memory must be absent at now: {ctx_now}"
+    );
+
+    let as_of = (chrono::Utc::now() - chrono::Duration::days(5)).to_rfc3339();
+    let r = handle_message(
+        &state,
+        &rpc(
+            31,
+            "tools/call",
+            json!({ "name": "memory_context", "arguments": { "task_hint": "zzzpasttime historical widget", "as_of": as_of } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ctx_past = tool_payload(&r)["context"]
+        .as_str()
+        .expect("ctx")
+        .to_string();
+    assert!(
+        ctx_past.contains(&past_mem.to_string()),
+        "the past-only memory must appear under as_of: {ctx_past}"
+    );
 }
