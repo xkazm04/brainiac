@@ -435,6 +435,98 @@ async fn stage5_reranker_reorders_survivors() {
 }
 
 #[tokio::test]
+async fn ensure_version_auto_creates_hnsw_index_for_new_dim() {
+    // Dim-agnostic ANN (0012): a bake-off model at a dimension 0006 never
+    // hard-coded (here 768) must get its partial HNSW index the moment its
+    // embedding version is ensured — no more silent seq-scan. And search over
+    // that dimension must return the right hit through the new index.
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+    let p = pay_dev();
+    let embedder = DeterministicEmbedder::new(768);
+    assert_eq!(embedder.dim(), 768);
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+
+    // Precondition: no 768-d index yet (fresh tenant, only 0006's 256/1024 and
+    // 0012's re-assertion of those two exist).
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_indexes WHERE indexname = $1")
+        .bind("idx_memory_embeddings_hnsw_768")
+        .fetch_one(&mut *c)
+        .await
+        .expect("count before");
+    assert_eq!(before, 0, "768-d index must not pre-exist");
+
+    let content = "the omega-indexer-768 service reconciles ledger snapshots nightly";
+    memories::insert(
+        c,
+        &memories::NewMemory {
+            id: uuid(180),
+            org_id: org(),
+            team_id: Some(uuid(21)),
+            owner_user_id: None,
+            visibility: Visibility::Org,
+            status: MemoryStatus::Canonical,
+            kind: MemoryKind::Fact,
+            content: content.to_string(),
+            language: "en".into(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
+            confidence: None,
+            provenance_id: None,
+        },
+    )
+    .await
+    .expect("m180");
+    // Ensuring the 768-d version must auto-create the matching partial index
+    // (through the SECURITY DEFINER function — brainiac_app itself can't DDL).
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), 768)
+        .await
+        .expect("ver768");
+    memories::upsert_embedding(c, uuid(180), ver, &embedder.embed_sync(content))
+        .await
+        .expect("e180");
+
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_indexes WHERE indexname = $1")
+        .bind("idx_memory_embeddings_hnsw_768")
+        .fetch_one(&mut *c)
+        .await
+        .expect("count after");
+    assert_eq!(
+        after, 1,
+        "ensure_embedding_version(768) must create the index"
+    );
+    tx.commit().await.expect("commit");
+
+    // Search over the 768-d version returns the seeded memory (index or not,
+    // the scan is correct — this proves the dimension is fully wired).
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let hits = retrieval::search(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        &retrieval::RetrievalRequest {
+            query: "omega-indexer-768 ledger reconcile".into(),
+            k: 10,
+            as_of: None,
+            filters: Default::default(),
+        },
+    )
+    .await
+    .expect("search 768");
+    assert!(
+        hits.iter().any(|h| h.memory.id == uuid(180)),
+        "768-d search must surface the seeded memory, got {:?}",
+        hits.iter().map(|h| h.memory.id).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
 async fn czech_fts_honors_language_config() {
     let Some((ctx, _guard)) = setup().await else {
         return;

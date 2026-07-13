@@ -64,6 +64,16 @@ pub async fn ensure_embedding_version(
     model_name: &str,
     dim: i32,
 ) -> Result<i32> {
+    // Dim-agnostic ANN (0012): whenever a version is ensured/activated, make
+    // sure its dimension has a matching partial HNSW index, so a bake-off model
+    // at 768/1536/etc. is served by an index instead of silently seq-scanning
+    // (0006 only hard-coded 256 + 1024). Idempotent (CREATE INDEX IF NOT
+    // EXISTS + an advisory lock inside the SECURITY DEFINER function, which
+    // also supplies the DDL privilege the demoted brainiac_app role lacks).
+    // Runs for existing versions too — cheap, and it self-heals a version whose
+    // index was never built (e.g. rows first written before this shipped).
+    ensure_hnsw_index_for_dim(&mut *conn, dim).await?;
+
     if let Some(row) =
         sqlx::query("SELECT id FROM embedding_versions WHERE model_name = $1 AND dim = $2")
             .bind(model_name)
@@ -82,6 +92,17 @@ pub async fn ensure_embedding_version(
     .fetch_one(conn)
     .await?;
     Ok(row.get::<i32, _>("id"))
+}
+
+/// Ensure the partial HNSW index for `dim` exists (0012's SECURITY DEFINER
+/// function). Separated so callers that already know the dimension can trigger
+/// index creation without touching the versions table.
+pub async fn ensure_hnsw_index_for_dim(conn: &mut PgConnection, dim: i32) -> Result<()> {
+    sqlx::query("SELECT ensure_hnsw_index($1)")
+        .bind(dim)
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 pub async fn upsert_embedding(
