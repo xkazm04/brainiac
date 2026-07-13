@@ -32,6 +32,12 @@ pub struct TickStats {
     pub auto_promoted: usize,
     pub needs_review: usize,
     pub contradictions_opened: usize,
+    /// Extract resilience across the tick: parse_failures = malformed first
+    /// responses, repairs = extra calls that recovered them, deduped =
+    /// memories skipped as already-present for their source (retry redelivery).
+    pub parse_failures: usize,
+    pub repairs: usize,
+    pub deduped: usize,
 }
 
 /// Process up to `batch` ingest jobs. Returns per-tick stats; callers loop.
@@ -100,6 +106,19 @@ async fn process_job(
     )
     .await?;
     stats.memories += extracted.memories_written;
+    stats.parse_failures += extracted.parse_failures;
+    stats.repairs += extracted.repairs;
+    stats.deduped += extracted.deduped;
+    // Per-source resilience: repairs spent on malformed JSON, memories deduped
+    // away as a redelivered retry re-ran extraction on the same source.
+    tracing::info!(
+        source = %source_id,
+        llm_calls = 1 + extracted.repairs,
+        memories = extracted.memories_written,
+        deduped = extracted.deduped,
+        parse_failures = extracted.parse_failures,
+        "source extracted"
+    );
 
     // resolve every NEW entity this source introduced
     for entity_id in &extracted.entities_created {

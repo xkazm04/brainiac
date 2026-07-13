@@ -691,3 +691,312 @@ async fn resolve_thresholds_are_ordered() {
     assert!(resolve::ADJUDICATION_FLOOR < resolve::AUTO_LINK_SIMILARITY);
     assert!(resolve::ADJUDICATION_AUTO_CONFIDENCE > 0.5);
 }
+
+/// Shared teardown for the resilience/chunking tests below.
+async fn truncate_all(admin: &sqlx::PgPool) {
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
+         CASCADE",
+    )
+    .execute(admin)
+    .await
+    .expect("truncate");
+}
+
+/// Direction 1: re-processing the same source must not duplicate memories.
+/// The (org, source, content) dedup skips every memory the source already
+/// produced — proven by extracting the same source twice.
+#[tokio::test]
+async fn reprocessing_source_is_idempotent() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_pipeline::extract;
+    use brainiac_store::{memories, orgs};
+    use sqlx::Row;
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([31u8; 16]);
+    let team = Uuid::from_bytes([32u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+    let source_text = "psp-gateway retries five times; refunds use idempotency keys";
+
+    let mock = MockProvider::new(|req: &ChatRequest| {
+        if req.system.contains("distill organizational knowledge") {
+            return r#"{"memories":[
+                {"kind":"fact","content":"psp-gateway retries five times",
+                 "visibility":"org","confidence":0.9,"entities":[],"relations":[]},
+                {"kind":"decision","content":"refunds use idempotency keys",
+                 "visibility":"org","confidence":0.9,"entities":[],"relations":[]}
+            ]}"#
+            .to_string();
+        }
+        "{}".to_string()
+    });
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let source_id = Uuid::from_bytes([33u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team),
+        "session_transcript",
+        source_text,
+        None,
+    )
+    .await
+    .expect("source");
+    tx.commit().await.expect("commit");
+
+    // Dedup reads the just-written rows via the worker read scope (org+team).
+    let mut tx = store.worker_tx(&principal).await.expect("tx");
+    let first = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team),
+        source_id,
+        source_text,
+    )
+    .await
+    .expect("extract 1");
+    tx.commit().await.expect("commit");
+    assert_eq!(first.memories_written, 2, "first pass writes both memories");
+    assert_eq!(first.deduped, 0);
+
+    let mut tx = store.worker_tx(&principal).await.expect("tx");
+    let second = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team),
+        source_id,
+        source_text,
+    )
+    .await
+    .expect("extract 2");
+    tx.commit().await.expect("commit");
+    assert_eq!(second.memories_written, 0, "reprocess writes nothing new");
+    assert_eq!(second.deduped, 2, "both memories recognized as duplicates");
+
+    let n: i64 = sqlx::query("SELECT count(*) AS n FROM memories WHERE org_id = $1")
+        .bind(org_id)
+        .fetch_one(&admin)
+        .await
+        .expect("q")
+        .get("n");
+    assert_eq!(n, 2, "reprocessing did not duplicate memories");
+}
+
+/// Direction 1: a malformed first response is repaired with exactly one
+/// re-prompt, and the corrected JSON is written — the parse-failure/repair
+/// counters reflect it.
+#[tokio::test]
+async fn malformed_extraction_repairs_once() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_pipeline::extract;
+    use brainiac_store::{memories, orgs};
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([41u8; 16]);
+    let team = Uuid::from_bytes([42u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // First extract call returns garbage; the repair re-prompt (which echoes
+    // "could not be parsed") gets valid JSON.
+    let mock = MockProvider::new(|req: &ChatRequest| {
+        if req.system.contains("distill organizational knowledge") {
+            if req.user.contains("could not be parsed") {
+                return r#"{"memories":[{"kind":"fact","content":"repaired memory",
+                    "visibility":"org","confidence":0.9,"entities":[],"relations":[]}]}"#
+                    .to_string();
+            }
+            return "SORRY not valid json {{{".to_string();
+        }
+        "{}".to_string()
+    });
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let source_id = Uuid::from_bytes([43u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team),
+        "session_transcript",
+        "a transcript",
+        None,
+    )
+    .await
+    .expect("source");
+    tx.commit().await.expect("commit");
+
+    let mut tx = store.worker_tx(&principal).await.expect("tx");
+    let stats = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team),
+        source_id,
+        "a transcript",
+    )
+    .await
+    .expect("extract recovers via repair");
+    tx.commit().await.expect("commit");
+    assert_eq!(stats.parse_failures, 1, "first parse failed");
+    assert_eq!(stats.repairs, 1, "one repair recovered it");
+    assert_eq!(stats.memories_written, 1, "repaired memory written");
+}
+
+/// Direction 1: a persistently-malformed source fails the job even after the
+/// one repair, and the queue's attempt-aware fail() dead-letters it after
+/// MAX_ATTEMPTS instead of retrying forever. The worker calls this exact
+/// fail() (worker::tick, backoff 30s); here we drive it with zero backoff so
+/// the redelivery loop doesn't wait on the visibility timeout.
+#[tokio::test]
+async fn persistently_malformed_source_fails_then_dead_letters() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_pipeline::extract;
+    use brainiac_store::{memories, orgs, queue};
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([51u8; 16]);
+    let team = Uuid::from_bytes([52u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // Never returns parseable JSON — even the repair fails.
+    let mock = MockProvider::new(|req: &ChatRequest| {
+        if req.system.contains("distill organizational knowledge") {
+            return "NEVER valid {{{".to_string();
+        }
+        "{}".to_string()
+    });
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let source_id = Uuid::from_bytes([53u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team),
+        "session_transcript",
+        "garbage",
+        None,
+    )
+    .await
+    .expect("source");
+    tx.commit().await.expect("commit");
+
+    // The extract stage itself hard-fails after the bounded repair.
+    let mut tx = store.worker_tx(&principal).await.expect("tx");
+    let result = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team),
+        source_id,
+        "garbage",
+    )
+    .await;
+    assert!(result.is_err(), "malformed source hard-fails the extract");
+    drop(tx);
+
+    // The queue's fail() (what the worker calls) dead-letters after MAX_ATTEMPTS.
+    queue::send(
+        store.pool(),
+        worker::INGEST_QUEUE,
+        &json!({ "org_id": org_id, "source_id": source_id }),
+    )
+    .await
+    .expect("enqueue");
+    let mut dead = false;
+    for _ in 0..(queue::MAX_ATTEMPTS + 3) {
+        let jobs = queue::read(store.pool(), worker::INGEST_QUEUE, 1, 0)
+            .await
+            .expect("read");
+        let Some(job) = jobs.into_iter().next() else {
+            break;
+        };
+        // simulate the worker's failure handling with zero backoff
+        let retried = queue::fail(store.pool(), &job, 0).await.expect("fail");
+        if !retried {
+            dead = true;
+            break;
+        }
+    }
+    assert!(dead, "job dead-letters instead of retrying forever");
+    assert_eq!(
+        queue::depth(store.pool(), worker::INGEST_QUEUE)
+            .await
+            .expect("depth"),
+        0,
+        "no live job left"
+    );
+    let dl = queue::dead_letters(store.pool(), worker::INGEST_QUEUE, 10)
+        .await
+        .expect("dl");
+    assert_eq!(dl.len(), 1, "exactly one dead letter recorded");
+}

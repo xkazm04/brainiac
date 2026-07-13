@@ -97,7 +97,19 @@ pub struct ExtractStats {
     pub entities_created: Vec<Uuid>,
     pub memory_ids: Vec<Uuid>,
     pub dropped_invalid: usize,
+    /// Memories skipped because an identical (source, content) row already
+    /// existed — the idempotency guard against a redelivered retry.
+    pub deduped: usize,
+    /// First responses that failed to parse and triggered a repair re-prompt.
+    pub parse_failures: usize,
+    /// Repair re-prompts that recovered a parseable response. Total LLM calls
+    /// for the source = one per source + `repairs`.
+    pub repairs: usize,
 }
+
+/// Ceiling on the extractor's completion length (tokens). One place so the
+/// primary call and the repair re-prompt stay in lockstep.
+const MAX_EXTRACT_TOKENS: u32 = 4096;
 
 /// Extract the outermost JSON object from provider output that may carry
 /// prose or fences around it (string/escape aware).
@@ -146,6 +158,100 @@ fn ttl_days(kind: MemoryKind) -> Option<i64> {
     (days > 0).then_some(days)
 }
 
+/// Parse an extractor response into the typed output, or return the failure
+/// reason (used verbatim in the repair re-prompt).
+fn parse_extraction(text: &str) -> std::result::Result<ExtractionOutput, String> {
+    let json_str =
+        extract_json_object(text).ok_or_else(|| "no JSON object in response".to_string())?;
+    serde_json::from_str(json_str).map_err(|e| e.to_string())
+}
+
+/// One extraction call with a single bounded JSON-repair re-prompt. A
+/// malformed first response is re-asked once — echoing the parse error and
+/// the bad output and demanding corrected JSON only. A second failure returns
+/// Err, which the worker maps onto the queue's attempt-aware fail path
+/// (queue::fail → dead-letter after MAX_ATTEMPTS, never infinite retry).
+struct LlmExtract {
+    output: ExtractionOutput,
+    model_ref: String,
+    /// The first parse failed and a repair recovered it.
+    repaired: bool,
+}
+
+async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtract> {
+    let resp = provider
+        .complete(&ChatRequest {
+            system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
+            user: user.to_string(),
+            json_mode: true,
+            max_tokens: MAX_EXTRACT_TOKENS,
+        })
+        .await
+        .context("extract LLM call")?;
+
+    match parse_extraction(&resp.text) {
+        Ok(output) => Ok(LlmExtract {
+            output,
+            model_ref: resp.model_ref,
+            repaired: false,
+        }),
+        Err(err) => {
+            // Bounded to exactly one repair attempt.
+            let repair_user = format!(
+                "Your previous response could not be parsed as JSON ({err}).\n\
+                 Here is the exact response that failed:\n\n{}\n\n\
+                 Return ONLY the corrected JSON object matching the required \
+                 schema — no prose, no code fences, nothing else.",
+                resp.text
+            );
+            let repaired = provider
+                .complete(&ChatRequest {
+                    system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
+                    user: repair_user,
+                    json_mode: true,
+                    max_tokens: MAX_EXTRACT_TOKENS,
+                })
+                .await
+                .context("extract repair LLM call")?;
+            let output = parse_extraction(&repaired.text).map_err(|e| {
+                anyhow::anyhow!("extractor output unparseable after one repair: {e}")
+            })?;
+            Ok(LlmExtract {
+                output,
+                model_ref: repaired.model_ref,
+                repaired: true,
+            })
+        }
+    }
+}
+
+/// Idempotency guard: has a memory with this exact content already been
+/// written for this source? Scoped to (org, source) via the provenance link
+/// (memories carry no source_id column; provenance.source_id is the join).
+/// Exact-content equality is the cheapest correct dedup here — no schema
+/// change, no hash column — and it collapses both a redelivered job's retry
+/// and an overlap region re-extracted by an adjacent chunk. Relies on the
+/// worker read scope (org+team) to see the just-written rows under RLS.
+async fn memory_exists_for_source(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    source_id: Uuid,
+    content: &str,
+) -> Result<bool> {
+    let existing = sqlx::query(
+        "SELECT 1 FROM memories m
+         JOIN provenance p ON p.id = m.provenance_id
+         WHERE m.org_id = $1 AND p.source_id = $2 AND m.content = $3
+         LIMIT 1",
+    )
+    .bind(org_id)
+    .bind(source_id)
+    .bind(content)
+    .fetch_optional(conn)
+    .await?;
+    Ok(existing.is_some())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_extract(
     conn: &mut PgConnection,
@@ -157,20 +263,14 @@ pub async fn run_extract(
     source_id: Uuid,
     raw_text: &str,
 ) -> Result<ExtractStats> {
-    let resp = provider
-        .complete(&ChatRequest {
-            system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
-            user: raw_text.to_string(),
-            json_mode: true,
-            max_tokens: 4096,
-        })
-        .await
-        .context("extract LLM call")?;
+    let mut stats = ExtractStats::default();
 
-    let json_str = extract_json_object(&resp.text)
-        .ok_or_else(|| anyhow::anyhow!("extractor returned no JSON object"))?;
-    let output: ExtractionOutput =
-        serde_json::from_str(json_str).context("parsing extractor output")?;
+    // One BYOM call for the source, with a bounded JSON-repair re-prompt.
+    let call = extract_once(provider, raw_text).await?;
+    if call.repaired {
+        stats.parse_failures += 1;
+        stats.repairs += 1;
+    }
 
     let provenance_id = Uuid::new_v4();
     brainiac_store::governance::insert_provenance(
@@ -179,22 +279,28 @@ pub async fn run_extract(
         org_id,
         ActorKind::Pipeline,
         "extract-worker",
-        Some(&resp.model_ref),
+        Some(&call.model_ref),
         Some(source_id),
         None,
     )
     .await?;
 
-    let mut stats = ExtractStats::default();
-    for m in output.memories {
+    for m in call.output.memories {
         // Validation firewall: invalid kinds/empty content are dropped and
         // counted, never written.
         let Some(kind) = MemoryKind::parse(&m.kind) else {
             stats.dropped_invalid += 1;
             continue;
         };
-        if m.content.trim().is_empty() {
+        let content = m.content.trim().to_string();
+        if content.is_empty() {
             stats.dropped_invalid += 1;
+            continue;
+        }
+        // Idempotency: skip a memory this source already produced (a
+        // redelivered retry re-runs extraction on the same source).
+        if memory_exists_for_source(conn, org_id, source_id, &content).await? {
+            stats.deduped += 1;
             continue;
         }
         let visibility = m
@@ -220,7 +326,7 @@ pub async fn run_extract(
                 visibility,
                 status: MemoryStatus::Raw,
                 kind,
-                content: m.content.trim().to_string(),
+                content: content.clone(),
                 language: "en".into(),
                 valid_from: Some(now),
                 valid_to: ttl_days(kind).map(|d| now + chrono::Duration::days(d)),
@@ -284,7 +390,7 @@ pub async fn run_extract(
             conn,
             memory_id,
             embedding_version,
-            &embedder.embed(m.content.trim()).await?,
+            &embedder.embed(&content).await?,
         )
         .await?;
 
@@ -308,6 +414,12 @@ mod tests {
     fn braces_inside_strings_do_not_confuse() {
         let raw = "{\"memories\":[{\"kind\":\"fact\",\"content\":\"a { b } c\"}]}";
         assert_eq!(extract_json_object(raw), Some(raw));
+    }
+
+    #[test]
+    fn parse_extraction_reports_failure_reason() {
+        assert!(parse_extraction("not json at all").is_err());
+        assert!(parse_extraction(r#"{"memories":[]}"#).is_ok());
     }
 
     #[test]
