@@ -305,6 +305,16 @@ pub struct ProvenanceView {
     pub source_kind: Option<String>,
     /// The source's full raw text; the caller bounds it into an excerpt.
     pub source_text: Option<String>,
+    /// The HUMAN who authored the originating source (`sources.created_by` →
+    /// email), when there is one. This is the "who decided" the payload was
+    /// missing: `actor_ref`/`model_ref` name the agent/model that *recorded* the
+    /// memory, not the person whose session it came from.
+    pub recorded_by: Option<String>,
+    /// The memory's own temporal validity + governance state, so the attribution
+    /// tool can answer "is it still true?" — `valid_to = None` means still live.
+    pub valid_from: Option<DateTime<Utc>>,
+    pub valid_to: Option<DateTime<Utc>>,
+    pub status: Option<String>,
 }
 
 /// The provenance chain for one memory, RLS-scoped. `None` means the memory is
@@ -318,10 +328,13 @@ pub async fn provenance_for_memory(
 ) -> Result<Option<ProvenanceView>> {
     let row = sqlx::query(
         "SELECT p.actor_kind, p.actor_id, p.model_ref, p.created_at AS prov_created_at,
-                s.kind AS source_kind, s.raw_text AS source_text
+                s.kind AS source_kind, s.raw_text AS source_text,
+                u.email AS recorded_by,
+                m.valid_from, m.valid_to, m.status::text AS status
          FROM memories m
          LEFT JOIN provenance p ON p.id = m.provenance_id
          LEFT JOIN sources s ON s.id = p.source_id
+         LEFT JOIN users u ON u.id = s.created_by
          WHERE m.id = $1",
     )
     .bind(memory_id)
@@ -334,6 +347,10 @@ pub async fn provenance_for_memory(
         created_at: r.get("prov_created_at"),
         source_kind: r.get("source_kind"),
         source_text: r.get("source_text"),
+        recorded_by: r.get("recorded_by"),
+        valid_from: r.get("valid_from"),
+        valid_to: r.get("valid_to"),
+        status: r.get("status"),
     }))
 }
 

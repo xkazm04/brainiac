@@ -366,7 +366,10 @@ pub async fn run_extract(
                 stats.dropped_invalid += 1;
                 continue;
             };
-            let content = m.content.trim().to_string();
+            // Secret firewall (H4): a credential the model lifted verbatim out of
+            // the transcript must never become a durable, RLS-shared memory body.
+            // Redact before the content is stored, deduped, or embedded.
+            let content = brainiac_core::redact::redact(m.content.trim());
             if content.is_empty() {
                 stats.dropped_invalid += 1;
                 continue;

@@ -35,6 +35,7 @@ clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 async-trait = "0.1"
 sha2 = "0.10"
+regex = "1"
 schemars = { version = "1", features = ["chrono04"] }
 utoipa = { version = "5", features = ["chrono", "uuid"] }
 

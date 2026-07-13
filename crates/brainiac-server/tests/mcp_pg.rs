@@ -510,19 +510,6 @@ async fn mcp_handshake_and_tools() {
     .await
     .expect("contradiction");
 
-    // memory_search flags BOTH hits, each pointing at the other and at the
-    // same contradiction id.
-    let contradiction_query = |id: u64| {
-        rpc(
-            id,
-            "tools/call",
-            json!({ "name": "memory_search", "arguments": { "query": "zqxcontradiction widget cache", "k": 25 } }),
-        )
-    };
-    let r = handle_message(&state, &contradiction_query(23))
-        .await
-        .expect("response");
-    let payload = tool_payload(&r);
     let find = |mems: &Value, id: &str| -> Value {
         mems.as_array()
             .expect("memories")
@@ -533,10 +520,50 @@ async fn mcp_handshake_and_tools() {
     };
     let a_str = mem_a.to_string();
     let b_str = mem_b.to_string();
+
+    // UAT fix (open-contradiction serving): by DEFAULT, memory_search WITHHOLDS
+    // both sides of an unresolved contradiction — their truth is undetermined, so
+    // handing either over lets an agent pick a side on surface cues. The response
+    // reports the count so the agent knows the area is contested.
+    let r = handle_message(
+        &state,
+        &rpc(
+            23,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zqxcontradiction widget cache", "k": 25 } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert!(
+        find(&payload["memories"], &a_str).is_null()
+            && find(&payload["memories"], &b_str).is_null(),
+        "default search must WITHHOLD both contested sides: {payload}"
+    );
+    assert!(
+        payload["contested_withheld"].as_u64().expect("count") >= 2,
+        "the withheld count must surface the contested area: {payload}"
+    );
+
+    // include_contested:true surfaces them — flagged, non-actionable, each
+    // pointing at the other and the same contradiction id.
+    let r = handle_message(
+        &state,
+        &rpc(
+            24,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zqxcontradiction widget cache", "k": 25, "include_contested": true } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
     let ma = find(&payload["memories"], &a_str);
     let mb = find(&payload["memories"], &b_str);
     assert_eq!(ma["contradicted"], true, "A must be flagged: {payload}");
     assert_eq!(mb["contradicted"], true, "B must be flagged: {payload}");
+    assert_eq!(ma["actionable"], false, "contested must be non-actionable");
     assert_eq!(ma["contradicts"][0]["counterpart_memory_id"], b_str);
     assert_eq!(mb["contradicts"][0]["counterpart_memory_id"], a_str);
     assert_eq!(
@@ -544,35 +571,50 @@ async fn mcp_handshake_and_tools() {
         contradiction_id.to_string()
     );
 
-    // memory_context renders the conflict textually so a text-only agent sees it.
+    // memory_context QUARANTINES the conflict into a CONTESTED section (not the
+    // actionable bundle) so a text-only agent is not handed a side to act on.
     let r = handle_message(
         &state,
         &rpc(
-            24,
+            25,
             "tools/call",
             json!({ "name": "memory_context", "arguments": { "task_hint": "zqxcontradiction widget cache ttl" } }),
         ),
     )
     .await
     .expect("response");
-    let ctx = tool_payload(&r)["context"]
-        .as_str()
-        .expect("ctx")
-        .to_string();
-    assert!(ctx.contains("CONTRADICTED"), "context must warn: {ctx}");
+    let ctxp = tool_payload(&r);
+    let ctx = ctxp["context"].as_str().expect("ctx").to_string();
+    assert!(ctx.contains("CONTESTED"), "context must quarantine: {ctx}");
+    assert!(
+        ctxp["contested_count"].as_u64().expect("cc") >= 2,
+        "contested_count must be reported: {ctxp}"
+    );
 
-    // Resolve the contradiction (store-level) → the flags disappear.
+    // Resolve the contradiction (store-level) → the memories become actionable
+    // again: default search now returns them, unflagged.
     sqlx::query("UPDATE contradictions SET status = 'resolved', resolved_at = now() WHERE id = $1")
         .bind(contradiction_id)
         .execute(&admin)
         .await
         .expect("resolve");
-    let r = handle_message(&state, &contradiction_query(25))
-        .await
-        .expect("response");
+    let r = handle_message(
+        &state,
+        &rpc(
+            26,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zqxcontradiction widget cache", "k": 25 } }),
+        ),
+    )
+    .await
+    .expect("response");
     let payload = tool_payload(&r);
     let ma = find(&payload["memories"], &a_str);
     let mb = find(&payload["memories"], &b_str);
+    assert!(
+        !ma.is_null() && !mb.is_null(),
+        "resolved → served again: {payload}"
+    );
     assert!(ma["contradicted"].is_null(), "A flag must clear: {payload}");
     assert!(mb["contradicted"].is_null(), "B flag must clear: {payload}");
 
@@ -581,7 +623,12 @@ async fn mcp_handshake_and_tools() {
     let sid = uuid::Uuid::new_v4();
     let pid = uuid::Uuid::new_v4();
     let mpid = uuid::Uuid::new_v4();
-    let long_source = "s".repeat(600); // > SOURCE_EXCERPT_CHARS, forces truncation
+    // A credential pasted into the raw session, followed by padding to force
+    // truncation. The excerpt must come back with the secret masked (H4).
+    let long_source = format!(
+        "my api_key: sk-abcdef0123456789ABCDEF here {}",
+        "s".repeat(600)
+    );
     sqlx::query(
         "INSERT INTO sources (id, org_id, team_id, kind, raw_text)
          VALUES ($1, $2, $3, 'manual', $4)",
@@ -639,7 +686,27 @@ async fn mcp_handshake_and_tools() {
         "excerpt over cap: {}",
         excerpt.chars().count()
     );
+    // H4 redaction: the pasted credential must NOT survive into the excerpt.
+    assert!(
+        !excerpt.contains("sk-abcdef0123456789ABCDEF") && excerpt.contains("[REDACTED]"),
+        "provenance excerpt must be redacted: {excerpt}"
+    );
     assert!(payload["entity_anchors"].is_array());
+    // H8 fix: the attribution tool answers "is it still true?" — the seeded
+    // canonical memory has no valid_to, so still_valid is true and status is
+    // canonical, and the validity/status keys are always present.
+    assert_eq!(
+        payload["still_valid"], true,
+        "a memory with no valid_to must report still_valid: {payload}"
+    );
+    assert_eq!(
+        payload["status"], "canonical",
+        "status must travel: {payload}"
+    );
+    assert!(
+        payload.get("valid_from").is_some() && payload.get("recorded_by").is_some(),
+        "who/when keys must be present (even if null): {payload}"
+    );
 
     // Leak case: provenance for an RLS-invisible memory reads as not-found —
     // the SAME answer as a nonexistent id (no existence oracle).
@@ -736,6 +803,12 @@ async fn mcp_handshake_and_tools() {
     assert!(
         ctx.contains("via agent"),
         "a packed line must carry a resolved provenance ref: {ctx}"
+    );
+    // H8 fix: every packed line stamps an effective date so a text-only agent
+    // can judge recency without a second call.
+    assert!(
+        ctx.contains("[as of "),
+        "a packed line must carry an effective date: {ctx}"
     );
 
     // as_of: a canonical memory valid ONLY in the past is absent at "now" and
@@ -1079,5 +1152,68 @@ async fn mcp_handshake_and_tools() {
         stored_verdicts,
         vec!["helpful".to_string(), "outdated".to_string()],
         "only canonical verdicts may be stored: {stored_verdicts:?}"
+    );
+
+    // ── Governance floor on memory_search (UAT defect fix) ──────────────
+    // The `zzzcanonfloor` pile seeded above is 1 canonical + 40 raw rows.
+    // memory_search is the tool an agent reaches for mid-task; serving raw,
+    // never-reviewed extractions there is exactly what the review queue exists
+    // to prevent. Default search must return the canonical row and NONE of the
+    // raw pile — the review step must actually guard the agent's main path.
+    let r = handle_message(
+        &state,
+        &rpc(
+            43,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": format!("{noise_kw} widget"), "k": 25 } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let default_hits = tool_payload(&r);
+    let default_ids = search_ids(&default_hits);
+    assert!(
+        default_ids.contains(&canon_ctx.to_string()),
+        "the canonical row must survive the default floor: {default_ids:?}"
+    );
+    assert!(
+        default_hits["memories"]
+            .as_array()
+            .expect("memories")
+            .iter()
+            .all(|m| m["status"] != "raw"),
+        "default memory_search must serve NO raw rows: {default_hits}"
+    );
+
+    // The floor is an opt-out, not a wall: include_unreviewed:true brings the
+    // raw pile back (for a dev triaging their own captures), and every raw row
+    // that comes back is explicitly tagged as ungoverned so the agent can weigh
+    // it rather than trust it as org knowledge.
+    let r = handle_message(
+        &state,
+        &rpc(
+            44,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": format!("{noise_kw} widget"), "k": 25, "include_unreviewed": true } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let unrev = tool_payload(&r);
+    let raw_rows: Vec<&Value> = unrev["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .filter(|m| m["status"] == "raw")
+        .collect();
+    assert!(
+        !raw_rows.is_empty(),
+        "include_unreviewed:true must surface the raw pile: {unrev}"
+    );
+    assert!(
+        raw_rows
+            .iter()
+            .all(|m| m["governance"] == "candidate" && m["governance_warning"].is_string()),
+        "every below-canonical row must carry a governance warning: {unrev}"
     );
 }

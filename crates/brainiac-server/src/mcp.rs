@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
-use brainiac_core::{MemoryKind, Principal};
+use brainiac_core::{MemoryKind, MemoryStatus, Principal};
 use brainiac_store::retrieval::RetrievalFilters;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
@@ -290,7 +290,7 @@ fn tool_definitions() -> Value {
     json!([
         {
             "name": "memory_search",
-            "description": "Hybrid search over the organization's governed memory (vector + keyword + knowledge-graph expansion). Returns memories with provenance; results are permission-scoped to you.",
+            "description": "Hybrid search over the organization's governed memory (vector + keyword + knowledge-graph expansion) — permission-scoped to you, provenance attached. Reach for this MID-TASK, not just at the start: whenever you are about to make a non-trivial decision, change shared or cross-team behavior, or rely on an assumption you have not checked THIS session — especially deep into a long task, when your earlier context has drifted. The org may hold a pitfall, an invariant, or a REVERSAL about the exact code in front of you that is not written in this repo, and it will not surface unless you ask. By default only reviewed knowledge (candidate + canonical) is returned; each below-canonical result is tagged as provisional.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -299,14 +299,16 @@ fn tool_definitions() -> Value {
                     "as_of": { "type": "string", "description": "RFC3339 timestamp: answer as of this moment in time" },
                     "scope": { "type": "string", "enum": ["team", "org"], "description": "\"org\" (default): everything you can see across the org. \"team\": only memories owned by your team." },
                     "kinds": { "type": "array", "items": { "type": "string", "enum": ["fact", "decision", "pattern", "pitfall", "howto"] }, "description": "Keep only these memory kinds (default: all)" },
-                    "min_confidence": { "type": "number", "description": "0-1: drop memories below this extractor confidence (memories with no confidence are dropped)" }
+                    "min_confidence": { "type": "number", "description": "0-1: drop memories below this extractor confidence (memories with no confidence are dropped)" },
+                    "include_unreviewed": { "type": "boolean", "description": "Default false. When false, raw (never-reviewed) memories are excluded — you see only knowledge that cleared at least an automated gate. Set true ONLY when you deliberately want to see unpromoted/raw captures (e.g. triaging your own recent memory_add); such rows carry no governance guarantee." },
+                    "include_contested": { "type": "boolean", "description": "Default false. When false, memories in an UNRESOLVED contradiction are withheld (the response reports how many, so you know the area is contested and can escalate). Their truth is undetermined; do not act on them. Set true only to inspect the conflict for reconciliation — never to pick a side by recency or provenance." }
                 },
                 "required": ["query"]
             }
         },
         {
             "name": "memory_context",
-            "description": "Session-start bundle: the most relevant CANONICAL organizational knowledge for a task, token-budgeted. Each entry carries a compact provenance ref (who/what recorded it). Call once when starting work on something.",
+            "description": "The most relevant CANONICAL (human-certified) organizational knowledge for a task, token-budgeted, each entry carrying a compact provenance ref. Call this when you START work to load what the org already knows — and call it again (or memory_search) when you MOVE to a new area, hit a decision point, or are about to touch shared behavior. It is a canonical-only briefing, so it is safe but conservative; for anything mid-task or narrower, memory_search is the sharper tool. Organizational knowledge does not announce itself — if you never ask, you build as if the org knows nothing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -366,7 +368,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "memory_provenance",
-            "description": "Trace a memory's evidence chain for citation: who or what recorded it (human, agent, or pipeline), the model used, when, the originating source with a short excerpt, and the canonical entities it anchors. Use to justify or attribute a memory you were served. Scoped to you: a memory you cannot see returns 'not found'.",
+            "description": "Trace a memory's evidence chain to decide whether to trust it: WHO it came from (recorded_by = the human whose session it originated in, when there was one; plus the recording actor/model), WHEN (created_at, and the validity window valid_from/valid_to), whether it is STILL TRUE (still_valid + status), the originating source with a short excerpt, and the canonical entities it anchors. Use before acting on a served memory whose age or authorship matters. Scoped to you: a memory you cannot see returns 'not found'.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -491,6 +493,22 @@ fn parse_filters(state: &McpState, args: &Value) -> Result<RetrievalFilters, Too
         filters.min_confidence = Some(c as f32);
     }
 
+    // Governance floor. `raw` memories are pipeline extractions (or unpromoted
+    // `memory_add`s) that NO human and NO policy has reviewed — serving them to
+    // an agent as if they were org knowledge is exactly what the review queue
+    // exists to prevent, so they are excluded by default. `Candidate` keeps
+    // candidate+canonical; the caller can drop the floor to see unreviewed rows,
+    // but only by asking for them explicitly (and every below-canonical row it
+    // gets back is tagged — see `memory_search`). This is the one governance
+    // guarantee that must hold on the tool an agent actually reaches for mid-task.
+    let include_unreviewed = args
+        .get("include_unreviewed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !include_unreviewed {
+        filters.min_status = Some(MemoryStatus::Candidate);
+    }
+
     Ok(filters)
 }
 
@@ -527,14 +545,42 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
     // One batched, RLS-scoped query (never an N+1) — orthogonal to the
     // feedback-derived `disputed` signal above.
     let contradictions = brainiac_store::governance::open_contradictions_for(&mut tx, &ids).await?;
+    // An OPEN contradiction means the org has not determined which side is true —
+    // so the memory's truth value is UNKNOWN, not merely "flagged". Serving it as
+    // an actionable result lets an agent pick a side on surface cues (recency,
+    // provenance), and a well-crafted poison wins that (UAT run 2026-07-13-l2).
+    // So, like the raw governance floor, contested memories are WITHHELD by
+    // default and surfaced only on explicit `include_contested:true` — where they
+    // carry a hard "do not adjudicate this yourself" warning. This is symmetric
+    // with `include_unreviewed` and it makes the governance debt show up as
+    // missing knowledge (pressure to reconcile), never as served poison.
+    let include_contested = args
+        .get("include_contested")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let withheld_contested = if include_contested {
+        0
+    } else {
+        hits.iter()
+            .filter(|h| contradictions.contains_key(&h.memory.id))
+            .count()
+    };
     Ok(json!({
-        "memories": hits.iter().map(|h| {
+        "memories": hits.iter().filter(|h| {
+            include_contested || !contradictions.contains_key(&h.memory.id)
+        }).map(|h| {
             let t = trust.get(&h.memory.id).cloned().unwrap_or_default();
             let mut m = json!({
                 "id": h.memory.id,
                 "kind": h.memory.kind.as_str(),
                 "status": h.memory.status.as_str(),
                 "content": h.memory.content,
+                // "Is it still true / how fresh": the validity window and record
+                // time travel WITH the result, so an agent can weight a fact by
+                // age and see a live vs. time-boxed one. valid_to == null = live.
+                "valid_from": h.memory.valid_from,
+                "valid_to": h.memory.valid_to,
+                "created_at": h.memory.created_at,
                 "via_graph": h.via_graph,
                 "provenance_id": h.memory.provenance_id,
                 "entity_anchors": h.anchors.iter().map(|a| json!({
@@ -554,18 +600,43 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
                     );
                 }
             }
+            // Governance visibility at the point of consumption: the reviewer's
+            // work is invisible unless the payload says whether a memory cleared
+            // it. Canonical = a human promoted it; candidate = it passed an
+            // auto/policy gate but is NOT human-certified org knowledge. Say so,
+            // in the same shape as the disputed/contradiction warnings above, so
+            // an agent can weight an unreviewed row instead of trusting it blind.
+            if h.memory.status != MemoryStatus::Canonical {
+                m["governance"] = json!("candidate");
+                m["governance_warning"] = json!(
+                    "this memory is NOT canonical — it passed an automated gate but no human maintainer has certified it as org knowledge; weight it as provisional. (raw, never-reviewed memories are excluded unless you pass include_unreviewed:true.)"
+                );
+            }
             if let Some(flags) = contradictions.get(&h.memory.id) {
                 m["contradicted"] = json!(true);
                 m["contradicts"] = json!(flags.iter().map(|f| json!({
                     "contradiction_id": f.contradiction_id,
                     "counterpart_memory_id": f.counterpart_id,
                 })).collect::<Vec<_>>());
+                m["actionable"] = json!(false);
                 m["contradiction_warning"] = json!(
-                    "this memory is in an OPEN contradiction with another memory (see `contradicts`) — the two conflict and neither is settled; do not rely on it without reconciling them"
+                    "this memory is in an OPEN, UNRESOLVED contradiction with another memory (see `contradicts`). The org has not determined which is true. Do NOT adjudicate this yourself — recency, provenance, or confidence do NOT decide which side is correct in an unresolved contradiction. Escalate to a maintainer or verify against source; do not act on either side as fact."
                 );
             }
             m
-        }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
+        // Governance debt made visible: N results matched but are withheld because
+        // they sit in unresolved contradictions. The agent is told they exist (so
+        // it knows the area is contested and can escalate) without being handed a
+        // side to act on. `include_contested:true` surfaces them, warned.
+        "contested_withheld": withheld_contested,
+        "note": if withheld_contested > 0 {
+            json!(format!(
+                "{withheld_contested} matching memory(ies) are withheld: they are in unresolved contradictions and are not settled knowledge. This area is contested — a maintainer must reconcile it. Pass include_contested:true to see them (they cannot be safely acted on until resolved)."
+            ))
+        } else {
+            Value::Null
+        }
     }))
 }
 
@@ -632,8 +703,18 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
     // "attach provenance refs"). BATCHED — one query for the whole bundle, never
     // N single `provenance_for_memory` calls.
     let provenance = brainiac_store::governance::provenance_refs_for(&mut tx, &bundle_ids).await?;
+    // Partition the bundle. A memory locked in an OPEN (unresolved) contradiction
+    // is NOT settled knowledge — the org has not determined which side is true —
+    // so it must not sit in the actionable "rely on this, cite it" set alongside
+    // uncontested canonicals. Serving both sides of a live conflict as equal
+    // canonicals is what lets a well-provenanced poison win the agent's own
+    // tiebreak (UAT run 2026-07-13-l2). Settled memories go in the bundle;
+    // contested ones are quarantined into a separate DO-NOT-ACT section that
+    // frames them as needing reconciliation, not as fact.
     let mut bundle = String::new();
+    let mut contested = String::new();
     let mut included = 0usize;
+    let mut contested_count = 0usize;
     for h in &hits {
         let mut line = format!(
             "- [{}] {} (memory:{})",
@@ -644,13 +725,20 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
         if let Some(tag) = provenance.get(&h.memory.id).and_then(provenance_tag) {
             line.push_str(&format!(" — {tag}"));
         }
+        // "When", compactly: the flat bundle carried no date, so a stale and a
+        // fresh canonical fact read identically. Stamp the effective date (the
+        // validity-window start, else the record time) so the reader can judge
+        // recency without a second `memory_provenance` round-trip.
+        let effective = h.memory.valid_from.unwrap_or(h.memory.created_at);
+        line.push_str(&format!(" [as of {}]", effective.format("%Y-%m-%d")));
         if let Some(flags) = contradictions.get(&h.memory.id) {
             for f in flags {
-                line.push_str(&format!(
-                    " ⚠ CONTRADICTED — conflicts with memory:{} (open contradiction; reconcile before relying on this)",
-                    f.counterpart_id
-                ));
+                line.push_str(&format!(" (conflicts with memory:{})", f.counterpart_id));
             }
+            line.push('\n');
+            contested.push_str(&line);
+            contested_count += 1;
+            continue;
         }
         line.push('\n');
         if bundle.len() + line.len() > CONTEXT_CHAR_BUDGET && included > 0 {
@@ -659,11 +747,21 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
         bundle.push_str(&line);
         included += 1;
     }
+    let mut context = format!(
+        "Organizational knowledge relevant to your task ({included} settled canonical memories, cite ids when you rely on them):\n{bundle}"
+    );
+    if contested_count > 0 {
+        context.push_str(&format!(
+            "\n⚠ CONTESTED — {contested_count} memory(ies) in this area are in UNRESOLVED contradictions. \
+             The org has NOT determined which is true, so these are NOT settled knowledge. \
+             Do NOT act on them or cite them as fact; a maintainer must reconcile them first. \
+             If you need this, escalate or verify against the source/code:\n{contested}"
+        ));
+    }
     Ok(json!({
-        "context": format!(
-            "Organizational knowledge relevant to your task ({included} canonical memories, cite ids when you rely on them):\n{bundle}"
-        ),
-        "memories_included": included
+        "context": context,
+        "memories_included": included,
+        "contested_count": contested_count
     }))
 }
 
@@ -982,12 +1080,16 @@ async fn memory_provenance(state: &McpState, args: &Value) -> Result<Value, Tool
         .unwrap_or_default();
 
     // Bound the source excerpt to a documented cap (char-boundary safe): a
-    // citation handle, never the whole transcript.
+    // citation handle, never the whole transcript. REDACT first (H4): this window
+    // is verbatim raw-session text served to any RLS-admitted agent, and the cap
+    // is a length limit, not a secret control — a credential in the first 500
+    // chars would otherwise be disclosed in full. Redact before truncating so a
+    // secret straddling the cut is still masked.
     let source = view.source_kind.as_ref().map(|kind| {
         let excerpt = view.source_text.as_deref().map(|text| {
-            let trimmed = text.trim();
-            let excerpt: String = trimmed.chars().take(SOURCE_EXCERPT_CHARS).collect();
-            if trimmed.chars().count() > SOURCE_EXCERPT_CHARS {
+            let redacted = brainiac_core::redact::redact(text.trim());
+            let excerpt: String = redacted.chars().take(SOURCE_EXCERPT_CHARS).collect();
+            if redacted.chars().count() > SOURCE_EXCERPT_CHARS {
                 format!("{excerpt}…")
             } else {
                 excerpt
@@ -1001,7 +1103,17 @@ async fn memory_provenance(state: &McpState, args: &Value) -> Result<Value, Tool
         "actor_kind": view.actor_kind,
         "actor_ref": view.actor_ref,
         "model_ref": view.model_ref,
+        // WHO decided: the human whose session this came from, distinct from the
+        // agent/model that recorded it. Null when the source had no human author.
+        "recorded_by": view.recorded_by,
+        // WHEN the pipeline recorded it (not necessarily when it was decided).
         "created_at": view.created_at,
+        // IS IT STILL TRUE: the memory's validity window + governance status.
+        // valid_to == null means still in force.
+        "valid_from": view.valid_from,
+        "valid_to": view.valid_to,
+        "still_valid": view.valid_to.is_none(),
+        "status": view.status,
         "source": source,
         "entity_anchors": entity_anchors,
     }))

@@ -250,6 +250,16 @@ async fn console_reviews_graph_analytics() {
     assert_eq!(body["reviews"]["open_contradictions"], 0);
     assert!(body["graph"]["canonicals"].as_i64().expect("n") > 0);
     assert!(body["memories_by_status"].as_array().expect("arr").len() >= 2);
+    // Review velocity (P0.1): the maintainer approved one promotion above, so the
+    // abandonment signal must register it and expose a median review latency.
+    assert!(
+        body["reviews"]["reviewed_last_7d"].as_i64().expect("r7") >= 1,
+        "an approved promotion must count toward review throughput: {body}"
+    );
+    assert!(
+        body["reviews"]["median_time_to_review_secs"].is_i64(),
+        "a reviewed queue must report a median latency: {body}"
+    );
 
     // ── observatory ───────────────────────────────────────────────────────
     let r = http

@@ -1086,6 +1086,26 @@ pub(crate) struct AnalyticsReviews {
     pub oldest_pending_secs: i64,
     pub open_contradictions: i64,
     pub flagged_memories: i64,
+    /// Review VELOCITY — the abandonment signal. A queue with a growing backlog
+    /// and near-zero throughput is a review step nobody is working; a healthy one
+    /// clears roughly what it takes in. Made observable so the failure the whole
+    /// governance model rides on stops being silent (UAT relay
+    /// `promotion-queue-backlog`). Human decisions only (auto-approvals excluded).
+    pub reviewed_last_7d: i64,
+    pub reviewed_last_30d: i64,
+    /// Median seconds from a memory entering the queue to a human deciding it,
+    /// over the last 30 days. `null` if nothing was reviewed. Against their own
+    /// 48h SLO (ARCHITECTURE §7) this is the review-latency truth.
+    pub median_time_to_review_secs: Option<i64>,
+    /// Share of last-30d human reviews decided in under 5s — the rubber-stamp
+    /// proxy. High + a deep backlog = clearing, not reviewing. `null` if none.
+    pub rubber_stamp_rate: Option<f64>,
+    /// Share of RESOLVED contradictions that were dismissed as "not a conflict",
+    /// over the last 30 days. Since an unresolved contradiction now WITHHOLDS both
+    /// sides from serving (the open-contradiction fix), a high dismiss rate means
+    /// an over-eager detector is *suppressing real knowledge*, not just adding
+    /// noise — a signal to retune it. `null` if nothing was resolved.
+    pub contradiction_dismiss_rate: Option<f64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -1140,12 +1160,51 @@ pub(crate) async fn analytics(
     .fetch_one(&mut *tx)
     .await
     .map_err(internal)?;
+    // Review velocity (the abandonment signal). Human decisions only — a
+    // reviewer_id present means a person, not the auto-approve policy, decided.
+    // time_to_review = queue latency (created → decided), the SLO number.
+    // rubber-stamp proxy = share of decisions taken within 5s of the SAME
+    // reviewer's previous decision (a burst = clearing backlog, not reading);
+    // computed with lag() since no per-decision dwell time is captured.
+    let velocity = sqlx::query(
+        "WITH human AS (
+             SELECT reviewer_id, created_at, reviewed_at,
+                    EXTRACT(EPOCH FROM reviewed_at - created_at)::bigint AS ttr,
+                    EXTRACT(EPOCH FROM reviewed_at - lag(reviewed_at)
+                        OVER (PARTITION BY reviewer_id ORDER BY reviewed_at)) AS gap
+             FROM promotions
+             WHERE reviewer_id IS NOT NULL AND reviewed_at IS NOT NULL
+               AND reviewed_at > now() - interval '30 days'
+         )
+         SELECT
+           count(*) FILTER (WHERE reviewed_at > now() - interval '7 days')  AS r7,
+           count(*)                                                          AS r30,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY ttr)::bigint          AS median_ttr,
+           avg(CASE WHEN gap IS NOT NULL AND gap < 5 THEN 1.0 ELSE 0.0 END)::float8 AS stamp_rate,
+           count(*) FILTER (WHERE gap IS NOT NULL)                           AS with_gap
+         FROM human",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+
     let contradictions_open: i64 =
         sqlx::query("SELECT count(*) AS n FROM contradictions WHERE status = 'open'")
             .fetch_one(&mut *tx)
             .await
             .map_err(internal)?
             .get("n");
+    // Dismiss rate over recently-resolved contradictions — visibility for the
+    // over-eager-detector footgun the withhold-by-default fix introduced.
+    let dismiss = sqlx::query(
+        "SELECT avg(CASE WHEN status = 'dismissed' THEN 1.0 ELSE 0.0 END)::float8 AS rate,
+                count(*) AS resolved_n
+         FROM contradictions
+         WHERE status <> 'open' AND resolved_at > now() - interval '30 days'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
     let flagged_memories = brainiac_store::feedback::flagged_count(&mut tx)
         .await
         .map_err(internal)?;
@@ -1178,6 +1237,20 @@ pub(crate) async fn analytics(
             oldest_pending_secs: review.get("oldest_secs"),
             open_contradictions: contradictions_open,
             flagged_memories,
+            reviewed_last_7d: velocity.get::<Option<i64>, _>("r7").unwrap_or(0),
+            reviewed_last_30d: velocity.get::<Option<i64>, _>("r30").unwrap_or(0),
+            median_time_to_review_secs: velocity.get("median_ttr"),
+            // Only meaningful once a reviewer has a run of decisions to compare.
+            rubber_stamp_rate: if velocity.get::<Option<i64>, _>("with_gap").unwrap_or(0) > 0 {
+                velocity.get::<Option<f64>, _>("stamp_rate")
+            } else {
+                None
+            },
+            contradiction_dismiss_rate: if dismiss.get::<i64, _>("resolved_n") > 0 {
+                dismiss.get::<Option<f64>, _>("rate")
+            } else {
+                None
+            },
         },
         graph: AnalyticsGraph {
             entities,
