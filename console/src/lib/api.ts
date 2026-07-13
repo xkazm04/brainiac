@@ -68,8 +68,22 @@ async function call<T>(
     cache: "no-store",
   });
   if (!res.ok) {
+    // Errors are a JSON envelope `{error, code}` (see the server's HttpError).
+    // Parse it for the message; fall back to the raw text (older servers
+    // returned plain text) and finally the status line.
     const text = await res.text().catch(() => "");
-    throw new ApiError(res.status, text || res.statusText);
+    let message = text;
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as { error?: unknown };
+        if (typeof parsed.error === "string") {
+          message = parsed.error;
+        }
+      } catch {
+        // not JSON — keep the raw text (backward-compat).
+      }
+    }
+    throw new ApiError(res.status, message || res.statusText);
   }
   return (await res.json()) as T;
 }

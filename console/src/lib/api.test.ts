@@ -93,10 +93,27 @@ describe("api client", () => {
     });
   });
 
-  it("throws typed ApiError with status on failure", async () => {
-    const err = await getAnalytics(cfg(mockFetch(403, { error: "nope" }))).catch((e) => e);
+  it("throws typed ApiError with status and parses the {error, code} envelope", async () => {
+    const err = await getAnalytics(
+      cfg(mockFetch(403, { error: "token lacks the `read` scope", code: "forbidden" })),
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(403);
+    // The message is the envelope's `error`, not the raw JSON blob.
+    expect((err as ApiError).message).toBe("token lacks the `read` scope");
+  });
+
+  it("falls back to raw text when the error body is not the JSON envelope", async () => {
+    const f = vi.fn(async () => ({
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      json: async () => ({}),
+      text: async () => "upstream exploded",
+    })) as unknown as typeof fetch;
+    const err = await getAnalytics(cfg(f)).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).message).toBe("upstream exploded");
   });
 
   it("passes through graph payloads", async () => {

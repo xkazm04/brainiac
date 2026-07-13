@@ -10,8 +10,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use brainiac_core::embed::Embedder;
@@ -75,7 +76,41 @@ pub async fn router(
         .route("/v1/queue/dead-letters", get(queue_dead_letters))
         .route("/v1/queue/dead-letters/{id}/requeue", post(queue_requeue))
         .merge(crate::console::routes())
+        // Explicit request-body cap. The largest free-text field REST accepts
+        // is `memory_add` content (MAX_CONTENT_CHARS = 8000 chars ≈ 32 KiB of
+        // UTF-8); 1 MiB leaves generous headroom for JSON framing and every
+        // other body while still bounding what an unauthenticated peer can make
+        // the server buffer (axum's silent ~2 MiB default is replaced by this).
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state))
+}
+
+/// Request-body ceiling for the whole REST router (see the `DefaultBodyLimit`
+/// layer above).
+const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+// ── input caps ──────────────────────────────────────────────────────────
+// Mirrored from the MCP surface (mcp.rs `MAX_CONTENT_CHARS` / `MAX_QUERY_CHARS`)
+// so REST and MCP reject oversized free text identically — a runaway caller can
+// never hand either surface an unbounded blob to embed, store, or scan. Kept in
+// sync by cross-reference; if the MCP consts move, move these too.
+/// `memory_add` content — one self-contained statement, generously sized.
+const MAX_CONTENT_CHARS: usize = 8_000;
+/// `memory_search` query.
+const MAX_QUERY_CHARS: usize = 2_000;
+
+/// Enforce a documented character cap on a free-text field; oversized input is
+/// a clear 400, never silent truncation or unbounded work.
+fn within_cap(value: &str, cap: usize, field: &str) -> Result<(), HttpError> {
+    let n = value.chars().count();
+    if n > cap {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("`{field}` is too large ({n} chars); the limit is {cap}"),
+        )
+            .into());
+    }
+    Ok(())
 }
 
 /// Resolve the bearer token and require `scope` (env tokens pass all
@@ -84,7 +119,7 @@ pub(crate) async fn auth_of(
     state: &AppState,
     headers: &HeaderMap,
     scope: &str,
-) -> Result<crate::auth::AuthContext, (StatusCode, String)> {
+) -> Result<crate::auth::AuthContext, HttpError> {
     let bearer = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -98,7 +133,8 @@ pub(crate) async fn auth_of(
         return Err((
             StatusCode::FORBIDDEN,
             format!("token lacks the `{scope}` scope"),
-        ));
+        )
+            .into());
     }
     Ok(ctx)
 }
@@ -107,7 +143,7 @@ pub(crate) async fn auth_of(
 pub(crate) async fn principal_of(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<Principal, (StatusCode, String)> {
+) -> Result<Principal, HttpError> {
     Ok(auth_of(state, headers, "read").await?.principal)
 }
 
@@ -152,7 +188,7 @@ pub(crate) struct SearchBody {
 }
 
 impl SearchBody {
-    fn filters(&self) -> Result<brainiac_store::retrieval::RetrievalFilters, (StatusCode, String)> {
+    fn filters(&self) -> Result<brainiac_store::retrieval::RetrievalFilters, HttpError> {
         // Parse each wire string into the typed kind at the edge; the filter
         // downstream is typed, so an invalid kind can never reach the SQL.
         let mut kinds = Vec::with_capacity(self.kinds.len());
@@ -175,7 +211,8 @@ impl SearchBody {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     "min_confidence must be within 0..=1".into(),
-                ));
+                )
+                    .into());
             }
         }
         Ok(brainiac_store::retrieval::RetrievalFilters {
@@ -234,8 +271,9 @@ pub(crate) async fn search(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<SearchBody>,
-) -> Result<Json<SearchResponse>, (StatusCode, String)> {
+) -> Result<Json<SearchResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
+    within_cap(&body.query, MAX_QUERY_CHARS, "query")?;
     let filters = body.filters()?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let hits = brainiac_store::retrieval::search_reranked(
@@ -308,11 +346,16 @@ pub(crate) async fn memory_add(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<MemoryAddBody>,
-) -> Result<(StatusCode, Json<MemoryAcceptedResponse>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<MemoryAcceptedResponse>), HttpError> {
     let principal = auth_of(&state, &headers, "write").await?.principal;
     if body.content.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "content must not be empty".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "content must not be empty".to_string(),
+        )
+            .into());
     }
+    within_cap(body.content.trim(), MAX_CONTENT_CHARS, "content")?;
     let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
@@ -390,7 +433,7 @@ pub(crate) struct PromotionQueueResponse {
 pub(crate) async fn pending_promotions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<PromotionQueueResponse>, (StatusCode, String)> {
+) -> Result<Json<PromotionQueueResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     use sqlx::Row;
@@ -511,7 +554,7 @@ pub(crate) async fn source_status(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<SourceStatusResponse>, (StatusCode, String)> {
+) -> Result<Json<SourceStatusResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     use sqlx::Row;
@@ -629,11 +672,15 @@ pub(crate) async fn create_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<CreateTokenBody>,
-) -> Result<(StatusCode, Json<CreatedTokenResponse>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<CreatedTokenResponse>), HttpError> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let name = body.name.trim();
     if name.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "name must not be empty".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "name must not be empty".to_string(),
+        )
+            .into());
     }
     let scopes = body.scopes.unwrap_or_else(|| vec!["read".into()]);
     if scopes.is_empty()
@@ -647,7 +694,8 @@ pub(crate) async fn create_token(
                 "scopes must be a non-empty subset of {:?}",
                 crate::auth::SCOPES
             ),
-        ));
+        )
+            .into());
     }
     let user_id = body.user_id.unwrap_or(ctx.principal.user_id);
     let (secret, prefix) = crate::auth::mint_secret();
@@ -711,7 +759,7 @@ pub(crate) struct TokenListResponse {
 pub(crate) async fn list_tokens(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<TokenListResponse>, (StatusCode, String)> {
+) -> Result<Json<TokenListResponse>, HttpError> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let rows = brainiac_store::tokens::list(state.store.pool(), ctx.principal.org_id)
         .await
@@ -757,7 +805,7 @@ pub(crate) async fn revoke_token(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<RevokeResponse>, (StatusCode, String)> {
+) -> Result<Json<RevokeResponse>, HttpError> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let revoked = brainiac_store::tokens::revoke(state.store.pool(), ctx.principal.org_id, id)
         .await
@@ -766,7 +814,8 @@ pub(crate) async fn revoke_token(
         return Err((
             StatusCode::NOT_FOUND,
             "token not found or already revoked".into(),
-        ));
+        )
+            .into());
     }
     Ok(Json(RevokeResponse { id, revoked: true }))
 }
@@ -823,7 +872,7 @@ pub(crate) async fn queue_health(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QueueQuery>,
     headers: HeaderMap,
-) -> Result<Json<QueueHealthResponse>, (StatusCode, String)> {
+) -> Result<Json<QueueHealthResponse>, HttpError> {
     auth_of(&state, &headers, "admin").await?;
     let queue = q
         .queue
@@ -885,7 +934,7 @@ pub(crate) async fn queue_dead_letters(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QueueQuery>,
     headers: HeaderMap,
-) -> Result<Json<DeadLetterListResponse>, (StatusCode, String)> {
+) -> Result<Json<DeadLetterListResponse>, HttpError> {
     auth_of(&state, &headers, "admin").await?;
     let queue = q
         .queue
@@ -932,7 +981,7 @@ pub(crate) async fn queue_requeue(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<i64>,
     headers: HeaderMap,
-) -> Result<Json<RequeueResponse>, (StatusCode, String)> {
+) -> Result<Json<RequeueResponse>, HttpError> {
     auth_of(&state, &headers, "admin").await?;
     let requeued = brainiac_store::queue::requeue_dead(state.store.pool(), id)
         .await
@@ -941,11 +990,84 @@ pub(crate) async fn queue_requeue(
         return Err((
             StatusCode::NOT_FOUND,
             "job is not in the dead-letter archive".into(),
-        ));
+        )
+            .into());
     }
     Ok(Json(RequeueResponse { id, requeued: true }))
 }
 
-pub(crate) fn internal(e: impl std::fmt::Display) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+// ── error envelope ──────────────────────────────────────────────────────
+// Every REST error is a JSON envelope `{"error": <message>, "code": <slug>}`
+// with the right status — the same content type as the success bodies, and the
+// same posture as the MCP surface: internal faults are logged in full and the
+// client gets a generic message, so raw DB/anyhow strings never leak.
+
+/// The JSON error body. Documented once in the OpenAPI spec and returned by
+/// every error path.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ErrorResponse {
+    /// Human-readable message. Specific for business errors (400/401/403/404);
+    /// a generic `"internal error"` for 5xx faults (detail is logged, not sent).
+    pub error: String,
+    /// Machine-readable slug:
+    /// `bad_request` | `unauthorized` | `forbidden` | `not_found` |
+    /// `payload_too_large` | `internal_error`.
+    pub code: String,
+}
+
+/// A REST error carrying its status, a machine-readable code, and a
+/// client-safe message. Replaces the old `(StatusCode, String)` alias; its
+/// `IntoResponse` renders the JSON envelope. Construct business errors from a
+/// `(StatusCode, String)` tuple (the code is derived from the status) and
+/// internal faults via [`internal`].
+pub struct HttpError {
+    pub status: StatusCode,
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// The machine-readable slug for a status — the canonical reason, lower-snake.
+fn code_for(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::BAD_REQUEST => "bad_request",
+        StatusCode::UNAUTHORIZED => "unauthorized",
+        StatusCode::FORBIDDEN => "forbidden",
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
+        _ => "internal_error",
+    }
+}
+
+impl From<(StatusCode, String)> for HttpError {
+    fn from((status, message): (StatusCode, String)) -> Self {
+        HttpError {
+            code: code_for(status),
+            status,
+            message,
+        }
+    }
+}
+
+impl IntoResponse for HttpError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(ErrorResponse {
+                error: self.message,
+                code: self.code.to_string(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+/// An internal fault: log the detail (as the MCP surface does) and return a
+/// generic `500` — no DB/anyhow string ever reaches the client.
+pub(crate) fn internal(e: impl std::fmt::Display) -> HttpError {
+    tracing::error!(error = %e, "internal error handling REST request");
+    HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "internal_error",
+        message: "internal error".into(),
+    }
 }

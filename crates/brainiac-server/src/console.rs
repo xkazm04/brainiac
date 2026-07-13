@@ -32,7 +32,7 @@ use sqlx::{PgConnection, Row};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::http::{auth_of, internal, principal_of, AppState};
+use crate::http::{auth_of, internal, principal_of, AppState, HttpError};
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -63,8 +63,6 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/org/users", get(org_users))
         .route("/v1/tokens/preview", post(token_preview))
 }
-
-type HttpError = (StatusCode, String);
 
 /// `{status, count}` — the shape every status histogram in this module emits
 /// (memories-by-status, contradiction tabs).
@@ -150,7 +148,8 @@ async fn review_promotion(
         return Err((
             StatusCode::FORBIDDEN,
             "only a maintainer of the owning team can review promotions".into(),
-        ));
+        )
+            .into());
     }
     let (decision, new_status) = if approve {
         let to = MemoryStatus::parse(&pending.to_status).ok_or_else(|| {
@@ -301,7 +300,8 @@ pub(crate) async fn list_contradictions(
         return Err((
             StatusCode::BAD_REQUEST,
             format!("unknown status `{status}` (open|resolved_supersede|resolved_coexist|dismissed|all)"),
-        ));
+        )
+            .into());
     }
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
@@ -432,7 +432,8 @@ pub(crate) async fn resolve_contradiction(
                 return Err((
                     StatusCode::BAD_REQUEST,
                     "winner_memory_id must be one of the contradiction's memories".into(),
-                ));
+                )
+                    .into());
             }
             let loser = if winner == a { b } else { a };
             // Supersession mutates the corpus — gate on the losing memory's
@@ -450,7 +451,8 @@ pub(crate) async fn resolve_contradiction(
                 return Err((
                     StatusCode::FORBIDDEN,
                     "supersede requires a maintainer of the losing memory's team".into(),
-                ));
+                )
+                    .into());
             }
             // Store-owned primitive: deprecates the loser, closes valid_to,
             // sets superseded_by, AND records the transition in the
@@ -474,7 +476,8 @@ pub(crate) async fn resolve_contradiction(
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!("unknown resolution `{other}` (supersede|coexist|dismiss)"),
-            ))
+            )
+                .into())
         }
     };
 
@@ -626,7 +629,8 @@ pub(crate) async fn resolve_feedback_claims(
                 body.resolution,
                 brainiac_store::feedback::RESOLUTIONS.join("|")
             ),
-        ));
+        )
+            .into());
     }
     let principal = auth_of(&state, &headers, "write").await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
@@ -643,7 +647,8 @@ pub(crate) async fn resolve_feedback_claims(
             return Err((
                 StatusCode::FORBIDDEN,
                 "answering feedback claims requires a maintainer of the owning team".into(),
-            ));
+            )
+                .into());
         }
     }
 
@@ -816,7 +821,8 @@ pub(crate) async fn memory_reverify(
             return Err((
                 StatusCode::FORBIDDEN,
                 "re-verification requires a maintainer of the owning team".into(),
-            ));
+            )
+                .into());
         }
     }
     let kind = brainiac_core::MemoryKind::parse(&row.get::<String, _>("kind"));

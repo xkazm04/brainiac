@@ -106,6 +106,8 @@ impl Modify for BearerAuth {
     components(schemas(
         // system
         http::HealthResponse,
+        // the JSON error envelope every error path returns (documented once)
+        http::ErrorResponse,
         // memories
         http::SearchBody,
         http::AnchorRef,

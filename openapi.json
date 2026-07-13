@@ -1826,6 +1826,24 @@
           }
         }
       },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "The JSON error body. Documented once in the OpenAPI spec and returned by\nevery error path.",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Machine-readable slug:\n`bad_request` | `unauthorized` | `forbidden` | `not_found` |\n`payload_too_large` | `internal_error`."
+          },
+          "error": {
+            "type": "string",
+            "description": "Human-readable message. Specific for business errors (400/401/403/404);\na generic `\"internal error\"` for 5xx faults (detail is logged, not sent)."
+          }
+        }
+      },
       "ExpiringMemory": {
         "type": "object",
         "description": "A memory in the re-verification horizon. `days_left` is computed per row\nagainst `now()` and is negative once the boundary has passed.",

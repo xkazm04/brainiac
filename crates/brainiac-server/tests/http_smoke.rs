@@ -62,7 +62,8 @@ async fn serve_health_auth_and_scoped_search() {
         .expect("health");
     assert!(r.status().is_success());
 
-    // search without token → 401.
+    // search without token → 401, and the body is the JSON error envelope
+    // {error, code} — not a plain-text string.
     let r = http
         .post(format!("{base}/v1/memories/search"))
         .json(&serde_json::json!({"query": "anything"}))
@@ -70,6 +71,42 @@ async fn serve_health_auth_and_scoped_search() {
         .await
         .expect("unauth search");
     assert_eq!(r.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        r.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.starts_with("application/json")),
+        Some(true),
+        "error body must be JSON"
+    );
+    let err: serde_json::Value = r.json().await.expect("error envelope");
+    assert_eq!(err["code"], "unauthorized");
+    assert!(err["error"].is_string(), "envelope carries a message");
+
+    // Oversized query → clear 400 with the bad_request code (the char cap
+    // mirrored from the MCP surface), never an unbounded embed.
+    let big = "x".repeat(2_001);
+    let r = http
+        .post(format!("{base}/v1/memories/search"))
+        .bearer_auth("tok_analyst")
+        .json(&serde_json::json!({"query": big}))
+        .send()
+        .await
+        .expect("oversized search");
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = r.json().await.expect("error envelope");
+    assert_eq!(err["code"], "bad_request");
+
+    // An internal-style detail never leaks: the generic 500 envelope only ever
+    // carries "internal error". (Asserted structurally below on the happy path;
+    // here we pin that business 400s DO keep their specific message.)
+    assert!(
+        err["error"]
+            .as_str()
+            .expect("message")
+            .contains("too large"),
+        "business errors keep their specific message"
+    );
 
     // Scoped search: the analyst asks a payments-team question. Org-visible
     // knowledge surfaces; the payments team-private webhook memory must not.

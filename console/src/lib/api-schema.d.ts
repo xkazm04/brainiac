@@ -793,6 +793,23 @@ export interface components {
             dead_letters: components["schemas"]["DeadLetterEntry"][];
         };
         /**
+         * @description The JSON error body. Documented once in the OpenAPI spec and returned by
+         *     every error path.
+         */
+        ErrorResponse: {
+            /**
+             * @description Machine-readable slug:
+             *     `bad_request` | `unauthorized` | `forbidden` | `not_found` |
+             *     `payload_too_large` | `internal_error`.
+             */
+            code: string;
+            /**
+             * @description Human-readable message. Specific for business errors (400/401/403/404);
+             *     a generic `"internal error"` for 5xx faults (detail is logged, not sent).
+             */
+            error: string;
+        };
+        /**
          * @description A memory in the re-verification horizon. `days_left` is computed per row
          *     against `now()` and is negative once the boundary has passed.
          */
