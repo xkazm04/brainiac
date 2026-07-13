@@ -19,7 +19,6 @@ use brainiac_core::Principal;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth::TokenMap;
@@ -56,6 +55,7 @@ pub async fn router(store: Store, embedder: Arc<dyn Embedder>) -> Result<Router>
     });
     Ok(Router::new()
         .route("/health", get(health))
+        .route("/openapi.json", get(crate::openapi::openapi_json))
         .route("/v1/memories/search", post(search))
         .route("/v1/memories", post(memory_add))
         .route("/v1/sources/{id}", get(source_status))
@@ -102,12 +102,27 @@ pub(crate) async fn principal_of(
     Ok(auth_of(state, headers, "read").await?.principal)
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(json!({"status": "ok"}))
+/// Liveness probe body — `{"status":"ok"}` and nothing else.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct HealthResponse {
+    status: String,
 }
 
-#[derive(Deserialize)]
-struct SearchBody {
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "system",
+    description = "Liveness probe; unauthenticated.",
+    responses((status = 200, description = "Server is up", body = HealthResponse))
+)]
+pub(crate) async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".into(),
+    })
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct SearchBody {
     query: String,
     #[serde(default = "default_k")]
     k: usize,
@@ -165,8 +180,8 @@ fn default_k() -> usize {
     10
 }
 
-#[derive(Serialize)]
-struct SearchHit {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SearchHit {
     id: Uuid,
     content: String,
     kind: String,
@@ -176,11 +191,29 @@ struct SearchHit {
     provenance_id: Option<Uuid>,
 }
 
-async fn search(
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SearchResponse {
+    hits: Vec<SearchHit>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/memories/search",
+    tag = "memories",
+    description = "Hybrid (vector + lexical + graph) retrieval under the caller's RLS scope.",
+    request_body = SearchBody,
+    responses(
+        (status = 200, description = "Ranked hits (k capped at 50)", body = SearchResponse),
+        (status = 400, description = "Unknown kind/min_status, or min_confidence outside 0..=1"),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `read` scope"),
+    )
+)]
+pub(crate) async fn search(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<SearchBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<SearchResponse>, (StatusCode, String)> {
     let principal = principal_of(&state, &headers).await?;
     let filters = body.filters()?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
@@ -209,21 +242,42 @@ async fn search(
             provenance_id: h.memory.provenance_id,
         })
         .collect();
-    Ok(Json(json!({ "hits": out })))
+    Ok(Json(SearchResponse { hits: out }))
 }
 
-#[derive(Deserialize)]
-struct MemoryAddBody {
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct MemoryAddBody {
     content: String,
     #[serde(default)]
     team_id: Option<Uuid>,
 }
 
-async fn memory_add(
+/// The 202 receipt: the source row that was written and the queue job that
+/// will extract memories from it. Poll `GET /v1/sources/{id}` with `source_id`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct MemoryAcceptedResponse {
+    source_id: Uuid,
+    job_id: i64,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/memories",
+    tag = "memories",
+    description = "Ingest raw content as a source and enqueue the extraction pipeline (async).",
+    request_body = MemoryAddBody,
+    responses(
+        (status = 202, description = "Source stored and job enqueued", body = MemoryAcceptedResponse),
+        (status = 400, description = "Empty content"),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `write` scope"),
+    )
+)]
+pub(crate) async fn memory_add(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<MemoryAddBody>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<MemoryAcceptedResponse>), (StatusCode, String)> {
     let principal = auth_of(&state, &headers, "write").await?.principal;
     if body.content.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "content must not be empty".into()));
@@ -249,14 +303,63 @@ async fn memory_add(
             .map_err(internal)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "source_id": source_id, "job_id": job_id })),
+        Json(MemoryAcceptedResponse { source_id, job_id }),
     ))
 }
 
-async fn pending_promotions(
+/// Memory body of a pending promotion. `None` on the parent ⇒ serialized as
+/// `null` (RLS-invisible memory) — never omitted.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PromotionMemory {
+    content: String,
+    kind: Option<String>,
+    status: Option<String>,
+    confidence: Option<f32>,
+    team: Option<String>,
+}
+
+/// Provenance of a pending promotion; `null` alongside an invisible memory.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PromotionProvenance {
+    actor_kind: String,
+    actor_id: String,
+    model_ref: Option<String>,
+    source_kind: Option<String>,
+    source_ref: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PendingPromotion {
+    id: Uuid,
+    memory_id: Uuid,
+    from_status: String,
+    to_status: String,
+    policy_rule: Option<String>,
+    age_secs: i64,
+    memory: Option<PromotionMemory>,
+    provenance: Option<PromotionProvenance>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PromotionQueueResponse {
+    promotions: Vec<PendingPromotion>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/reviews/promotions",
+    tag = "reviews",
+    description = "Promotions awaiting human review (oldest first, max 100).",
+    responses(
+        (status = 200, description = "Pending review queue", body = PromotionQueueResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `read` scope"),
+    )
+)]
+pub(crate) async fn pending_promotions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<PromotionQueueResponse>, (StatusCode, String)> {
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     use sqlx::Row;
@@ -283,49 +386,101 @@ async fn pending_promotions(
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
-    let out: Vec<serde_json::Value> = rows
+    let out: Vec<PendingPromotion> = rows
         .iter()
         .map(|r| {
-            let provenance = r.get::<Option<String>, _>("actor_kind").map(|actor_kind| {
-                json!({
-                    "actor_kind": actor_kind,
-                    "actor_id": r.get::<String, _>("actor_id"),
-                    "model_ref": r.get::<Option<String>, _>("model_ref"),
-                    "source_kind": r.get::<Option<String>, _>("source_kind"),
-                    "source_ref": r.get::<Option<String>, _>("source_ref"),
-                })
-            });
-            json!({
-                "id": r.get::<Uuid, _>("id"),
-                "memory_id": r.get::<Uuid, _>("memory_id"),
-                "from_status": r.get::<String, _>("from_status"),
-                "to_status": r.get::<String, _>("to_status"),
-                "policy_rule": r.get::<Option<String>, _>("policy_rule"),
-                "age_secs": r.get::<i64, _>("age_secs"),
-                "memory": r.get::<Option<String>, _>("content").map(|content| json!({
-                    "content": content,
-                    "kind": r.get::<Option<String>, _>("kind"),
-                    "status": r.get::<Option<String>, _>("memory_status"),
-                    "confidence": r.get::<Option<f32>, _>("confidence"),
-                    "team": r.get::<Option<String>, _>("team"),
-                })),
-                "provenance": provenance,
-            })
+            let provenance =
+                r.get::<Option<String>, _>("actor_kind")
+                    .map(|actor_kind| PromotionProvenance {
+                        actor_kind,
+                        actor_id: r.get::<String, _>("actor_id"),
+                        model_ref: r.get::<Option<String>, _>("model_ref"),
+                        source_kind: r.get::<Option<String>, _>("source_kind"),
+                        source_ref: r.get::<Option<String>, _>("source_ref"),
+                    });
+            PendingPromotion {
+                id: r.get::<Uuid, _>("id"),
+                memory_id: r.get::<Uuid, _>("memory_id"),
+                from_status: r.get::<String, _>("from_status"),
+                to_status: r.get::<String, _>("to_status"),
+                policy_rule: r.get::<Option<String>, _>("policy_rule"),
+                age_secs: r.get::<i64, _>("age_secs"),
+                memory: r
+                    .get::<Option<String>, _>("content")
+                    .map(|content| PromotionMemory {
+                        content,
+                        kind: r.get::<Option<String>, _>("kind"),
+                        status: r.get::<Option<String>, _>("memory_status"),
+                        confidence: r.get::<Option<f32>, _>("confidence"),
+                        team: r.get::<Option<String>, _>("team"),
+                    }),
+                provenance,
+            }
         })
         .collect();
-    Ok(Json(json!({ "promotions": out })))
+    Ok(Json(PromotionQueueResponse { promotions: out }))
 }
 
 // ── ingestion status ────────────────────────────────────────────────────
 
+/// The source row itself, as the caller's RLS scope sees it.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SourceInfo {
+    kind: String,
+    external_ref: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+/// Queue state of the ingest job. `null` on the parent once the job has aged
+/// out of both `queue.jobs` and `queue.archive`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SourceJob {
+    /// `queued` (still in `queue.jobs`) or `archived`.
+    state: String,
+    attempts: i32,
+    /// Archive outcome (`ok` / failure reason); always null while queued.
+    outcome: Option<String>,
+}
+
+/// What the pipeline produced from this source (nested, not flattened).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SourceResults {
+    memories: i64,
+    promoted: i64,
+    pending_review: i64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SourceStatusResponse {
+    source_id: Uuid,
+    /// One-word rollup: queued|retrying|processed|failed|unknown.
+    status: String,
+    source: SourceInfo,
+    job: Option<SourceJob>,
+    results: SourceResults,
+}
+
 /// GET /v1/sources/{id} — what happened to an async memory_add. Closes the
 /// loop on the 202: the source row (RLS-scoped), the queue job state, and
 /// what the pipeline produced from it.
-async fn source_status(
+#[utoipa::path(
+    get,
+    path = "/v1/sources/{id}",
+    tag = "memories",
+    description = "Ingestion status of a source: queue job state plus what the pipeline produced.",
+    params(("id" = Uuid, Path, description = "Source id returned by POST /v1/memories")),
+    responses(
+        (status = 200, description = "Ingestion status", body = SourceStatusResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `read` scope"),
+        (status = 404, description = "Source not found (or invisible under RLS — no oracle)"),
+    )
+)]
+pub(crate) async fn source_status(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<SourceStatusResponse>, (StatusCode, String)> {
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     use sqlx::Row;
@@ -366,43 +521,41 @@ async fn source_status(
     .await
     .map_err(internal)?;
     let memories: i64 = produced.get("memories");
-    let job_json = job.as_ref().map(|j| {
-        json!({
-            "state": j.get::<String, _>("state"),
-            "attempts": j.get::<i32, _>("attempts"),
-            "outcome": j.get::<Option<String>, _>("outcome"),
-        })
+    let job = job.as_ref().map(|j| SourceJob {
+        state: j.get::<String, _>("state"),
+        attempts: j.get::<i32, _>("attempts"),
+        outcome: j.get::<Option<String>, _>("outcome"),
     });
     // One-word rollup the caller can poll on.
-    let status = match (&job_json, memories) {
-        (Some(j), _) if j["state"] == "queued" && j["attempts"] == 0 => "queued",
-        (Some(j), _) if j["state"] == "queued" => "retrying",
-        (Some(j), _) if j["state"] == "archived" && j["outcome"] == "ok" => "processed",
+    let status = match (&job, memories) {
+        (Some(j), _) if j.state == "queued" && j.attempts == 0 => "queued",
+        (Some(j), _) if j.state == "queued" => "retrying",
+        (Some(j), _) if j.state == "archived" && j.outcome.as_deref() == Some("ok") => "processed",
         (Some(_), _) => "failed",
         (None, 0) => "unknown", // job vanished without output (pre-status enqueue)
         (None, _) => "processed",
     };
-    Ok(Json(json!({
-        "source_id": id,
-        "status": status,
-        "source": {
-            "kind": source.get::<String, _>("kind"),
-            "external_ref": source.get::<Option<String>, _>("external_ref"),
-            "created_at": source.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+    Ok(Json(SourceStatusResponse {
+        source_id: id,
+        status: status.to_string(),
+        source: SourceInfo {
+            kind: source.get::<String, _>("kind"),
+            external_ref: source.get::<Option<String>, _>("external_ref"),
+            created_at: source.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
         },
-        "job": job_json,
-        "results": {
-            "memories": memories,
-            "promoted": produced.get::<i64, _>("promoted"),
-            "pending_review": produced.get::<i64, _>("pending_review"),
+        job,
+        results: SourceResults {
+            memories,
+            promoted: produced.get::<i64, _>("promoted"),
+            pending_review: produced.get::<i64, _>("pending_review"),
         },
-    })))
+    }))
 }
 
 // ── managed API tokens ──────────────────────────────────────────────────
 
-#[derive(Deserialize)]
-struct CreateTokenBody {
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateTokenBody {
     name: String,
     /// Subset of read|write|admin; defaults to ["read"].
     #[serde(default)]
@@ -412,14 +565,40 @@ struct CreateTokenBody {
     user_id: Option<Uuid>,
 }
 
+/// The mint response. `token` is the plaintext secret and is the only place
+/// it will ever appear — everything else is retrievable from `GET /v1/tokens`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct CreatedTokenResponse {
+    id: Uuid,
+    name: String,
+    prefix: String,
+    scopes: Vec<String>,
+    user_id: Uuid,
+    /// Shown exactly once — never retrievable again.
+    token: String,
+}
+
 /// POST /v1/tokens — mint a token. The secret appears ONCE in this response;
 /// only its sha256 is stored. Requires the `admin` scope (env bootstrap
 /// tokens qualify), so read/write tokens cannot mint tokens.
-async fn create_token(
+#[utoipa::path(
+    post,
+    path = "/v1/tokens",
+    tag = "tokens",
+    description = "Mint an API token; the plaintext secret is returned once and never again.",
+    request_body = CreateTokenBody,
+    responses(
+        (status = 201, description = "Token minted", body = CreatedTokenResponse),
+        (status = 400, description = "Empty name or scopes outside read|write|admin"),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+    )
+)]
+pub(crate) async fn create_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<CreateTokenBody>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<CreatedTokenResponse>), (StatusCode, String)> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let name = body.name.trim();
     if name.is_empty() {
@@ -457,46 +636,97 @@ async fn create_token(
     .map_err(internal)?;
     Ok((
         StatusCode::CREATED,
-        Json(json!({
-            "id": id,
-            "name": name,
-            "prefix": prefix,
-            "scopes": scopes,
-            "user_id": user_id,
+        Json(CreatedTokenResponse {
+            id,
+            name: name.to_string(),
+            prefix,
+            scopes,
+            user_id,
             // Shown exactly once — never retrievable again.
-            "token": secret,
-        })),
+            token: secret,
+        }),
     ))
 }
 
+/// One token as the listing exposes it — metadata only, never the secret.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TokenSummary {
+    id: Uuid,
+    name: String,
+    prefix: String,
+    scopes: Vec<String>,
+    created_at: DateTime<Utc>,
+    last_used_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TokenListResponse {
+    tokens: Vec<TokenSummary>,
+}
+
 /// GET /v1/tokens — list the org's tokens (metadata only, never secrets).
-async fn list_tokens(
+#[utoipa::path(
+    get,
+    path = "/v1/tokens",
+    tag = "tokens",
+    description = "List the org's API tokens (metadata only; secrets are never retrievable).",
+    responses(
+        (status = 200, description = "Tokens of the caller's org", body = TokenListResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+    )
+)]
+pub(crate) async fn list_tokens(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<TokenListResponse>, (StatusCode, String)> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let rows = brainiac_store::tokens::list(state.store.pool(), ctx.principal.org_id)
         .await
         .map_err(internal)?;
-    Ok(Json(json!({
-        "tokens": rows.iter().map(|t| json!({
-            "id": t.id,
-            "name": t.name,
-            "prefix": t.prefix,
-            "scopes": t.scopes,
-            "created_at": t.created_at,
-            "last_used_at": t.last_used_at,
-            "revoked_at": t.revoked_at,
-        })).collect::<Vec<_>>(),
-    })))
+    Ok(Json(TokenListResponse {
+        tokens: rows
+            .iter()
+            .map(|t| TokenSummary {
+                id: t.id,
+                name: t.name.clone(),
+                prefix: t.prefix.clone(),
+                scopes: t.scopes.clone(),
+                created_at: t.created_at,
+                last_used_at: t.last_used_at,
+                revoked_at: t.revoked_at,
+            })
+            .collect(),
+    }))
+}
+
+/// Confirmation of a revoke; `revoked` is always `true` (a no-op revoke 404s).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RevokeResponse {
+    id: Uuid,
+    revoked: bool,
 }
 
 /// POST /v1/tokens/{id}/revoke — kill a token immediately.
-async fn revoke_token(
+#[utoipa::path(
+    post,
+    path = "/v1/tokens/{id}/revoke",
+    tag = "tokens",
+    description = "Revoke a token immediately; subsequent requests with it are 401.",
+    params(("id" = Uuid, Path, description = "Token id (not the secret)")),
+    responses(
+        (status = 200, description = "Token revoked", body = RevokeResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+        (status = 404, description = "Token not found or already revoked"),
+    )
+)]
+pub(crate) async fn revoke_token(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<RevokeResponse>, (StatusCode, String)> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let revoked = brainiac_store::tokens::revoke(state.store.pool(), ctx.principal.org_id, id)
         .await
@@ -507,25 +737,62 @@ async fn revoke_token(
             "token not found or already revoked".into(),
         ));
     }
-    Ok(Json(json!({ "id": id, "revoked": true })))
+    Ok(Json(RevokeResponse { id, revoked: true }))
 }
 
 // ── queue operations ────────────────────────────────────────────────────
 // The queue schema is org-blind (payloads span every org), so all three
 // endpoints require the admin scope — this is an operator surface.
 
-#[derive(Deserialize)]
-struct QueueQuery {
+#[derive(Deserialize, utoipa::IntoParams)]
+pub(crate) struct QueueQuery {
     /// Queue name; defaults to the ingest queue.
     queue: Option<String>,
     limit: Option<i64>,
 }
 
-async fn queue_health(
+/// One bucket of the retry-attempt histogram over the ready jobs.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct AttemptsBucket {
+    attempts: i32,
+    count: i64,
+}
+
+/// Archive tallies, kept nested under `archived` (not flattened).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ArchivedCounts {
+    ok: i64,
+    failed: i64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct QueueHealthResponse {
+    queue: String,
+    ready: i64,
+    in_flight: i64,
+    oldest_ready_secs: i64,
+    attempts_histogram: Vec<AttemptsBucket>,
+    archived: ArchivedCounts,
+    dead_letters: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/queue/health",
+    tag = "queue",
+    description = "Operator view of one queue: depth, in-flight, retry histogram, archive tallies.",
+    params(QueueQuery),
+    responses(
+        (status = 200, description = "Queue health snapshot", body = QueueHealthResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+    )
+)]
+pub(crate) async fn queue_health(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QueueQuery>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<QueueHealthResponse>, (StatusCode, String)> {
     auth_of(&state, &headers, "admin").await?;
     let queue = q
         .queue
@@ -533,47 +800,108 @@ async fn queue_health(
     let h = brainiac_store::queue::health(state.store.pool(), &queue)
         .await
         .map_err(internal)?;
-    Ok(Json(json!({
-        "queue": h.queue_name,
-        "ready": h.ready,
-        "in_flight": h.in_flight,
-        "oldest_ready_secs": h.oldest_ready_secs,
-        "attempts_histogram": h.attempts_histogram.iter().map(|(a, n)| json!({
-            "attempts": a, "count": n,
-        })).collect::<Vec<_>>(),
-        "archived": { "ok": h.archived_ok, "failed": h.archived_failed },
-        "dead_letters": h.dead_letters,
-    })))
+    Ok(Json(QueueHealthResponse {
+        queue: h.queue_name,
+        ready: h.ready,
+        in_flight: h.in_flight,
+        oldest_ready_secs: h.oldest_ready_secs,
+        attempts_histogram: h
+            .attempts_histogram
+            .iter()
+            .map(|(a, n)| AttemptsBucket {
+                attempts: *a,
+                count: *n,
+            })
+            .collect(),
+        archived: ArchivedCounts {
+            ok: h.archived_ok,
+            failed: h.archived_failed,
+        },
+        dead_letters: h.dead_letters,
+    }))
 }
 
-async fn queue_dead_letters(
+/// One dead-lettered job. `payload` is the opaque job JSON, passed through
+/// verbatim (its shape belongs to the pipeline, not to this API).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct DeadLetterEntry {
+    id: i64,
+    #[schema(value_type = Object)]
+    payload: serde_json::Value,
+    attempts: i32,
+    enqueued_at: DateTime<Utc>,
+    archived_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct DeadLetterListResponse {
+    dead_letters: Vec<DeadLetterEntry>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/queue/dead-letters",
+    tag = "queue",
+    description = "Dead-lettered jobs, most recent first (default limit 50).",
+    params(QueueQuery),
+    responses(
+        (status = 200, description = "Dead-letter listing", body = DeadLetterListResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+    )
+)]
+pub(crate) async fn queue_dead_letters(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QueueQuery>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<DeadLetterListResponse>, (StatusCode, String)> {
     auth_of(&state, &headers, "admin").await?;
     let queue = q
         .queue
         .unwrap_or_else(|| brainiac_pipeline::worker::INGEST_QUEUE.to_string());
-    let rows = brainiac_store::queue::dead_letters(state.store.pool(), &queue, q.limit.unwrap_or(50))
-        .await
-        .map_err(internal)?;
-    Ok(Json(json!({
-        "dead_letters": rows.iter().map(|d| json!({
-            "id": d.id,
-            "payload": d.payload,
-            "attempts": d.attempts,
-            "enqueued_at": d.enqueued_at,
-            "archived_at": d.archived_at,
-        })).collect::<Vec<_>>(),
-    })))
+    let rows =
+        brainiac_store::queue::dead_letters(state.store.pool(), &queue, q.limit.unwrap_or(50))
+            .await
+            .map_err(internal)?;
+    Ok(Json(DeadLetterListResponse {
+        dead_letters: rows
+            .iter()
+            .map(|d| DeadLetterEntry {
+                id: d.id,
+                payload: d.payload.clone(),
+                attempts: d.attempts,
+                enqueued_at: d.enqueued_at,
+                archived_at: d.archived_at,
+            })
+            .collect(),
+    }))
 }
 
-async fn queue_requeue(
+/// Confirmation of a requeue; `requeued` is always `true` (a miss 404s).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RequeueResponse {
+    id: i64,
+    requeued: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/queue/dead-letters/{id}/requeue",
+    tag = "queue",
+    description = "Move a dead-lettered job back onto its queue for another attempt.",
+    params(("id" = i64, Path, description = "Archive row id of the dead-lettered job")),
+    responses(
+        (status = 200, description = "Job requeued", body = RequeueResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+        (status = 404, description = "Job is not in the dead-letter archive"),
+    )
+)]
+pub(crate) async fn queue_requeue(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<i64>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<RequeueResponse>, (StatusCode, String)> {
     auth_of(&state, &headers, "admin").await?;
     let requeued = brainiac_store::queue::requeue_dead(state.store.pool(), id)
         .await
@@ -584,7 +912,7 @@ async fn queue_requeue(
             "job is not in the dead-letter archive".into(),
         ));
     }
-    Ok(Json(json!({ "id": id, "requeued": true })))
+    Ok(Json(RequeueResponse { id, requeued: true }))
 }
 
 pub(crate) fn internal(e: impl std::fmt::Display) -> (StatusCode, String) {

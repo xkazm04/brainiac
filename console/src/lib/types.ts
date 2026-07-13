@@ -1,250 +1,68 @@
-// Typed mirror of the brainiac REST payloads (crates/brainiac-server).
-// Hand-written for the small v0 surface; switch to utoipa-generated types
-// once the API stabilizes.
+// The REST payload types — GENERATED, not mirrored.
+//
+// `api-schema.d.ts` is produced by `npm run gen:api` from `openapi.json`,
+// which the server itself emits (`brainiac openapi`) from the very structs
+// its handlers serialize. So these names cannot drift from the API: change a
+// response shape in Rust, regenerate, and TypeScript fails here until the
+// console agrees.
+//
+// This file is the stable alias layer — consumers import friendly names from
+// `@/lib/types` and never touch the generated file's `components["schemas"]`
+// indirection. Add an alias when the server adds an endpoint.
 
-export interface SearchHit {
-  id: string;
-  content: string;
-  kind: string;
-  status: string;
-  score: number;
-  via_graph: boolean;
-  provenance_id: string | null;
-}
+import type { components } from "./api-schema";
 
-export interface PendingPromotion {
-  id: string;
-  memory_id: string;
-  to_status: string;
-  policy_rule: string | null;
-}
+type S = components["schemas"];
 
-export interface ReviewedPromotion {
-  promotion_id: string;
-  memory_id: string;
-  decision: "approved" | "denied";
-  memory_status: string;
-}
+// ── retrieval ───────────────────────────────────────────────────────────
+export type SearchHit = S["SearchHit"];
+export type SearchResponse = S["SearchResponse"];
 
-export interface ContradictionMemory {
-  id: string;
-  content: string | null;
-}
+// ── governance: promotions ──────────────────────────────────────────────
+export type PendingPromotion = S["PendingPromotion"];
+export type PromotionMemory = S["PromotionMemory"];
+export type PromotionProvenance = S["PromotionProvenance"];
+export type ReviewedPromotion = S["ReviewDecisionResponse"];
 
-export interface Contradiction {
-  id: string;
-  memory_a: ContradictionMemory;
-  memory_b: ContradictionMemory;
-  detected_by: string;
-  suggested_resolution: string | null;
-}
-
+// ── governance: contradictions ──────────────────────────────────────────
+export type Contradiction = S["ContradictionRow"];
+export type ContradictionMemory = S["ContradictionMemoryRef"];
+/** Request-side vocabulary (a client constraint, not a response shape). */
 export type ContradictionResolution = "supersede" | "coexist" | "dismiss";
 
-export interface GraphCanonical {
-  id: string;
-  name: string;
-  kind: string;
-}
+// ── governance: disputed memories (feedback triage) ─────────────────────
+export type FlaggedMemory = S["FlaggedMemory"];
+export type FeedbackClaims = S["FeedbackClaims"];
 
-export interface GraphEntity {
-  id: string;
-  name: string;
-  kind: string;
-  team_id: string;
-  canonical_id: string | null;
-}
+// ── governance: audit ───────────────────────────────────────────────────
+export type AuditEvent = S["AuditEvent"];
 
-export interface GraphEdge {
-  src: string;
-  dst: string;
-  relation: string;
-  memory_id: string | null;
-  evidence: string | null;
-}
+// ── memories ────────────────────────────────────────────────────────────
+export type MemoryRow = S["MemoryRow"];
+export type MemoriesList = S["MemoryListResponse"];
+export type MemoryDetail = S["MemoryDetailResponse"];
+export type ChainLink = S["ChainLink"];
+export type ExpiringMemory = S["ExpiringMemory"];
 
-export interface Graph {
-  canonicals: GraphCanonical[];
-  entities: GraphEntity[];
-  edges: GraphEdge[];
-}
+// ── graph ───────────────────────────────────────────────────────────────
+export type Graph = S["GraphResponse"];
+export type GraphCanonical = S["GraphCanonical"];
+export type GraphEntity = S["GraphEntity"];
+export type GraphEdge = S["GraphEdge"];
+export type GraphOverview = S["GraphOverviewResponse"];
+export type CanonicalDetail = S["CanonicalDetailResponse"];
 
-export interface ApiToken {
-  id: string;
-  name: string;
-  prefix: string;
-  scopes: string[];
-  created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
-}
+// ── analytics ───────────────────────────────────────────────────────────
+export type Analytics = S["AnalyticsResponse"];
+export type ObservatoryPayload = S["ObservatoryResponse"];
 
-export interface MintedToken extends ApiToken {
-  user_id: string;
-  /** The full secret — shown exactly once, never retrievable again. */
-  token: string;
-}
+// ── ingest ──────────────────────────────────────────────────────────────
+export type SourceFeedItem = S["SourceRow"];
+export type PipelineRun = S["PipelineRunRow"];
+export type QueueHealth = S["QueueHealthResponse"];
 
-export interface OrgUser {
-  id: string;
-  email: string;
-  teams: { id: string; name: string; role: string }[];
-}
-
-export interface TokenPreview {
-  user_id: string;
-  email: string;
-  teams: string[];
-  visible: { total: number; org: number; team: number; private: number; canonical: number };
-}
-
-export interface SourceFeedItem {
-  id: string;
-  kind: string;
-  external_ref: string | null;
-  created_at: string;
-  team: string | null;
-  status: "queued" | "retrying" | "processed" | "failed" | "unknown";
-  attempts: number | null;
-  memories: number;
-  promoted: number;
-  pending_review: number;
-}
-
-export interface PipelineRun {
-  id: string;
-  stage: string;
-  status: string;
-  detail: string | null;
-  started_at: string;
-  duration_secs: number;
-}
-
-export interface QueueHealth {
-  queue: string;
-  ready: number;
-  in_flight: number;
-  oldest_ready_secs: number;
-  attempts_histogram: { attempts: number; count: number }[];
-  archived: { ok: number; failed: number };
-  dead_letters: number;
-}
-
-export interface MemoryRow {
-  id: string;
-  content: string;
-  kind: string;
-  status: string;
-  visibility: string;
-  team: string;
-  team_id: string;
-  valid_from: string | null;
-  valid_to: string | null;
-  superseded_by: string | null;
-  created_at: string | null;
-  confidence: number | null;
-}
-
-export interface MemoriesList {
-  total: number;
-  memories: MemoryRow[];
-}
-
-export interface ChainLink {
-  id: string;
-  content: string;
-  status: string;
-  valid_from: string | null;
-  valid_to: string | null;
-  depth: number;
-}
-
-export interface MemoryDetail {
-  memory: MemoryRow;
-  provenance: {
-    actor_kind: string;
-    actor_id: string;
-    model_ref: string | null;
-    source_kind: string | null;
-    source_ref: string | null;
-  } | null;
-  entities: { name: string; kind: string; team: string }[];
-  promotions: {
-    from_status: string;
-    to_status: string;
-    policy_decision: string;
-    policy_rule: string | null;
-    reviewed_at: string | null;
-    created_at: string | null;
-  }[];
-  chain: { predecessors: ChainLink[]; successors: ChainLink[] };
-}
-
-export interface GraphOverview {
-  teams: { id: string; name: string; memories: number; entities: number }[];
-  canonicals: {
-    id: string;
-    name: string;
-    kind: string;
-    memories: number;
-    teams: number;
-    team_ids: string[];
-  }[];
-  team_links: { a: string; b: string; shared: number }[];
-}
-
-export interface CanonicalDetail {
-  canonical: { id: string; name: string; kind: string; summary: string | null };
-  surface_forms: {
-    entity_id: string;
-    name: string;
-    kind: string;
-    team_id: string;
-    team: string;
-    confidence: number | null;
-    method: string | null;
-  }[];
-  edges: {
-    src: string;
-    src_name: string;
-    dst: string;
-    dst_name: string;
-    relation: string;
-    memory_id: string | null;
-    evidence: string | null;
-  }[];
-  neighbors: { id: string; name: string; kind: string; shared_edges: number }[];
-  memories: { id: string; content: string; kind: string; status: string; team: string }[];
-}
-
-export interface ObservatoryPayload {
-  totals: { status: string; count: number }[];
-  weekly: {
-    captured: { week: string; count: number }[];
-    promoted: { week: string; count: number }[];
-  };
-  by_kind: { kind: string; team: string; count: number }[];
-  top_entities: { name: string; kind: string; memories: number; teams: number }[];
-  review: {
-    pending: number;
-    oldest_pending_secs: number;
-    reviewed: number;
-    avg_latency_secs: number;
-    auto_promoted: number;
-  };
-  contradictions: { status: string; count: number }[];
-  queue: { ingest_depth: number };
-  embedding_model: string;
-}
-
-export interface Analytics {
-  memories_by_status: { status: string; count: number }[];
-  reviews: {
-    pending_promotions: number;
-    oldest_pending_secs: number;
-    open_contradictions: number;
-  };
-  graph: { entities: number; canonicals: number };
-  queue: { ingest_depth: number };
-  embedding_model: string;
-}
+// ── keys / tokens ───────────────────────────────────────────────────────
+export type ApiToken = S["TokenSummary"];
+export type MintedToken = S["CreatedTokenResponse"];
+export type OrgUser = S["OrgUser"];
+export type TokenPreview = S["TokenPreviewResponse"];

@@ -12,7 +12,9 @@ import { band, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
 const VIOLET = band("delta");
 
-export function fmtDate(iso: string | null): string {
+// Nullable-and-optional: the generated API types mark Option<T> fields as
+// optional (utoipa's default), though the server always emits them as null.
+export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toISOString().slice(0, 10);
 }

@@ -35,6 +35,7 @@ dotenvy = "0.15"
 async-trait = "0.1"
 sha2 = "0.10"
 schemars = { version = "1", features = ["chrono04"] }
+utoipa = { version = "5", features = ["chrono", "uuid"] }
 
 # Internal crates
 brainiac-core = { path = "crates/brainiac-core" }

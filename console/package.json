@@ -8,7 +8,8 @@
     "start": "cross-env NEXT_DIST_DIR=.next-build next start -p 3100",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "dev:fresh": "node -e \"fs.rmSync('.next',{recursive:true,force:true})\" && next dev -p 3100"
+    "dev:fresh": "node -e \"fs.rmSync('.next',{recursive:true,force:true})\" && next dev -p 3100",
+    "gen:api": "openapi-typescript ../openapi.json -o src/lib/api-schema.d.ts"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",
@@ -25,6 +26,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "cross-env": "^10.1.0",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"

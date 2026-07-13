@@ -29,6 +29,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 sha2 = { workspace = true }
+utoipa = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 sqlx = { workspace = true }

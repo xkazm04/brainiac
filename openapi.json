@@ -1,0 +1,3719 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Brainiac",
+    "description": "GitOps for organizational AI knowledge — capture, govern, and serve an organization's memory. Every read is RLS-scoped to the caller: an agent can never retrieve what its operator cannot.",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8600",
+      "description": "Local"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "description": "Liveness probe; unauthenticated.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Server is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "The document itself. Open (like `/health`) — a client needs the contract\nbefore it has a token, and the spec describes shapes, never data.",
+        "description": "This OpenAPI document, derived from the handlers.",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document"
+          }
+        }
+      }
+    },
+    "/v1/analytics": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "description": "Governance health counters under the caller's RLS view: memories by status, review backlog, graph size, ingest queue depth.",
+        "operationId": "analytics",
+        "responses": {
+          "200": {
+            "description": "Governance counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/analytics/observatory": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "description": "The dashboard payload: status totals, weekly captured/promoted flow, kind×team volumes, top canonical themes, review latency, contradiction mix, queue depth.",
+        "operationId": "observatory",
+        "responses": {
+          "200": {
+            "description": "Observatory dashboard payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservatoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audit": {
+      "get": {
+        "tags": [
+          "reviews"
+        ],
+        "summary": "Reverse-chronological feed of governance actions: promotion reviews\n(human and policy) and contradiction resolutions. Reuses the reviewer /\nresolved-by columns both tables already carry; rows resolve under the\ncaller's RLS transaction so members see their org slice only.",
+        "description": "Reverse-chronological feed of governance actions: promotion reviews (human and policy) and contradiction resolutions.",
+        "operationId": "audit",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max events (default 50, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit feed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/graph": {
+      "get": {
+        "tags": [
+          "graph"
+        ],
+        "description": "The entity graph: canonical hubs, team-scoped surface entities, and evidence edges (bounded at 2000/2000/5000 rows).",
+        "operationId": "graph",
+        "responses": {
+          "200": {
+            "description": "Entity graph",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/graph/canonical/{id}": {
+      "get": {
+        "tags": [
+          "graph"
+        ],
+        "summary": "L2/L3: one canonical entity's neighborhood — surface forms per team,\n1-hop evidence edges (content RLS-scoped), neighbor canonicals reachable\nthrough those edges, and the anchored memories the caller may read.",
+        "description": "Cortex map L2/L3: one canonical entity's neighborhood — surface forms per team, 1-hop evidence edges, neighbor canonicals, and readable anchored memories.",
+        "operationId": "graph_canonical",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Canonical entity id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canonical neighborhood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical entity not found"
+          }
+        }
+      }
+    },
+    "/v1/graph/overview": {
+      "get": {
+        "tags": [
+          "graph"
+        ],
+        "summary": "L0/L1: team lobes with volumes, top canonical hubs with team spread, and\nteam-pair binding strength (shared canonicals). Bounded by construction.",
+        "description": "Cortex map L0/L1: team lobes with volumes, the top 60 canonical hubs with their team spread, and team-pair binding strength.",
+        "operationId": "graph_overview",
+        "responses": {
+          "200": {
+            "description": "Cortex overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphOverviewResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "description": "Browse the memory archive, optionally as-of an instant (time travel over the validity windows). Returns the filtered total alongside the page.",
+        "operationId": "memories_list",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Filter by memory kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by memory status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "description": "Filter by owning team id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "description": "RFC3339 instant: return rows VALID then, including since-deprecated ones",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archive page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "as_of is not RFC3339"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "description": "Ingest raw content as a source and enqueue the extraction pipeline (async).",
+        "operationId": "memory_add",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryAddBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Source stored and job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty content"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `write` scope"
+          }
+        }
+      }
+    },
+    "/v1/memories/expiring": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "summary": "The re-verification queue: live candidate/canonical memories whose\nvalidity window closes within the horizon, oldest boundary first.",
+        "description": "The re-verification queue: live candidate/canonical memories whose validity window closes within the horizon, oldest boundary first.",
+        "operationId": "memories_expiring",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Horizon in days (default 30, clamped 0..3650; 0 = only already-expired)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max rows (default 50)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Expiring memories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpiringResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/search": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "description": "Hybrid (vector + lexical + graph) retrieval under the caller's RLS scope.",
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ranked hits (k capped at 50)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown kind/min_status, or min_confidence outside 0..=1"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `read` scope"
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "description": "One memory with its provenance, anchored entities, promotion history, and supersession lineage (signed chain depth: negative = predecessors).",
+        "operationId": "memory_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Memory id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Memory detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Memory not found (or invisible under RLS)"
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}/reverify": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "summary": "Re-verification is a governance act: like promotion review, it requires\na maintainer of the owning team (org-wide memories: any org principal\nwith write scope).",
+        "description": "Re-verify a memory: extend its validity window from now and close any open feedback claims against it. Requires a maintainer of the owning team.",
+        "operationId": "memory_reverify",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Memory id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional validity budget; body may be omitted entirely",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverifyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Memory re-verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReverifyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a maintainer of the owning team"
+          },
+          "404": {
+            "description": "Memory not found, or superseded (supersessions are final)"
+          }
+        }
+      }
+    },
+    "/v1/org/users": {
+      "get": {
+        "tags": [
+          "keys"
+        ],
+        "summary": "Org directory for the key-mint picker (admin scope — it feeds token\nmanagement). Users/teams carry no RLS; org scoping is explicit.",
+        "description": "Org directory for the key-mint picker: every user in the caller's org with their team memberships and roles. Requires admin scope.",
+        "operationId": "org_users",
+        "responses": {
+          "200": {
+            "description": "Org directory",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgUsersResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/pipeline/runs": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Recent pipeline runs — the worker's own audit trail, org-scoped by RLS.",
+        "description": "Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS.",
+        "operationId": "pipeline_runs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max rows (default 30, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent pipeline runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineRunsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/queue/dead-letters": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "description": "Dead-lettered jobs, most recent first (default limit 50).",
+        "operationId": "queue_dead_letters",
+        "parameters": [
+          {
+            "name": "queue",
+            "in": "path",
+            "description": "Queue name; defaults to the ingest queue.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dead-letter listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadLetterListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      }
+    },
+    "/v1/queue/dead-letters/{id}/requeue": {
+      "post": {
+        "tags": [
+          "queue"
+        ],
+        "description": "Move a dead-lettered job back onto its queue for another attempt.",
+        "operationId": "queue_requeue",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Archive row id of the dead-lettered job",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job requeued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequeueResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Job is not in the dead-letter archive"
+          }
+        }
+      }
+    },
+    "/v1/queue/health": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "description": "Operator view of one queue: depth, in-flight, retry histogram, archive tallies.",
+        "operationId": "queue_health",
+        "parameters": [
+          {
+            "name": "queue",
+            "in": "path",
+            "description": "Queue name; defaults to the ingest queue.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Queue health snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueHealthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      }
+    },
+    "/v1/reviews/contradictions": {
+      "get": {
+        "tags": [
+          "reviews"
+        ],
+        "description": "The contradiction queue: oldest first (SLA aging), plus a status histogram that powers the queue's tabs.",
+        "operationId": "list_contradictions",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "open | resolved_supersede | resolved_coexist | dismissed | all (default open)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "detected_by",
+            "in": "query",
+            "description": "Filter by detector (e.g. embedding_similarity, llm)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "min_age_hours",
+            "in": "query",
+            "description": "Only rows at least this many hours old",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contradiction queue page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContradictionQueueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown status filter"
+          }
+        }
+      }
+    },
+    "/v1/reviews/contradictions/{id}/resolve": {
+      "post": {
+        "tags": [
+          "reviews"
+        ],
+        "description": "Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team.",
+        "operationId": "resolve_contradiction",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contradiction id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Contradiction resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveContradictionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown resolution, or supersede without a valid winner_memory_id"
+          },
+          "403": {
+            "description": "Supersede requires a maintainer of the losing memory's team"
+          },
+          "404": {
+            "description": "Contradiction not found / not open, or the losing memory is not visible"
+          }
+        }
+      }
+    },
+    "/v1/reviews/feedback": {
+      "get": {
+        "tags": [
+          "reviews"
+        ],
+        "summary": "Memories carrying unresolved `wrong` / `outdated` claims from the agents\nand operators who were served them — most-disputed first. This is where\nMCP memory_feedback verdicts land for a human.",
+        "description": "Memories carrying unresolved wrong/outdated claims from the agents and operators served them, most-disputed first.",
+        "operationId": "feedback_queue",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max rows (default 50)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feedback triage queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackQueueResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/reviews/feedback/{id}/resolve": {
+      "post": {
+        "tags": [
+          "reviews"
+        ],
+        "summary": "Answer the open claims against a memory. The three answers are the three\nthings a maintainer can actually mean:\n  reverified — checked it, still true → extend its validity window\n  deprecated — the reporters are right → end it now, drop it from retrieval\n  dismissed  — the reports are noise → leave the memory as-is\nWhichever is chosen, every open claim on that memory closes with it.",
+        "description": "Answer every open feedback claim against a memory: reverified (extend validity), deprecated (end it now), or dismissed (memory stands).",
+        "operationId": "resolve_feedback_claims",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Memory id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveFeedbackBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Claims closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveFeedbackResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown resolution"
+          },
+          "403": {
+            "description": "Caller is not a maintainer of the owning team"
+          },
+          "404": {
+            "description": "Memory not found (or invisible under RLS)"
+          }
+        }
+      }
+    },
+    "/v1/reviews/promotions": {
+      "get": {
+        "tags": [
+          "reviews"
+        ],
+        "description": "Promotions awaiting human review (oldest first, max 100).",
+        "operationId": "pending_promotions",
+        "responses": {
+          "200": {
+            "description": "Pending review queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotionQueueResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `read` scope"
+          }
+        }
+      }
+    },
+    "/v1/reviews/promotions/{id}/approve": {
+      "post": {
+        "tags": [
+          "reviews"
+        ],
+        "description": "Approve a pending promotion: moves the memory to the promotion's target status. Requires a maintainer of the owning team.",
+        "operationId": "approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Promotion id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Promotion approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDecisionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a maintainer of the owning team"
+          },
+          "404": {
+            "description": "Promotion not found or no longer pending"
+          }
+        }
+      }
+    },
+    "/v1/reviews/promotions/{id}/reject": {
+      "post": {
+        "tags": [
+          "reviews"
+        ],
+        "description": "Reject a pending promotion: the memory is marked rejected. Requires a maintainer of the owning team.",
+        "operationId": "reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Promotion id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Promotion rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDecisionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a maintainer of the owning team"
+          },
+          "404": {
+            "description": "Promotion not found or no longer pending"
+          }
+        }
+      }
+    },
+    "/v1/sources": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Recent sources with their pipeline rollup — the monitor's feed. Queue\nstate joins outside RLS (queue schema is org-blind); org membership is\nproven by the RLS read of `sources` itself.",
+        "description": "Recent ingest sources with their pipeline rollup (memories, promoted, pending review) and derived queue status.",
+        "operationId": "sources_list",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max rows (default 30, clamped 1..100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent sources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceFeedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sources/{id}": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "summary": "GET /v1/sources/{id} — what happened to an async memory_add. Closes the\nloop on the 202: the source row (RLS-scoped), the queue job state, and\nwhat the pipeline produced from it.",
+        "description": "Ingestion status of a source: queue job state plus what the pipeline produced.",
+        "operationId": "source_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Source id returned by POST /v1/memories",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ingestion status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `read` scope"
+          },
+          "404": {
+            "description": "Source not found (or invisible under RLS — no oracle)"
+          }
+        }
+      }
+    },
+    "/v1/tokens": {
+      "get": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "GET /v1/tokens — list the org's tokens (metadata only, never secrets).",
+        "description": "List the org's API tokens (metadata only; secrets are never retrievable).",
+        "operationId": "list_tokens",
+        "responses": {
+          "200": {
+            "description": "Tokens of the caller's org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "POST /v1/tokens — mint a token. The secret appears ONCE in this response;\nonly its sha256 is stored. Requires the `admin` scope (env bootstrap\ntokens qualify), so read/write tokens cannot mint tokens.",
+        "description": "Mint an API token; the plaintext secret is returned once and never again.",
+        "operationId": "create_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Token minted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty name or scopes outside read|write|admin"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      }
+    },
+    "/v1/tokens/preview": {
+      "post": {
+        "tags": [
+          "keys"
+        ],
+        "summary": "Blast radius: exactly what a key minted for this principal could read,\ncomputed by opening a transaction AS that principal — the same RLS path\nthe runtime uses, so the preview can't drift from enforcement.",
+        "description": "Blast-radius preview for a key minted for a given user: what that principal could read, computed under their own RLS. Requires admin scope.",
+        "operationId": "token_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Blast radius",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPreviewResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found in this org"
+          }
+        }
+      }
+    },
+    "/v1/tokens/{id}/revoke": {
+      "post": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "POST /v1/tokens/{id}/revoke — kill a token immediately.",
+        "description": "Revoke a token immediately; subsequent requests with it are 401.",
+        "operationId": "revoke_token",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Token id (not the secret)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Token not found or already revoked"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalyticsGraph": {
+        "type": "object",
+        "required": [
+          "entities",
+          "canonicals"
+        ],
+        "properties": {
+          "canonicals": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "entities": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AnalyticsResponse": {
+        "type": "object",
+        "required": [
+          "memories_by_status",
+          "reviews",
+          "graph",
+          "queue",
+          "embedding_model"
+        ],
+        "properties": {
+          "embedding_model": {
+            "type": "string"
+          },
+          "graph": {
+            "$ref": "#/components/schemas/AnalyticsGraph"
+          },
+          "memories_by_status": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusCount"
+            }
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueDepth"
+          },
+          "reviews": {
+            "$ref": "#/components/schemas/AnalyticsReviews"
+          }
+        }
+      },
+      "AnalyticsReviews": {
+        "type": "object",
+        "required": [
+          "pending_promotions",
+          "oldest_pending_secs",
+          "open_contradictions",
+          "flagged_memories"
+        ],
+        "properties": {
+          "flagged_memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_pending_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "open_contradictions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending_promotions": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AnchoredMemory": {
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "kind",
+          "status",
+          "team"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "ArchivedCounts": {
+        "type": "object",
+        "description": "Archive tallies, kept nested under `archived` (not flattened).",
+        "required": [
+          "ok",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ok": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AttemptsBucket": {
+        "type": "object",
+        "description": "One bucket of the retry-attempt histogram over the ready jobs.",
+        "required": [
+          "attempts",
+          "count"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "description": "One governance action. `kind` is `promotion_review` |\n`contradiction_resolution`; `memory_b` is only set for contradictions.",
+        "required": [
+          "kind",
+          "id",
+          "memory_id",
+          "outcome",
+          "at"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null for policy (auto) decisions — no human actor."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "memory_b": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        }
+      },
+      "AuditResponse": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            }
+          }
+        }
+      },
+      "CanonicalDetailResponse": {
+        "type": "object",
+        "required": [
+          "canonical",
+          "surface_forms",
+          "edges",
+          "neighbors",
+          "memories"
+        ],
+        "properties": {
+          "canonical": {
+            "$ref": "#/components/schemas/CanonicalSummary"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CanonicalEdge"
+            }
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnchoredMemory"
+            }
+          },
+          "neighbors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NeighborCanonical"
+            }
+          },
+          "surface_forms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SurfaceForm"
+            }
+          }
+        }
+      },
+      "CanonicalEdge": {
+        "type": "object",
+        "description": "A 1-hop edge touching a surface form; `evidence` is null when the backing\nmemory is invisible to the caller.",
+        "required": [
+          "src",
+          "src_name",
+          "dst",
+          "dst_name",
+          "relation"
+        ],
+        "properties": {
+          "dst": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dst_name": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "src_name": {
+            "type": "string"
+          }
+        }
+      },
+      "CanonicalSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChainLink": {
+        "type": "object",
+        "description": "One link of the supersession lineage. `depth` is **signed**: negative for\npredecessors (walking back), positive for successors (walking forward).",
+        "required": [
+          "id",
+          "content",
+          "status",
+          "depth"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ContradictionMemoryRef": {
+        "type": "object",
+        "description": "One side of a contradiction. `content` is null when the memory is not\nvisible to the caller under RLS (the row itself is org-scoped metadata).",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ContradictionQueueResponse": {
+        "type": "object",
+        "required": [
+          "contradictions",
+          "counts"
+        ],
+        "properties": {
+          "contradictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContradictionRow"
+            }
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusCount"
+            },
+            "description": "Status histogram over ALL contradictions — unaffected by the filters."
+          }
+        }
+      },
+      "ContradictionRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "memory_a",
+          "memory_b",
+          "detected_by",
+          "status",
+          "created_at",
+          "age_secs"
+        ],
+        "properties": {
+          "age_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detected_by": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "memory_a": {
+            "$ref": "#/components/schemas/ContradictionMemoryRef"
+          },
+          "memory_b": {
+            "$ref": "#/components/schemas/ContradictionMemoryRef"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "resolved_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "suggested_resolution": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`contradictions.resolution_note` — the detector's suggestion, or the\nresolver's note once answered."
+          }
+        }
+      },
+      "CreateTokenBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Subset of read|write|admin; defaults to [\"read\"]."
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Principal the token acts as; defaults to the caller."
+          }
+        }
+      },
+      "CreatedTokenResponse": {
+        "type": "object",
+        "description": "The mint response. `token` is the plaintext secret and is the only place\nit will ever appear — everything else is retrievable from `GET /v1/tokens`.",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "scopes",
+          "user_id",
+          "token"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "token": {
+            "type": "string",
+            "description": "Shown exactly once — never retrievable again."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DeadLetterEntry": {
+        "type": "object",
+        "description": "One dead-lettered job. `payload` is the opaque job JSON, passed through\nverbatim (its shape belongs to the pipeline, not to this API).",
+        "required": [
+          "id",
+          "payload",
+          "attempts",
+          "enqueued_at",
+          "archived_at"
+        ],
+        "properties": {
+          "archived_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "enqueued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payload": {
+            "type": "object"
+          }
+        }
+      },
+      "DeadLetterListResponse": {
+        "type": "object",
+        "required": [
+          "dead_letters"
+        ],
+        "properties": {
+          "dead_letters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeadLetterEntry"
+            }
+          }
+        }
+      },
+      "ExpiringMemory": {
+        "type": "object",
+        "description": "A memory in the re-verification horizon. `days_left` is computed per row\nagainst `now()` and is negative once the boundary has passed.",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "content"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "content": {
+            "type": "string"
+          },
+          "days_left": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ExpiringResponse": {
+        "type": "object",
+        "required": [
+          "window_days",
+          "memories"
+        ],
+        "properties": {
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpiringMemory"
+            }
+          },
+          "window_days": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FeedbackClaims": {
+        "type": "object",
+        "description": "Open claim counts against one memory.",
+        "required": [
+          "wrong",
+          "outdated"
+        ],
+        "properties": {
+          "outdated": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "wrong": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FeedbackQueueResponse": {
+        "type": "object",
+        "required": [
+          "flagged"
+        ],
+        "properties": {
+          "flagged": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlaggedMemory"
+            }
+          }
+        }
+      },
+      "FlaggedMemory": {
+        "type": "object",
+        "required": [
+          "memory_id",
+          "content",
+          "kind",
+          "status",
+          "claims",
+          "notes",
+          "oldest_claim_secs"
+        ],
+        "properties": {
+          "claims": {
+            "$ref": "#/components/schemas/FeedbackClaims"
+          },
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reporter notes on the open claims (most recent first, capped)."
+          },
+          "oldest_claim_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Age of the OLDEST open claim — how long the dispute has stood."
+          },
+          "status": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "GraphCanonical": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "GraphEdge": {
+        "type": "object",
+        "description": "An evidence edge. `evidence` is null when the backing memory is hidden by\nRLS — the edge itself stays visible (it's org metadata).",
+        "required": [
+          "src",
+          "dst",
+          "relation"
+        ],
+        "properties": {
+          "dst": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "GraphEntity": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "team_id"
+        ],
+        "properties": {
+          "canonical_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null when the entity has not been linked to a canonical hub yet."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "GraphOverviewResponse": {
+        "type": "object",
+        "required": [
+          "teams",
+          "canonicals",
+          "team_links"
+        ],
+        "properties": {
+          "canonicals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OverviewCanonical"
+            }
+          },
+          "team_links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamLink"
+            }
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamLobe"
+            }
+          }
+        }
+      },
+      "GraphResponse": {
+        "type": "object",
+        "required": [
+          "canonicals",
+          "entities",
+          "edges"
+        ],
+        "properties": {
+          "canonicals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphCanonical"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            }
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GraphEntity"
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Liveness probe body — `{\"status\":\"ok\"}` and nothing else.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "KindTeamCount": {
+        "type": "object",
+        "required": [
+          "kind",
+          "team",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "MemoryAcceptedResponse": {
+        "type": "object",
+        "description": "The 202 receipt: the source row that was written and the queue job that\nwill extract memories from it. Poll `GET /v1/sources/{id}` with `source_id`.",
+        "required": [
+          "source_id",
+          "job_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MemoryAddBody": {
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "MemoryChain": {
+        "type": "object",
+        "required": [
+          "predecessors",
+          "successors"
+        ],
+        "properties": {
+          "predecessors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainLink"
+            }
+          },
+          "successors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainLink"
+            }
+          }
+        }
+      },
+      "MemoryDetailResponse": {
+        "type": "object",
+        "required": [
+          "memory",
+          "entities",
+          "promotions",
+          "chain"
+        ],
+        "properties": {
+          "chain": {
+            "$ref": "#/components/schemas/MemoryChain"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryEntityRef"
+            }
+          },
+          "memory": {
+            "$ref": "#/components/schemas/MemoryRow"
+          },
+          "promotions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryPromotion"
+            }
+          },
+          "provenance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MemoryProvenance"
+              }
+            ]
+          }
+        }
+      },
+      "MemoryEntityRef": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "team"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "MemoryListResponse": {
+        "type": "object",
+        "required": [
+          "total",
+          "memories"
+        ],
+        "properties": {
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "MemoryPromotion": {
+        "type": "object",
+        "description": "A promotion attempt on this memory. Timestamps are RFC3339 strings here.",
+        "required": [
+          "from_status",
+          "to_status",
+          "policy_decision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from_status": {
+            "type": "string"
+          },
+          "policy_decision": {
+            "type": "string"
+          },
+          "policy_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_status": {
+            "type": "string"
+          }
+        }
+      },
+      "MemoryProvenance": {
+        "type": "object",
+        "description": "The provenance record behind a memory. The whole object is **null** (not\nomitted) when the memory has no provenance row.",
+        "required": [
+          "actor_kind",
+          "actor_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "actor_kind": {
+            "type": "string"
+          },
+          "model_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "MemoryRow": {
+        "type": "object",
+        "description": "The archive's memory row. NOTE the timestamps here are **RFC3339\nstrings**, not `DateTime` — this handler stringifies them (unlike the\ncontradiction/audit/expiring payloads, which pass `DateTime` through).\n`created_at` is non-null in practice but is read as an optional column, so\nit stays `Option<String>` to keep the emitted shape identical.",
+        "required": [
+          "id",
+          "content",
+          "kind",
+          "status",
+          "visibility",
+          "team",
+          "team_id"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "superseded_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "team": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "valid_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "NeighborCanonical": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "shared_edges"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "shared_edges": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ObservatoryResponse": {
+        "type": "object",
+        "required": [
+          "totals",
+          "weekly",
+          "by_kind",
+          "top_entities",
+          "review",
+          "contradictions",
+          "queue",
+          "embedding_model"
+        ],
+        "properties": {
+          "by_kind": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KindTeamCount"
+            }
+          },
+          "contradictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusCount"
+            }
+          },
+          "embedding_model": {
+            "type": "string"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueDepth"
+          },
+          "review": {
+            "$ref": "#/components/schemas/ObservatoryReview"
+          },
+          "top_entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopEntity"
+            }
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusCount"
+            }
+          },
+          "weekly": {
+            "$ref": "#/components/schemas/ObservatoryWeekly"
+          }
+        }
+      },
+      "ObservatoryReview": {
+        "type": "object",
+        "required": [
+          "pending",
+          "oldest_pending_secs",
+          "reviewed",
+          "avg_latency_secs",
+          "auto_promoted"
+        ],
+        "properties": {
+          "auto_promoted": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "avg_latency_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_pending_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reviewed": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ObservatoryWeekly": {
+        "type": "object",
+        "required": [
+          "captured",
+          "promoted"
+        ],
+        "properties": {
+          "captured": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyPoint"
+            }
+          },
+          "promoted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyPoint"
+            }
+          }
+        }
+      },
+      "OrgUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "teams"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgUserTeam"
+            },
+            "description": "Raw `json_agg` output — an array of `{id, name, role}` (empty array,\nnever null, when the user is on no team)."
+          }
+        }
+      },
+      "OrgUserTeam": {
+        "type": "object",
+        "description": "Documentation-only mirror of one element of `OrgUser::teams`. The value is\nproduced by Postgres `json_agg(json_build_object('id','name','role'))` and\nis forwarded verbatim as `serde_json::Value` so the bytes cannot drift;\nthis struct exists purely to give the schema its real shape.",
+        "required": [
+          "id",
+          "name",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "`team_members.role` — e.g. `member` | `maintainer`."
+          }
+        }
+      },
+      "OrgUsersResponse": {
+        "type": "object",
+        "required": [
+          "users"
+        ],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgUser"
+            }
+          }
+        }
+      },
+      "OverviewCanonical": {
+        "type": "object",
+        "description": "A canonical hub with its team spread. `teams` is the DISTINCT team count;\n`team_ids` is the set itself.",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "memories",
+          "teams",
+          "team_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "teams": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PendingPromotion": {
+        "type": "object",
+        "required": [
+          "id",
+          "memory_id",
+          "from_status",
+          "to_status",
+          "age_secs"
+        ],
+        "properties": {
+          "age_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "from_status": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "memory": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromotionMemory"
+              }
+            ]
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provenance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromotionProvenance"
+              }
+            ]
+          },
+          "to_status": {
+            "type": "string"
+          }
+        }
+      },
+      "PipelineRunRow": {
+        "type": "object",
+        "description": "One worker run. `started_at` is an RFC3339 **string**; `duration_secs`\nmeasures against `now()` while the run is still open.",
+        "required": [
+          "id",
+          "stage",
+          "status",
+          "started_at",
+          "duration_secs"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "PipelineRunsResponse": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelineRunRow"
+            }
+          }
+        }
+      },
+      "PreviewBody": {
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PromotionMemory": {
+        "type": "object",
+        "description": "Memory body of a pending promotion. `None` on the parent ⇒ serialized as\n`null` (RLS-invisible memory) — never omitted.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PromotionProvenance": {
+        "type": "object",
+        "description": "Provenance of a pending promotion; `null` alongside an invisible memory.",
+        "required": [
+          "actor_kind",
+          "actor_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "actor_kind": {
+            "type": "string"
+          },
+          "model_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PromotionQueueResponse": {
+        "type": "object",
+        "required": [
+          "promotions"
+        ],
+        "properties": {
+          "promotions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingPromotion"
+            }
+          }
+        }
+      },
+      "QueueDepth": {
+        "type": "object",
+        "description": "Ingest queue depth — shared by `/v1/analytics` and the observatory.",
+        "required": [
+          "ingest_depth"
+        ],
+        "properties": {
+          "ingest_depth": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "QueueHealthResponse": {
+        "type": "object",
+        "required": [
+          "queue",
+          "ready",
+          "in_flight",
+          "oldest_ready_secs",
+          "attempts_histogram",
+          "archived",
+          "dead_letters"
+        ],
+        "properties": {
+          "archived": {
+            "$ref": "#/components/schemas/ArchivedCounts"
+          },
+          "attempts_histogram": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttemptsBucket"
+            }
+          },
+          "dead_letters": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_ready_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queue": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RequeueResponse": {
+        "type": "object",
+        "description": "Confirmation of a requeue; `requeued` is always `true` (a miss 404s).",
+        "required": [
+          "id",
+          "requeued"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "requeued": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ResolveBody": {
+        "type": "object",
+        "required": [
+          "resolution"
+        ],
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolution": {
+            "type": "string",
+            "description": "supersede | coexist | dismiss"
+          },
+          "winner_memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for supersede: the memory that wins."
+          }
+        }
+      },
+      "ResolveContradictionResponse": {
+        "type": "object",
+        "description": "The contradiction's new terminal status (`resolved_supersede` |\n`resolved_coexist` | `dismissed`).",
+        "required": [
+          "contradiction_id",
+          "status"
+        ],
+        "properties": {
+          "contradiction_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ResolveFeedbackBody": {
+        "type": "object",
+        "required": [
+          "resolution"
+        ],
+        "properties": {
+          "days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "For `reverified`: the new validity budget (defaults to the kind TTL)."
+          },
+          "resolution": {
+            "type": "string",
+            "description": "reverified | deprecated | dismissed"
+          }
+        }
+      },
+      "ResolveFeedbackResponse": {
+        "type": "object",
+        "description": "`valid_to` is null for `deprecated`/`dismissed` (only `reverified` moves\nthe boundary) — null, never absent.",
+        "required": [
+          "memory_id",
+          "resolution",
+          "claims_closed"
+        ],
+        "properties": {
+          "claims_closed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ReverifyBody": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "New validity budget from now; defaults to the kind's standard TTL."
+          }
+        }
+      },
+      "ReverifyResponse": {
+        "type": "object",
+        "required": [
+          "memory_id",
+          "reverified",
+          "valid_to",
+          "days",
+          "claims_closed"
+        ],
+        "properties": {
+          "claims_closed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The budget actually applied, after clamping."
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reverified": {
+            "type": "boolean"
+          },
+          "valid_to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The new validity boundary (never null on success)."
+          }
+        }
+      },
+      "ReviewDecisionResponse": {
+        "type": "object",
+        "description": "Outcome of an approve/reject: the promotion, the memory it moved, and the\nstatus that memory now carries.",
+        "required": [
+          "promotion_id",
+          "memory_id",
+          "decision",
+          "memory_status"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "description": "`approved` | `denied`"
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "memory_status": {
+            "type": "string",
+            "description": "The memory's status after the decision."
+          },
+          "promotion_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RevokeResponse": {
+        "type": "object",
+        "description": "Confirmation of a revoke; `revoked` is always `true` (a no-op revoke 404s).",
+        "required": [
+          "id",
+          "revoked"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SearchBody": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "k": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Memory kinds to keep (fact|decision|pattern|pitfall|howto); omit for all."
+          },
+          "min_confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Minimum extractor confidence 0..1."
+          },
+          "min_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Trust floor: raw|candidate|canonical (candidate ⇒ candidate+canonical)."
+          },
+          "query": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Restrict to one team's memories."
+          }
+        }
+      },
+      "SearchHit": {
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "kind",
+          "status",
+          "score",
+          "via_graph"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "provenance_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "status": {
+            "type": "string"
+          },
+          "via_graph": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "required": [
+          "hits"
+        ],
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          }
+        }
+      },
+      "SourceFeedResponse": {
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceRow"
+            }
+          }
+        }
+      },
+      "SourceInfo": {
+        "type": "object",
+        "description": "The source row itself, as the caller's RLS scope sees it.",
+        "required": [
+          "kind",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "external_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "SourceJob": {
+        "type": "object",
+        "description": "Queue state of the ingest job. `null` on the parent once the job has aged\nout of both `queue.jobs` and `queue.archive`.",
+        "required": [
+          "state",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Archive outcome (`ok` / failure reason); always null while queued."
+          },
+          "state": {
+            "type": "string",
+            "description": "`queued` (still in `queue.jobs`) or `archived`."
+          }
+        }
+      },
+      "SourceResults": {
+        "type": "object",
+        "description": "What the pipeline produced from this source (nested, not flattened).",
+        "required": [
+          "memories",
+          "promoted",
+          "pending_review"
+        ],
+        "properties": {
+          "memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending_review": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "promoted": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SourceRow": {
+        "type": "object",
+        "description": "A source with its pipeline rollup. `created_at` is an RFC3339 **string**\nhere (this handler stringifies it). `status` is derived from the queue\njob + memory count: queued | retrying | processed | failed | unknown.",
+        "required": [
+          "id",
+          "kind",
+          "created_at",
+          "status",
+          "memories",
+          "promoted",
+          "pending_review"
+        ],
+        "properties": {
+          "attempts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Queue delivery attempts; null when no queue job is known."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "external_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending_review": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "promoted": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SourceStatusResponse": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "status",
+          "source",
+          "results"
+        ],
+        "properties": {
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourceJob"
+              }
+            ]
+          },
+          "results": {
+            "$ref": "#/components/schemas/SourceResults"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceInfo"
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "One-word rollup: queued|retrying|processed|failed|unknown."
+          }
+        }
+      },
+      "StatusCount": {
+        "type": "object",
+        "description": "`{status, count}` — the shape every status histogram in this module emits\n(memories-by-status, contradiction tabs).",
+        "required": [
+          "status",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "SurfaceForm": {
+        "type": "object",
+        "description": "A team-scoped surface form linked into the canonical hub, with the link's\nconfidence and resolution method.",
+        "required": [
+          "entity_id",
+          "name",
+          "kind",
+          "team_id",
+          "team"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "entity_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "TeamLink": {
+        "type": "object",
+        "description": "Binding strength between two team lobes = canonicals both teams link into.",
+        "required": [
+          "a",
+          "b",
+          "shared"
+        ],
+        "properties": {
+          "a": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "b": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shared": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "TeamLobe": {
+        "type": "object",
+        "description": "A team lobe: the team plus its memory/entity volumes.",
+        "required": [
+          "id",
+          "name",
+          "memories",
+          "entities"
+        ],
+        "properties": {
+          "entities": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TokenListResponse": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenSummary"
+            }
+          }
+        }
+      },
+      "TokenPreviewResponse": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "teams",
+          "visible"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Team names, not ids — this is the human-facing picker preview."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "visible": {
+            "$ref": "#/components/schemas/TokenVisibility"
+          }
+        }
+      },
+      "TokenSummary": {
+        "type": "object",
+        "description": "One token as the listing exposes it — metadata only, never the secret.",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TokenVisibility": {
+        "type": "object",
+        "description": "What a key minted for this principal could read, by visibility tier.",
+        "required": [
+          "total",
+          "org",
+          "team",
+          "private",
+          "canonical"
+        ],
+        "properties": {
+          "canonical": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "org": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "private": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "team": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "TopEntity": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "memories",
+          "teams"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "teams": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "WeeklyPoint": {
+        "type": "object",
+        "description": "One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the\ncaptured/promoted series stay joinable client-side.",
+        "required": [
+          "week",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "week": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Env-map token (unrestricted) or a managed `brk_…` key carrying the read/write/admin scope the route requires."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Liveness and the spec itself."
+    },
+    {
+      "name": "memories",
+      "description": "Retrieval, capture, and the memory ledger."
+    },
+    {
+      "name": "reviews",
+      "description": "Governance queues: promotions, contradictions, disputed memories, and the audit trail."
+    },
+    {
+      "name": "graph",
+      "description": "The canonical entity graph and its cortex map."
+    },
+    {
+      "name": "analytics",
+      "description": "Governance health counters and the observatory."
+    },
+    {
+      "name": "ingest",
+      "description": "Source feed and pipeline runs."
+    },
+    {
+      "name": "queue",
+      "description": "Job queue health and dead-letter recovery (admin)."
+    },
+    {
+      "name": "tokens",
+      "description": "Managed API keys and their blast radius (admin)."
+    },
+    {
+      "name": "keys",
+      "description": "Org directory backing key minting (admin)."
+    }
+  ]
+}

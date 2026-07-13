@@ -15,7 +15,8 @@ import { band, FONT_DISPLAY, FONT_MONO, GROUND, GROUND_DIM, LABEL, MAGENTA } fro
 
 import { demoPreview, fetchPreview, mintKey, SCOPES } from "./keys-data";
 
-export function fmtAgo(iso: string | null): string {
+// Nullable-and-optional — see fmtDate: the generated types allow undefined.
+export function fmtAgo(iso: string | null | undefined): string {
   if (!iso) return "never";
   const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
   if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
