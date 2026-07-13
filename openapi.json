@@ -448,6 +448,105 @@
         }
       }
     },
+    "/v1/memories/{id}/feedback": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "summary": "POST /v1/memories/{id}/feedback — report how a served memory held up.\nMirrors MCP `memory_feedback` exactly: synonyms are canonicalized, an\ninvisible memory is a plain 404 (no existence oracle), and the same store\ncalls run under the caller's RLS.",
+        "description": "Report how a retrieved memory held up: helpful (alias useful), wrong, or outdated (alias stale). Verdicts drive ranking and re-verification.",
+        "operationId": "memory_feedback",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Memory id you were served",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Feedback recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackRecordedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown verdict, or an oversized note"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `write` scope"
+          },
+          "404": {
+            "description": "Memory not found (or invisible under RLS — no oracle)"
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}/provenance": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "summary": "GET /v1/memories/{id}/provenance — trace a memory's evidence chain. Read\nscope. Invisible-under-RLS resolves to 404, the same as a nonexistent id\n(no existence oracle) — mirrors MCP `memory_provenance`.",
+        "description": "Trace a memory's evidence chain for citation: who/what recorded it, the model, when, the originating source with a short excerpt, and the canonical entities it anchors.",
+        "operationId": "memory_provenance",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Memory id you were served",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provenance chain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProvenanceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `read` scope"
+          },
+          "404": {
+            "description": "Memory not found (or invisible under RLS — no oracle)"
+          }
+        }
+      }
+    },
     "/v1/memories/{id}/reverify": {
       "post": {
         "tags": [
@@ -1916,6 +2015,25 @@
           }
         }
       },
+      "FeedbackBody": {
+        "type": "object",
+        "required": [
+          "verdict"
+        ],
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional: what happened (especially for wrong/outdated)."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "`helpful` (alias `useful`) | `wrong` | `outdated` (alias `stale`)."
+          }
+        }
+      },
       "FeedbackClaims": {
         "type": "object",
         "description": "Open claim counts against one memory.",
@@ -1945,6 +2063,47 @@
             "items": {
               "$ref": "#/components/schemas/FlaggedMemory"
             }
+          }
+        }
+      },
+      "FeedbackRecordedResponse": {
+        "type": "object",
+        "description": "The receipt: the verdict as stored (after synonym canonicalization) plus\nthe memory's running feedback totals.",
+        "required": [
+          "memory_id",
+          "verdict",
+          "feedback_totals"
+        ],
+        "properties": {
+          "feedback_totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackVerdictCount"
+            }
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        }
+      },
+      "FeedbackVerdictCount": {
+        "type": "object",
+        "description": "One verdict tally for a memory.",
+        "required": [
+          "verdict",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "verdict": {
+            "type": "string"
           }
         }
       },
@@ -2157,6 +2316,52 @@
         "properties": {
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "HitContradiction": {
+        "type": "object",
+        "description": "An OPEN contradiction touching a hit (mirrors the MCP search `contradicts`\nentries, mcp.rs:557): the contradiction row and the memory it conflicts\nwith. Reuses [`brainiac_store::governance::open_contradictions_for`].",
+        "required": [
+          "contradiction_id",
+          "counterpart_id"
+        ],
+        "properties": {
+          "contradiction_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "counterpart_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "HitFeedback": {
+        "type": "object",
+        "description": "What previous readers reported about a hit (mirrors the MCP search\n`feedback` block, mcp.rs:544). Present only when the memory carries any\nfeedback at all — reuses [`brainiac_store::feedback::trust_for`].",
+        "required": [
+          "helpful",
+          "wrong",
+          "outdated",
+          "disputed"
+        ],
+        "properties": {
+          "disputed": {
+            "type": "boolean",
+            "description": "True while an unresolved wrong/outdated claim stands — treat as unconfirmed."
+          },
+          "helpful": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outdated": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "wrong": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -2382,6 +2587,61 @@
             "type": [
               "string",
               "null"
+            ]
+          }
+        }
+      },
+      "MemoryProvenanceResponse": {
+        "type": "object",
+        "description": "A memory's evidence chain for citation. Mirrors MCP `memory_provenance`\nexactly: actor/model/time, the originating source (bounded excerpt), and the\ncanonical entities it anchors.",
+        "required": [
+          "memory_id",
+          "entity_anchors"
+        ],
+        "properties": {
+          "actor_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actor_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "entity_anchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnchorRef"
+            }
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProvenanceSource"
+              }
             ]
           }
         }
@@ -2887,6 +3147,25 @@
           }
         }
       },
+      "ProvenanceSource": {
+        "type": "object",
+        "description": "The originating source, with a bounded excerpt of its raw text. `null` when\nthe memory carries no source; `excerpt` is `null` when the source has no\ntext.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "excerpt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Bounded to SOURCE_EXCERPT_CHARS (500) chars — a citation handle, never\nthe whole transcript."
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
       "QueueDepth": {
         "type": "object",
         "description": "Ingest queue depth — shared by `/v1/analytics` and the observatory.",
@@ -3217,6 +3496,24 @@
           },
           "content": {
             "type": "string"
+          },
+          "contradictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HitContradiction"
+            },
+            "description": "Open contradictions this memory is part of — omitted when there are none."
+          },
+          "feedback": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HitFeedback",
+                "description": "Reader-reported trust signal — present only when this memory carries any\nfeedback (omitted entirely otherwise, to keep payloads lean)."
+              }
+            ]
           },
           "id": {
             "type": "string",

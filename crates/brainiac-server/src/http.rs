@@ -68,6 +68,8 @@ pub async fn router(
         .route("/openapi.json", get(crate::openapi::openapi_json))
         .route("/v1/memories/search", post(search))
         .route("/v1/memories", post(memory_add))
+        .route("/v1/memories/{id}/feedback", post(memory_feedback))
+        .route("/v1/memories/{id}/provenance", get(memory_provenance))
         .route("/v1/sources/{id}", get(source_status))
         .route("/v1/reviews/promotions", get(pending_promotions))
         .route("/v1/tokens", get(list_tokens).post(create_token))
@@ -98,6 +100,11 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CONTENT_CHARS: usize = 8_000;
 /// `memory_search` query.
 const MAX_QUERY_CHARS: usize = 2_000;
+/// `memory_feedback` note — a short human explanation (mcp.rs MAX_NOTE_CHARS).
+const MAX_NOTE_CHARS: usize = 2_000;
+/// Bounded excerpt of a source's raw text on the provenance endpoint — a
+/// citation handle, never the whole transcript (mcp.rs SOURCE_EXCERPT_CHARS).
+const SOURCE_EXCERPT_CHARS: usize = 500;
 
 /// Enforce a documented character cap on a free-text field; oversized input is
 /// a clear 400, never silent truncation or unbounded work.
@@ -235,6 +242,27 @@ pub(crate) struct AnchorRef {
     name: String,
 }
 
+/// What previous readers reported about a hit (mirrors the MCP search
+/// `feedback` block, mcp.rs:544). Present only when the memory carries any
+/// feedback at all — reuses [`brainiac_store::feedback::trust_for`].
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct HitFeedback {
+    helpful: i64,
+    wrong: i64,
+    outdated: i64,
+    /// True while an unresolved wrong/outdated claim stands — treat as unconfirmed.
+    disputed: bool,
+}
+
+/// An OPEN contradiction touching a hit (mirrors the MCP search `contradicts`
+/// entries, mcp.rs:557): the contradiction row and the memory it conflicts
+/// with. Reuses [`brainiac_store::governance::open_contradictions_for`].
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct HitContradiction {
+    contradiction_id: Uuid,
+    counterpart_id: Uuid,
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct SearchHit {
     id: Uuid,
@@ -247,6 +275,13 @@ pub(crate) struct SearchHit {
     /// Canonical entities anchoring this hit; for via_graph hits, the bridge it
     /// surfaced through. Empty when the memory has no canonical-linked entities.
     anchors: Vec<AnchorRef>,
+    /// Reader-reported trust signal — present only when this memory carries any
+    /// feedback (omitted entirely otherwise, to keep payloads lean).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feedback: Option<HitFeedback>,
+    /// Open contradictions this memory is part of — omitted when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    contradictions: Vec<HitContradiction>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -291,24 +326,58 @@ pub(crate) async fn search(
     )
     .await
     .map_err(internal)?;
+    // Trust + open-contradiction signals for the whole result set — the same
+    // parity the MCP surface attaches (mcp.rs:523-529). Two batched, RLS-scoped
+    // queries (never an N+1); the contradiction join is no-existence-oracle
+    // safe (invisible counterparts drop out).
+    let ids: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
+    let trust = brainiac_store::feedback::trust_for(&mut tx, &ids)
+        .await
+        .map_err(internal)?;
+    let mut contradictions = brainiac_store::governance::open_contradictions_for(&mut tx, &ids)
+        .await
+        .map_err(internal)?;
     let out: Vec<SearchHit> = hits
         .into_iter()
-        .map(|h| SearchHit {
-            id: h.memory.id,
-            content: h.memory.content,
-            kind: h.memory.kind.as_str().to_string(),
-            status: h.memory.status.as_str().to_string(),
-            score: h.score,
-            via_graph: h.via_graph,
-            provenance_id: h.memory.provenance_id,
-            anchors: h
-                .anchors
+        .map(|h| {
+            let id = h.memory.id;
+            let feedback = trust
+                .get(&id)
+                .filter(|t| !t.is_empty())
+                .map(|t| HitFeedback {
+                    helpful: t.helpful,
+                    wrong: t.wrong,
+                    outdated: t.outdated,
+                    disputed: t.disputed(),
+                });
+            let contradictions = contradictions
+                .remove(&id)
+                .unwrap_or_default()
                 .into_iter()
-                .map(|a| AnchorRef {
-                    id: a.id,
-                    name: a.name,
+                .map(|f| HitContradiction {
+                    contradiction_id: f.contradiction_id,
+                    counterpart_id: f.counterpart_id,
                 })
-                .collect(),
+                .collect();
+            SearchHit {
+                id,
+                content: h.memory.content,
+                kind: h.memory.kind.as_str().to_string(),
+                status: h.memory.status.as_str().to_string(),
+                score: h.score,
+                via_graph: h.via_graph,
+                provenance_id: h.memory.provenance_id,
+                anchors: h
+                    .anchors
+                    .into_iter()
+                    .map(|a| AnchorRef {
+                        id: a.id,
+                        name: a.name,
+                    })
+                    .collect(),
+                feedback,
+                contradictions,
+            }
         })
         .collect();
     Ok(Json(SearchResponse { hits: out }))
@@ -379,6 +448,225 @@ pub(crate) async fn memory_add(
         StatusCode::ACCEPTED,
         Json(MemoryAcceptedResponse { source_id, job_id }),
     ))
+}
+
+// ── memory feedback (REST mirror of MCP memory_feedback) ─────────────────
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct FeedbackBody {
+    /// `helpful` (alias `useful`) | `wrong` | `outdated` (alias `stale`).
+    verdict: String,
+    /// Optional: what happened (especially for wrong/outdated).
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// One verdict tally for a memory.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct FeedbackVerdictCount {
+    verdict: String,
+    count: i64,
+}
+
+/// The receipt: the verdict as stored (after synonym canonicalization) plus
+/// the memory's running feedback totals.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct FeedbackRecordedResponse {
+    memory_id: Uuid,
+    verdict: String,
+    feedback_totals: Vec<FeedbackVerdictCount>,
+}
+
+/// Canonicalize the documented feedback vocabulary onto the STORED verdicts —
+/// identical to the MCP surface (mcp.rs `canonical_verdict`): the doc terms
+/// `useful`/`stale` are accepted while the corpus keeps `helpful`/`outdated`.
+fn canonical_verdict(v: &str) -> &str {
+    match v {
+        "useful" => "helpful",
+        "stale" => "outdated",
+        other => other,
+    }
+}
+
+/// POST /v1/memories/{id}/feedback — report how a served memory held up.
+/// Mirrors MCP `memory_feedback` exactly: synonyms are canonicalized, an
+/// invisible memory is a plain 404 (no existence oracle), and the same store
+/// calls run under the caller's RLS.
+#[utoipa::path(
+    post,
+    path = "/v1/memories/{id}/feedback",
+    tag = "memories",
+    description = "Report how a retrieved memory held up: helpful (alias useful), wrong, or outdated (alias stale). Verdicts drive ranking and re-verification.",
+    params(("id" = Uuid, Path, description = "Memory id you were served")),
+    request_body = FeedbackBody,
+    responses(
+        (status = 200, description = "Feedback recorded", body = FeedbackRecordedResponse),
+        (status = 400, description = "Unknown verdict, or an oversized note"),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `write` scope"),
+        (status = 404, description = "Memory not found (or invisible under RLS — no oracle)"),
+    )
+)]
+pub(crate) async fn memory_feedback(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<FeedbackBody>,
+) -> Result<Json<FeedbackRecordedResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let verdict = canonical_verdict(body.verdict.trim());
+    if !brainiac_store::feedback::VERDICTS.contains(&verdict) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "verdict must be one of helpful|wrong|outdated (aliases: useful→helpful, stale→outdated)"
+                .to_string(),
+        )
+            .into());
+    }
+    let note = body
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(note) = note {
+        within_cap(note, MAX_NOTE_CHARS, "note")?;
+    }
+
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    // Visibility gate under the caller's RLS: feedback on a memory you can't
+    // read is refused as not-found (an FK check alone would bypass RLS and leak
+    // existence). Mirrors mcp.rs memory_feedback.
+    let visible = sqlx::query("SELECT 1 FROM memories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(internal)?;
+    if visible.is_none() {
+        return Err((StatusCode::NOT_FOUND, "memory not found".to_string()).into());
+    }
+    brainiac_store::feedback::insert(
+        &mut tx,
+        Uuid::new_v4(),
+        principal.org_id,
+        id,
+        principal.user_id,
+        verdict,
+        note,
+    )
+    .await
+    .map_err(internal)?;
+    let summary = brainiac_store::feedback::summary(&mut tx, id)
+        .await
+        .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(FeedbackRecordedResponse {
+        memory_id: id,
+        verdict: verdict.to_string(),
+        feedback_totals: summary
+            .into_iter()
+            .map(|(verdict, count)| FeedbackVerdictCount { verdict, count })
+            .collect(),
+    }))
+}
+
+// ── memory provenance (REST mirror of MCP memory_provenance) ─────────────
+
+/// The originating source, with a bounded excerpt of its raw text. `null` when
+/// the memory carries no source; `excerpt` is `null` when the source has no
+/// text.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ProvenanceSource {
+    kind: String,
+    /// Bounded to SOURCE_EXCERPT_CHARS (500) chars — a citation handle, never
+    /// the whole transcript.
+    excerpt: Option<String>,
+}
+
+/// A memory's evidence chain for citation. Mirrors MCP `memory_provenance`
+/// exactly: actor/model/time, the originating source (bounded excerpt), and the
+/// canonical entities it anchors.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct MemoryProvenanceResponse {
+    memory_id: Uuid,
+    actor_kind: Option<String>,
+    actor_ref: Option<String>,
+    model_ref: Option<String>,
+    created_at: Option<DateTime<Utc>>,
+    source: Option<ProvenanceSource>,
+    entity_anchors: Vec<AnchorRef>,
+}
+
+/// GET /v1/memories/{id}/provenance — trace a memory's evidence chain. Read
+/// scope. Invisible-under-RLS resolves to 404, the same as a nonexistent id
+/// (no existence oracle) — mirrors MCP `memory_provenance`.
+#[utoipa::path(
+    get,
+    path = "/v1/memories/{id}/provenance",
+    tag = "memories",
+    description = "Trace a memory's evidence chain for citation: who/what recorded it, the model, when, the originating source with a short excerpt, and the canonical entities it anchors.",
+    params(("id" = Uuid, Path, description = "Memory id you were served")),
+    responses(
+        (status = 200, description = "Provenance chain", body = MemoryProvenanceResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `read` scope"),
+        (status = 404, description = "Memory not found (or invisible under RLS — no oracle)"),
+    )
+)]
+pub(crate) async fn memory_provenance(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<MemoryProvenanceResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    // RLS gate: a memory invisible to the caller resolves to None — the SAME
+    // "not found" as a nonexistent id, so this endpoint is no existence oracle.
+    let Some(view) = brainiac_store::governance::provenance_for_memory(&mut tx, id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err((StatusCode::NOT_FOUND, "memory not found".to_string()).into());
+    };
+    // Canonical entities anchoring the memory — the batched helper (single id).
+    let anchors = brainiac_store::entities::canonical_anchors_for(&mut tx, &[id])
+        .await
+        .map_err(internal)?;
+    let entity_anchors = anchors
+        .get(&id)
+        .map(|a| {
+            a.iter()
+                .map(|e| AnchorRef {
+                    id: e.id,
+                    name: e.name.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Bound the source excerpt to the documented cap (char-boundary safe).
+    let source = view.source_kind.as_ref().map(|kind| {
+        let excerpt = view.source_text.as_deref().map(|text| {
+            let trimmed = text.trim();
+            let excerpt: String = trimmed.chars().take(SOURCE_EXCERPT_CHARS).collect();
+            if trimmed.chars().count() > SOURCE_EXCERPT_CHARS {
+                format!("{excerpt}…")
+            } else {
+                excerpt
+            }
+        });
+        ProvenanceSource {
+            kind: kind.clone(),
+            excerpt,
+        }
+    });
+    Ok(Json(MemoryProvenanceResponse {
+        memory_id: id,
+        actor_kind: view.actor_kind,
+        actor_ref: view.actor_ref,
+        model_ref: view.model_ref,
+        created_at: view.created_at,
+        source,
+        entity_anchors,
+    }))
 }
 
 /// Memory body of a pending promotion. `None` on the parent ⇒ serialized as

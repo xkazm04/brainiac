@@ -232,6 +232,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memories/{id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/memories/{id}/feedback — report how a served memory held up.
+         *     Mirrors MCP `memory_feedback` exactly: synonyms are canonicalized, an
+         *     invisible memory is a plain 404 (no existence oracle), and the same store
+         *     calls run under the caller's RLS.
+         * @description Report how a retrieved memory held up: helpful (alias useful), wrong, or outdated (alias stale). Verdicts drive ranking and re-verification.
+         */
+        post: operations["memory_feedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/{id}/provenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /v1/memories/{id}/provenance — trace a memory's evidence chain. Read
+         *     scope. Invisible-under-RLS resolves to 404, the same as a nonexistent id
+         *     (no existence oracle) — mirrors MCP `memory_provenance`.
+         * @description Trace a memory's evidence chain for citation: who/what recorded it, the model, when, the originating source with a short excerpt, and the canonical entities it anchors.
+         */
+        get: operations["memory_provenance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memories/{id}/reverify": {
         parameters: {
             query?: never;
@@ -833,6 +878,12 @@ export interface components {
             /** Format: int64 */
             window_days: number;
         };
+        FeedbackBody: {
+            /** @description Optional: what happened (especially for wrong/outdated). */
+            note?: string | null;
+            /** @description `helpful` (alias `useful`) | `wrong` | `outdated` (alias `stale`). */
+            verdict: string;
+        };
         /** @description Open claim counts against one memory. */
         FeedbackClaims: {
             /** Format: int64 */
@@ -842,6 +893,22 @@ export interface components {
         };
         FeedbackQueueResponse: {
             flagged: components["schemas"]["FlaggedMemory"][];
+        };
+        /**
+         * @description The receipt: the verdict as stored (after synonym canonicalization) plus
+         *     the memory's running feedback totals.
+         */
+        FeedbackRecordedResponse: {
+            feedback_totals: components["schemas"]["FeedbackVerdictCount"][];
+            /** Format: uuid */
+            memory_id: string;
+            verdict: string;
+        };
+        /** @description One verdict tally for a memory. */
+        FeedbackVerdictCount: {
+            /** Format: int64 */
+            count: number;
+            verdict: string;
         };
         FlaggedMemory: {
             claims: components["schemas"]["FeedbackClaims"];
@@ -909,6 +976,32 @@ export interface components {
         HealthResponse: {
             status: string;
         };
+        /**
+         * @description An OPEN contradiction touching a hit (mirrors the MCP search `contradicts`
+         *     entries, mcp.rs:557): the contradiction row and the memory it conflicts
+         *     with. Reuses [`brainiac_store::governance::open_contradictions_for`].
+         */
+        HitContradiction: {
+            /** Format: uuid */
+            contradiction_id: string;
+            /** Format: uuid */
+            counterpart_id: string;
+        };
+        /**
+         * @description What previous readers reported about a hit (mirrors the MCP search
+         *     `feedback` block, mcp.rs:544). Present only when the memory carries any
+         *     feedback at all — reuses [`brainiac_store::feedback::trust_for`].
+         */
+        HitFeedback: {
+            /** @description True while an unresolved wrong/outdated claim stands — treat as unconfirmed. */
+            disputed: boolean;
+            /** Format: int64 */
+            helpful: number;
+            /** Format: int64 */
+            outdated: number;
+            /** Format: int64 */
+            wrong: number;
+        };
         KindTeamCount: {
             /** Format: int64 */
             count: number;
@@ -970,6 +1063,22 @@ export interface components {
             model_ref?: string | null;
             source_kind?: string | null;
             source_ref?: string | null;
+        };
+        /**
+         * @description A memory's evidence chain for citation. Mirrors MCP `memory_provenance`
+         *     exactly: actor/model/time, the originating source (bounded excerpt), and the
+         *     canonical entities it anchors.
+         */
+        MemoryProvenanceResponse: {
+            actor_kind?: string | null;
+            actor_ref?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            entity_anchors: components["schemas"]["AnchorRef"][];
+            /** Format: uuid */
+            memory_id: string;
+            model_ref?: string | null;
+            source?: null | components["schemas"]["ProvenanceSource"];
         };
         /**
          * @description The archive's memory row. NOTE the timestamps here are **RFC3339
@@ -1128,6 +1237,19 @@ export interface components {
         PromotionQueueResponse: {
             promotions: components["schemas"]["PendingPromotion"][];
         };
+        /**
+         * @description The originating source, with a bounded excerpt of its raw text. `null` when
+         *     the memory carries no source; `excerpt` is `null` when the source has no
+         *     text.
+         */
+        ProvenanceSource: {
+            /**
+             * @description Bounded to SOURCE_EXCERPT_CHARS (500) chars — a citation handle, never
+             *     the whole transcript.
+             */
+            excerpt?: string | null;
+            kind: string;
+        };
         /** @description Ingest queue depth — shared by `/v1/analytics` and the observatory. */
         QueueDepth: {
             /** Format: int64 */
@@ -1264,6 +1386,9 @@ export interface components {
              */
             anchors: components["schemas"]["AnchorRef"][];
             content: string;
+            /** @description Open contradictions this memory is part of — omitted when there are none. */
+            contradictions?: components["schemas"]["HitContradiction"][];
+            feedback?: null | components["schemas"]["HitFeedback"];
             /** Format: uuid */
             id: string;
             kind: string;
@@ -1798,6 +1923,105 @@ export interface operations {
                 };
             };
             /** @description Memory not found (or invisible under RLS) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memory_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Memory id you were served */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackBody"];
+            };
+        };
+        responses: {
+            /** @description Feedback recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackRecordedResponse"];
+                };
+            };
+            /** @description Unknown verdict, or an oversized note */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `write` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Memory not found (or invisible under RLS — no oracle) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memory_provenance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Memory id you were served */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provenance chain */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProvenanceResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `read` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Memory not found (or invisible under RLS — no oracle) */
             404: {
                 headers: {
                     [name: string]: unknown;
