@@ -1000,3 +1000,138 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         .expect("dl");
     assert_eq!(dl.len(), 1, "exactly one dead letter recorded");
 }
+
+/// Direction 2: a transcript longer than the chunk threshold is split, and
+/// memories from BOTH the head and the tail survive — the old single-call
+/// path truncated the tail at max_tokens. Proven with a MockProvider that
+/// emits a memory for whichever end-marker appears in the chunk it sees.
+#[tokio::test]
+async fn long_transcript_captures_head_and_tail() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_pipeline::extract;
+    use brainiac_store::{memories, orgs};
+    use sqlx::Row;
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = db_guard().await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([61u8; 16]);
+    let team = Uuid::from_bytes([62u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // Emits a memory per end-marker present in the chunk it is handed, so the
+    // head chunk yields the ALPHA memory and the tail chunk the OMEGA memory.
+    let mock = MockProvider::new(|req: &ChatRequest| {
+        if req.system.contains("distill organizational knowledge") {
+            let mut mems: Vec<serde_json::Value> = Vec::new();
+            if req.user.contains("ALPHA_DECISION") {
+                mems.push(
+                    json!({"kind":"decision","content":"ALPHA head decision recorded",
+                    "visibility":"org","confidence":0.9,"entities":[],"relations":[]}),
+                );
+            }
+            if req.user.contains("OMEGA_DECISION") {
+                mems.push(
+                    json!({"kind":"decision","content":"OMEGA tail decision recorded",
+                    "visibility":"org","confidence":0.9,"entities":[],"relations":[]}),
+                );
+            }
+            return json!({ "memories": mems }).to_string();
+        }
+        "{}".to_string()
+    });
+
+    // Long transcript: head marker at the very start, tail marker at the very
+    // end, ~20k chars of filler between — forces >1 chunk (threshold ~12k).
+    let filler: String = std::iter::repeat_n("word ", 4000).collect();
+    let transcript = format!(
+        "ALPHA_DECISION we chose X at the start. {filler} and at the very end OMEGA_DECISION we chose Y."
+    );
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "payments")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+    let source_id = Uuid::from_bytes([63u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team),
+        "session_transcript",
+        &transcript,
+        None,
+    )
+    .await
+    .expect("source");
+    tx.commit().await.expect("commit");
+
+    let mut tx = store.worker_tx(&principal).await.expect("tx");
+    let stats = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team),
+        source_id,
+        &transcript,
+    )
+    .await
+    .expect("extract");
+    tx.commit().await.expect("commit");
+
+    assert!(
+        stats.chunks >= 2,
+        "long transcript was chunked: {}",
+        stats.chunks
+    );
+    assert_eq!(
+        stats.memories_written, 2,
+        "both head and tail decisions captured"
+    );
+
+    let head: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM memories WHERE org_id = $1 AND content = 'ALPHA head decision recorded'",
+    )
+    .bind(org_id)
+    .fetch_one(&admin)
+    .await
+    .expect("q")
+    .get("n");
+    let tail: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM memories WHERE org_id = $1 AND content = 'OMEGA tail decision recorded'",
+    )
+    .bind(org_id)
+    .fetch_one(&admin)
+    .await
+    .expect("q")
+    .get("n");
+    assert_eq!(head, 1, "head memory persisted");
+    assert_eq!(
+        tail, 1,
+        "tail memory persisted (would have been truncated before)"
+    );
+
+    // One provenance row per source, both chunks' memories linked to it.
+    let prov: i64 = sqlx::query("SELECT count(*) AS n FROM provenance WHERE source_id = $1")
+        .bind(source_id)
+        .fetch_one(&admin)
+        .await
+        .expect("q")
+        .get("n");
+    assert_eq!(prov, 1, "one provenance row per source across chunks");
+}

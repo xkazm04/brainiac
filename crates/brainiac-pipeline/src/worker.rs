@@ -32,9 +32,11 @@ pub struct TickStats {
     pub auto_promoted: usize,
     pub needs_review: usize,
     pub contradictions_opened: usize,
-    /// Extract resilience across the tick: parse_failures = malformed first
-    /// responses, repairs = extra calls that recovered them, deduped =
-    /// memories skipped as already-present for their source (retry redelivery).
+    /// Extract cost/resilience across the tick: chunks = primary LLM calls
+    /// (sources split when long), repairs = extra calls that recovered
+    /// malformed JSON, parse_failures = malformed first responses, deduped =
+    /// memories skipped as already-present for their source.
+    pub chunks: usize,
     pub parse_failures: usize,
     pub repairs: usize,
     pub deduped: usize,
@@ -106,14 +108,17 @@ async fn process_job(
     )
     .await?;
     stats.memories += extracted.memories_written;
+    stats.chunks += extracted.chunks;
     stats.parse_failures += extracted.parse_failures;
     stats.repairs += extracted.repairs;
     stats.deduped += extracted.deduped;
-    // Per-source resilience: repairs spent on malformed JSON, memories deduped
-    // away as a redelivered retry re-ran extraction on the same source.
+    // Cost + resilience per source: number of chunks (= primary calls) and
+    // total LLM calls (chunks + repairs), plus memories deduped away (retry
+    // redelivery / chunk overlap).
     tracing::info!(
         source = %source_id,
-        llm_calls = 1 + extracted.repairs,
+        chunks = extracted.chunks,
+        llm_calls = extracted.chunks + extracted.repairs,
         memories = extracted.memories_written,
         deduped = extracted.deduped,
         parse_failures = extracted.parse_failures,

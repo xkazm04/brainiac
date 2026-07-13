@@ -98,18 +98,68 @@ pub struct ExtractStats {
     pub memory_ids: Vec<Uuid>,
     pub dropped_invalid: usize,
     /// Memories skipped because an identical (source, content) row already
-    /// existed — the idempotency guard against a redelivered retry.
+    /// existed — the idempotency guard against a redelivered retry or an
+    /// overlap region re-extracted by an adjacent chunk.
     pub deduped: usize,
+    /// Chunks the source was split into = number of primary extract calls.
+    pub chunks: usize,
     /// First responses that failed to parse and triggered a repair re-prompt.
     pub parse_failures: usize,
     /// Repair re-prompts that recovered a parseable response. Total LLM calls
-    /// for the source = one per source + `repairs`.
+    /// for the source = `chunks + repairs`.
     pub repairs: usize,
 }
 
 /// Ceiling on the extractor's completion length (tokens). One place so the
-/// primary call and the repair re-prompt stay in lockstep.
+/// primary call and the repair re-prompt stay in lockstep, and so the chunk
+/// budget below can reason about the input/output split of a context window.
 const MAX_EXTRACT_TOKENS: u32 = 4096;
+
+// ── chunking (ARCHITECTURE.md §5 rows 1-2) ──────────────────────────────
+//
+// The whole raw source used to go to the model in a single call capped at
+// MAX_EXTRACT_TOKENS — long agent sessions silently truncated exactly the
+// transcripts most likely to contain decisions (the tail). Oversized sources
+// are split into overlapping char windows so no region is dropped; the
+// (source, content) dedup above collapses the memories an overlap re-extracts.
+
+/// Coarse chars-per-token for English transcripts (~4). Only used to size
+/// chunks; exactness doesn't matter because the window carries headroom.
+const CHARS_PER_TOKEN: usize = 4;
+
+/// Target source tokens per chunk. With MAX_EXTRACT_TOKENS of completion plus
+/// the system prompt, ~3000 source tokens keeps a call comfortably inside a
+/// modest (8k) context window.
+const CHUNK_TARGET_TOKENS: usize = 3000;
+
+/// A source at or under this many chars is sent whole — no behavior change for
+/// the common short session. ~12000 chars.
+const MAX_CHUNK_CHARS: usize = CHUNK_TARGET_TOKENS * CHARS_PER_TOKEN;
+
+/// Overlap between consecutive windows so a decision straddling a boundary is
+/// seen intact by at least one chunk; dedup collapses the repeat.
+const CHUNK_OVERLAP_CHARS: usize = 800;
+
+/// Split `text` into overlapping char windows. UTF-8 safe (windows are cut on
+/// char boundaries, never mid-codepoint). Short sources return a single chunk.
+fn chunk_source(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= MAX_CHUNK_CHARS {
+        return vec![text.to_string()];
+    }
+    let step = MAX_CHUNK_CHARS - CHUNK_OVERLAP_CHARS;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + MAX_CHUNK_CHARS).min(chars.len());
+        chunks.push(chars[start..end].iter().collect());
+        if end == chars.len() {
+            break;
+        }
+        start += step;
+    }
+    chunks
+}
 
 /// Extract the outermost JSON object from provider output that may carry
 /// prose or fences around it (string/escape aware).
@@ -263,139 +313,157 @@ pub async fn run_extract(
     source_id: Uuid,
     raw_text: &str,
 ) -> Result<ExtractStats> {
-    let mut stats = ExtractStats::default();
+    // Chunk oversized sources so a long session's tail isn't truncated. One
+    // provenance row per source still (stamped from the first chunk's model
+    // ref), every chunk's memories linked to it; dedup collapses overlaps.
+    let chunks = chunk_source(raw_text);
+    let mut stats = ExtractStats {
+        chunks: chunks.len(),
+        ..Default::default()
+    };
+    let mut provenance_id: Option<Uuid> = None;
 
-    // One BYOM call for the source, with a bounded JSON-repair re-prompt.
-    let call = extract_once(provider, raw_text).await?;
-    if call.repaired {
-        stats.parse_failures += 1;
-        stats.repairs += 1;
-    }
-
-    let provenance_id = Uuid::new_v4();
-    brainiac_store::governance::insert_provenance(
-        conn,
-        provenance_id,
-        org_id,
-        ActorKind::Pipeline,
-        "extract-worker",
-        Some(&call.model_ref),
-        Some(source_id),
-        None,
-    )
-    .await?;
-
-    for m in call.output.memories {
-        // Validation firewall: invalid kinds/empty content are dropped and
-        // counted, never written.
-        let Some(kind) = MemoryKind::parse(&m.kind) else {
-            stats.dropped_invalid += 1;
-            continue;
-        };
-        let content = m.content.trim().to_string();
-        if content.is_empty() {
-            stats.dropped_invalid += 1;
-            continue;
+    for chunk in &chunks {
+        // One BYOM call per chunk, each with a bounded JSON-repair re-prompt.
+        let call = extract_once(provider, chunk).await?;
+        if call.repaired {
+            stats.parse_failures += 1;
+            stats.repairs += 1;
         }
-        // Idempotency: skip a memory this source already produced (a
-        // redelivered retry re-runs extraction on the same source).
-        if memory_exists_for_source(conn, org_id, source_id, &content).await? {
-            stats.deduped += 1;
-            continue;
-        }
-        let visibility = m
-            .visibility
-            .as_deref()
-            .and_then(Visibility::parse)
-            .unwrap_or(Visibility::Team);
-        let confidence = m.confidence.map(|c| c.clamp(0.0, 1.0));
 
-        let memory_id = Uuid::new_v4();
-        // Freshness lifecycle: stamp the validity window at extraction so
-        // knowledge expires from retrieval (temporal::valid_at) instead of
-        // staying presumed-true forever; /v1/memories/expiring surfaces rows
-        // approaching the boundary for re-verification.
-        let now = chrono::Utc::now();
-        brainiac_store::memories::insert(
-            conn,
-            &brainiac_store::memories::NewMemory {
-                id: memory_id,
-                org_id,
-                team_id,
-                owner_user_id: None,
-                visibility,
-                status: MemoryStatus::Raw,
-                kind,
-                content: content.clone(),
-                language: "en".into(),
-                valid_from: Some(now),
-                valid_to: ttl_days(kind).map(|d| now + chrono::Duration::days(d)),
-                superseded_by: None,
-                confidence,
-                provenance_id: Some(provenance_id),
-            },
-        )
-        .await?;
-
-        // Entities: get-or-create within the source's team scope.
-        let mut name_to_id: std::collections::HashMap<String, Uuid> =
-            std::collections::HashMap::new();
-        for e in &m.entities {
-            let id = match brainiac_store::entities::find_by_name(conn, org_id, team_id, &e.name)
-                .await?
-            {
-                Some(id) => id,
-                None => {
-                    let id = Uuid::new_v4();
-                    brainiac_store::entities::insert_entity(
-                        conn,
-                        id,
-                        org_id,
-                        team_id,
-                        &e.name,
-                        &e.kind,
-                        &e.clean_aliases(),
-                        Some(provenance_id),
-                    )
-                    .await?;
-                    stats.entities_created.push(id);
-                    id
-                }
-            };
-            name_to_id.insert(e.name.to_lowercase(), id);
-            brainiac_store::memories::link_entity(conn, memory_id, id).await?;
-        }
-        for r in &m.relations {
-            let (Some(src), Some(dst)) = (
-                name_to_id.get(&r.src.to_lowercase()),
-                name_to_id.get(&r.dst.to_lowercase()),
-            ) else {
-                stats.dropped_invalid += 1;
-                continue; // relation names must reference listed entities
-            };
-            brainiac_store::entities::insert_edge(
+        // Lazily create the single provenance row on the first chunk, using
+        // the model ref the provider actually reported.
+        if provenance_id.is_none() {
+            let pid = Uuid::new_v4();
+            brainiac_store::governance::insert_provenance(
                 conn,
-                Uuid::new_v4(),
+                pid,
                 org_id,
-                *src,
-                *dst,
-                &r.rel,
-                Some(memory_id),
+                ActorKind::Pipeline,
+                "extract-worker",
+                Some(&call.model_ref),
+                Some(source_id),
+                None,
             )
             .await?;
+            provenance_id = Some(pid);
         }
+        let provenance_id = provenance_id.expect("provenance set above");
 
-        // Embed stage (local model, no queue round-trip needed in v0).
-        brainiac_store::memories::upsert_embedding(
-            conn,
-            memory_id,
-            embedding_version,
-            &embedder.embed(&content).await?,
-        )
-        .await?;
+        for m in call.output.memories {
+            // Validation firewall: invalid kinds/empty content are dropped and
+            // counted, never written.
+            let Some(kind) = MemoryKind::parse(&m.kind) else {
+                stats.dropped_invalid += 1;
+                continue;
+            };
+            let content = m.content.trim().to_string();
+            if content.is_empty() {
+                stats.dropped_invalid += 1;
+                continue;
+            }
+            // Idempotency: skip a memory this source already produced (a
+            // redelivered retry, or an overlap region seen by an adjacent
+            // chunk).
+            if memory_exists_for_source(conn, org_id, source_id, &content).await? {
+                stats.deduped += 1;
+                continue;
+            }
+            let visibility = m
+                .visibility
+                .as_deref()
+                .and_then(Visibility::parse)
+                .unwrap_or(Visibility::Team);
+            let confidence = m.confidence.map(|c| c.clamp(0.0, 1.0));
 
-        stats.memory_ids.push(memory_id);
-        stats.memories_written += 1;
+            let memory_id = Uuid::new_v4();
+            // Freshness lifecycle: stamp the validity window at extraction so
+            // knowledge expires from retrieval (temporal::valid_at) instead of
+            // staying presumed-true forever; /v1/memories/expiring surfaces rows
+            // approaching the boundary for re-verification.
+            let now = chrono::Utc::now();
+            brainiac_store::memories::insert(
+                conn,
+                &brainiac_store::memories::NewMemory {
+                    id: memory_id,
+                    org_id,
+                    team_id,
+                    owner_user_id: None,
+                    visibility,
+                    status: MemoryStatus::Raw,
+                    kind,
+                    content: content.clone(),
+                    language: "en".into(),
+                    valid_from: Some(now),
+                    valid_to: ttl_days(kind).map(|d| now + chrono::Duration::days(d)),
+                    superseded_by: None,
+                    confidence,
+                    provenance_id: Some(provenance_id),
+                },
+            )
+            .await?;
+
+            // Entities: get-or-create within the source's team scope.
+            let mut name_to_id: std::collections::HashMap<String, Uuid> =
+                std::collections::HashMap::new();
+            for e in &m.entities {
+                let id =
+                    match brainiac_store::entities::find_by_name(conn, org_id, team_id, &e.name)
+                        .await?
+                    {
+                        Some(id) => id,
+                        None => {
+                            let id = Uuid::new_v4();
+                            brainiac_store::entities::insert_entity(
+                                conn,
+                                id,
+                                org_id,
+                                team_id,
+                                &e.name,
+                                &e.kind,
+                                &e.clean_aliases(),
+                                Some(provenance_id),
+                            )
+                            .await?;
+                            stats.entities_created.push(id);
+                            id
+                        }
+                    };
+                name_to_id.insert(e.name.to_lowercase(), id);
+                brainiac_store::memories::link_entity(conn, memory_id, id).await?;
+            }
+            for r in &m.relations {
+                let (Some(src), Some(dst)) = (
+                    name_to_id.get(&r.src.to_lowercase()),
+                    name_to_id.get(&r.dst.to_lowercase()),
+                ) else {
+                    stats.dropped_invalid += 1;
+                    continue; // relation names must reference listed entities
+                };
+                brainiac_store::entities::insert_edge(
+                    conn,
+                    Uuid::new_v4(),
+                    org_id,
+                    *src,
+                    *dst,
+                    &r.rel,
+                    Some(memory_id),
+                )
+                .await?;
+            }
+
+            // Embed stage (local model, no queue round-trip needed in v0).
+            brainiac_store::memories::upsert_embedding(
+                conn,
+                memory_id,
+                embedding_version,
+                &embedder.embed(&content).await?,
+            )
+            .await?;
+
+            stats.memory_ids.push(memory_id);
+            stats.memories_written += 1;
+        }
     }
     Ok(stats)
 }
@@ -420,6 +488,43 @@ mod tests {
     fn parse_extraction_reports_failure_reason() {
         assert!(parse_extraction("not json at all").is_err());
         assert!(parse_extraction(r#"{"memories":[]}"#).is_ok());
+    }
+
+    #[test]
+    fn short_source_is_a_single_chunk() {
+        let chunks = chunk_source("a short transcript");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "a short transcript");
+    }
+
+    #[test]
+    fn long_source_splits_into_overlapping_chunks() {
+        // Oversized source splits into contiguous windows that cover the whole
+        // text (no dropped region), stepping by MAX_CHUNK_CHARS - overlap.
+        let text: String = std::iter::repeat_n('x', MAX_CHUNK_CHARS + 1000).collect();
+        let chunks = chunk_source(&text);
+        assert!(
+            chunks.len() >= 2,
+            "oversized source splits: {}",
+            chunks.len()
+        );
+        assert_eq!(chunks[0].chars().count(), MAX_CHUNK_CHARS);
+        // Last window ends exactly at the true end of the source.
+        let step = MAX_CHUNK_CHARS - CHUNK_OVERLAP_CHARS;
+        assert_eq!(
+            (chunks.len() - 1) * step + chunks.last().expect("chunk").chars().count(),
+            text.chars().count()
+        );
+    }
+
+    #[test]
+    fn chunking_is_utf8_boundary_safe() {
+        // Multibyte chars around the cut must not panic or corrupt: windows
+        // are cut on char boundaries, so every chunk is valid UTF-8.
+        let text: String = "é😀🚀".chars().cycle().take(MAX_CHUNK_CHARS + 50).collect();
+        let chunks = chunk_source(&text);
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks[0].chars().count(), MAX_CHUNK_CHARS);
     }
 
     #[test]
