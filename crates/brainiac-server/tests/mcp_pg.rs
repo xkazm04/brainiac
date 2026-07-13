@@ -792,4 +792,292 @@ async fn mcp_handshake_and_tools() {
         ctx_past.contains(&past_mem.to_string()),
         "the past-only memory must appear under as_of: {ctx_past}"
     );
+
+    // ── Documented tool contract: scope / kinds / min_confidence / kind /
+    // entities / feedback synonyms (Direction 2) ────────────────────────
+
+    // kinds: two canonical memories sharing a keyword, different kinds; the
+    // filter narrows to just the requested kind.
+    let kf_fact = uuid::Uuid::new_v4();
+    let kf_decision = uuid::Uuid::new_v4();
+    for (id, kind) in [(kf_fact, "fact"), (kf_decision, "decision")] {
+        sqlx::query(
+            "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+             VALUES ($1, $2, $3, 'team', 'canonical', $4, $5)",
+        )
+        .bind(id)
+        .bind(org)
+        .bind(team)
+        .bind(kind)
+        .bind(format!("zzzkindfilter widget retention rule as a {kind}"))
+        .execute(&admin)
+        .await
+        .expect("kind-filter memory");
+    }
+    let search_ids = |payload: &Value| -> Vec<String> {
+        payload["memories"]
+            .as_array()
+            .expect("memories")
+            .iter()
+            .map(|m| m["id"].as_str().expect("id").to_string())
+            .collect()
+    };
+    let r = handle_message(
+        &state,
+        &rpc(
+            32,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzkindfilter widget retention", "k": 25, "kinds": ["decision"] } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ids = search_ids(&tool_payload(&r));
+    assert!(
+        ids.contains(&kf_decision.to_string()) && !ids.contains(&kf_fact.to_string()),
+        "kinds filter must keep the decision and drop the fact: {ids:?}"
+    );
+
+    // min_confidence: two canonical memories sharing a keyword with distinct
+    // confidences; the floor drops the low one.
+    let mc_high = uuid::Uuid::new_v4();
+    let mc_low = uuid::Uuid::new_v4();
+    for (id, conf) in [(mc_high, 0.9_f32), (mc_low, 0.2_f32)] {
+        sqlx::query(
+            "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content, confidence)
+             VALUES ($1, $2, $3, 'team', 'canonical', 'fact', $4, $5)",
+        )
+        .bind(id)
+        .bind(org)
+        .bind(team)
+        .bind(format!("zzzconffilter cache eviction note conf {conf}"))
+        .bind(conf)
+        .execute(&admin)
+        .await
+        .expect("confidence memory");
+    }
+    let r = handle_message(
+        &state,
+        &rpc(
+            33,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzconffilter cache eviction", "k": 25, "min_confidence": 0.5 } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ids = search_ids(&tool_payload(&r));
+    assert!(
+        ids.contains(&mc_high.to_string()) && !ids.contains(&mc_low.to_string()),
+        "min_confidence must keep the 0.9 and drop the 0.2: {ids:?}"
+    );
+
+    // scope: a team-data memory and an org-visible memory owned by ANOTHER
+    // team, both readable by the analyst. Default/org scope shows both; team
+    // scope drops the one this team does not own.
+    let other_team = uuid::Uuid::new_v4();
+    let scope_mine = uuid::Uuid::new_v4();
+    let scope_other = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+         VALUES ($1, $2, $3, 'team', 'canonical', 'fact', 'zzzscopefilter owned by my data team')",
+    )
+    .bind(scope_mine)
+    .bind(org)
+    .bind(team)
+    .execute(&admin)
+    .await
+    .expect("scope mine");
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+         VALUES ($1, $2, $3, 'org', 'canonical', 'fact', 'zzzscopefilter org-wide from another team')",
+    )
+    .bind(scope_other)
+    .bind(org)
+    .bind(other_team)
+    .execute(&admin)
+    .await
+    .expect("scope other");
+    // org (default): both visible.
+    let r = handle_message(
+        &state,
+        &rpc(
+            34,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzscopefilter", "k": 25, "scope": "org" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ids = search_ids(&tool_payload(&r));
+    assert!(
+        ids.contains(&scope_mine.to_string()) && ids.contains(&scope_other.to_string()),
+        "org scope must show both my team's and the org-wide memory: {ids:?}"
+    );
+    // team: only my team's memory survives.
+    let r = handle_message(
+        &state,
+        &rpc(
+            35,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzscopefilter", "k": 25, "scope": "team" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let ids = search_ids(&tool_payload(&r));
+    assert!(
+        ids.contains(&scope_mine.to_string()) && !ids.contains(&scope_other.to_string()),
+        "team scope must keep my team's and drop the other team's org-wide memory: {ids:?}"
+    );
+    // An unknown scope is a protocol error (-32602), not a silent no-op.
+    let r = handle_message(
+        &state,
+        &rpc(
+            36,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzscopefilter", "scope": "galaxy" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["error"]["code"], -32602, "bad scope must be -32602: {r}");
+    // An unknown kind likewise.
+    let r = handle_message(
+        &state,
+        &rpc(
+            37,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzscopefilter", "kinds": ["nonsense"] } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["error"]["code"], -32602, "bad kind must be -32602: {r}");
+    // min_confidence out of range likewise.
+    let r = handle_message(
+        &state,
+        &rpc(
+            38,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": "zzzscopefilter", "min_confidence": 5 } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(
+        r["error"]["code"], -32602,
+        "out-of-range min_confidence must be -32602: {r}"
+    );
+
+    // memory_add: kind + entities fold into the stored source text the pipeline
+    // reads, so they genuinely reach extraction.
+    let r = handle_message(
+        &state,
+        &rpc(
+            39,
+            "tools/call",
+            json!({
+                "name": "memory_add",
+                "arguments": {
+                    "content": "the feast serving cache must be flushed before schema bumps",
+                    "kind": "howto",
+                    "entities": ["Feast", "Kafka"]
+                }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["accepted"], true);
+    assert_eq!(payload["kind"], "howto");
+    let added_source: uuid::Uuid = payload["source_id"]
+        .as_str()
+        .expect("source_id")
+        .parse()
+        .expect("source_id is a uuid");
+    let stored: String = sqlx::query_scalar("SELECT raw_text FROM sources WHERE id = $1")
+        .bind(added_source)
+        .fetch_one(&admin)
+        .await
+        .expect("stored source");
+    assert!(
+        stored.contains("howto") && stored.contains("Feast") && stored.contains("Kafka"),
+        "kind/entities must be folded into the stored source text: {stored}"
+    );
+    // A bad kind on memory_add is a protocol error.
+    let r = handle_message(
+        &state,
+        &rpc(
+            40,
+            "tools/call",
+            json!({ "name": "memory_add", "arguments": { "content": "x", "kind": "nope" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(
+        r["error"]["code"], -32602,
+        "bad add kind must be -32602: {r}"
+    );
+
+    // memory_feedback: the documented synonyms are accepted and stored
+    // canonically (useful→helpful, stale→outdated); the doc vocabulary never
+    // reaches the table.
+    let syn_mem = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+         VALUES ($1, $2, $3, 'team', 'canonical', 'fact', 'zzzsynonym feedback probe memory')",
+    )
+    .bind(syn_mem)
+    .bind(org)
+    .bind(team)
+    .execute(&admin)
+    .await
+    .expect("synonym memory");
+    let r = handle_message(
+        &state,
+        &rpc(
+            41,
+            "tools/call",
+            json!({ "name": "memory_feedback", "arguments": { "memory_id": syn_mem.to_string(), "verdict": "useful" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["recorded"], true);
+    assert_eq!(
+        payload["verdict"], "helpful",
+        "useful must canonicalize to helpful: {payload}"
+    );
+    let r = handle_message(
+        &state,
+        &rpc(
+            42,
+            "tools/call",
+            json!({ "name": "memory_feedback", "arguments": { "memory_id": syn_mem.to_string(), "verdict": "stale" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(
+        tool_payload(&r)["verdict"],
+        "outdated",
+        "stale must canonicalize to outdated"
+    );
+    // The stored rows use only the canonical vocabulary.
+    let stored_verdicts: Vec<String> = sqlx::query_scalar(
+        "SELECT verdict FROM memory_feedback WHERE memory_id = $1 ORDER BY verdict",
+    )
+    .bind(syn_mem)
+    .fetch_all(&admin)
+    .await
+    .expect("stored verdicts");
+    assert_eq!(
+        stored_verdicts,
+        vec!["helpful".to_string(), "outdated".to_string()],
+        "only canonical verdicts may be stored: {stored_verdicts:?}"
+    );
 }

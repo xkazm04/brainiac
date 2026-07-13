@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
-use brainiac_core::Principal;
+use brainiac_core::{MemoryKind, Principal};
 use brainiac_store::retrieval::RetrievalFilters;
 use brainiac_store::Store;
 use chrono::{DateTime, Utc};
@@ -296,7 +296,10 @@ fn tool_definitions() -> Value {
                 "properties": {
                     "query": { "type": "string", "description": "What you want to know" },
                     "k": { "type": "integer", "description": "Max results (default 10, cap 25)" },
-                    "as_of": { "type": "string", "description": "RFC3339 timestamp: answer as of this moment in time" }
+                    "as_of": { "type": "string", "description": "RFC3339 timestamp: answer as of this moment in time" },
+                    "scope": { "type": "string", "enum": ["team", "org"], "description": "\"org\" (default): everything you can see across the org. \"team\": only memories owned by your team." },
+                    "kinds": { "type": "array", "items": { "type": "string", "enum": ["fact", "decision", "pattern", "pitfall", "howto"] }, "description": "Keep only these memory kinds (default: all)" },
+                    "min_confidence": { "type": "number", "description": "0-1: drop memories below this extractor confidence (memories with no confidence are dropped)" }
                 },
                 "required": ["query"]
             }
@@ -315,11 +318,13 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "memory_add",
-            "description": "Record a piece of durable knowledge (fact, decision, pattern, pitfall, howto). It enters the extraction/review pipeline as raw knowledge — it is NOT immediately canonical.",
+            "description": "Record a piece of durable knowledge (fact, decision, pattern, pitfall, howto). It enters the extraction/review pipeline as raw knowledge — it is NOT immediately canonical. The optional kind/entities hints steer the extractor.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "content": { "type": "string", "description": "One self-contained natural-language statement" }
+                    "content": { "type": "string", "description": "One self-contained natural-language statement" },
+                    "kind": { "type": "string", "enum": ["fact", "decision", "pattern", "pitfall", "howto"], "description": "Optional: the kind of knowledge this is — a hint to the extractor" },
+                    "entities": { "type": "array", "items": { "type": "string" }, "description": "Optional: names of the services/repos/techs/features this concerns — surfaced to the extractor so it anchors them" }
                 },
                 "required": ["content"]
             }
@@ -348,12 +353,12 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "memory_feedback",
-            "description": "Report how a retrieved memory held up in practice: helpful (it was right and useful), wrong (factually incorrect), or outdated (was true, no longer is). This closes the retrieval loop — verdicts drive ranking and re-verification.",
+            "description": "Report how a retrieved memory held up in practice: helpful/useful (it was right and useful), wrong (factually incorrect), or outdated/stale (was true, no longer is). This closes the retrieval loop — verdicts drive ranking and re-verification.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "memory_id": { "type": "string", "description": "The memory id you were given (memory:<uuid> citations or search results)" },
-                    "verdict": { "type": "string", "enum": ["helpful", "wrong", "outdated"] },
+                    "verdict": { "type": "string", "enum": ["helpful", "useful", "wrong", "outdated", "stale"], "description": "helpful (alias useful), wrong, or outdated (alias stale)" },
                     "note": { "type": "string", "description": "Optional: what happened (especially for wrong/outdated)" }
                 },
                 "required": ["memory_id", "verdict"]
@@ -414,6 +419,81 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
     }
 }
 
+/// Build [`RetrievalFilters`] from the optional narrowing params documented in
+/// ARCHITECTURE.md §5.1. Every value is validated up front — a malformed one is
+/// `-32602 InvalidParams` per the hardening contract, never a silent no-op.
+/// Unset params narrow nothing (byte-identical to the prior default filters).
+///
+/// `scope` is mapped onto what [`RetrievalFilters`] actually supports —
+/// team ownership (`team_id`); it has no visibility lever, so team membership is
+/// the axis we express:
+///   - `"org"` (the documented default): no team filter. RLS already caps the
+///     caller to their org, so this is the org-wide view — everything they can
+///     see (org-visible knowledge plus every team they belong to).
+///   - `"team"`: restrict to memories OWNED BY the caller's primary team
+///     (`principal.team_ids[0]`). A caller who belongs to no team has nothing to
+///     scope to, so it is refused.
+fn parse_filters(state: &McpState, args: &Value) -> Result<RetrievalFilters, ToolError> {
+    let mut filters = RetrievalFilters::default();
+
+    if let Some(scope) = args.get("scope") {
+        let scope = scope
+            .as_str()
+            .ok_or_else(|| invalid("`scope` must be a string"))?
+            .trim();
+        match scope {
+            "org" => {} // org-wide view = the RLS-scoped default (no team filter)
+            "team" => {
+                let team = state.principal.team_ids.first().copied().ok_or_else(|| {
+                    rejected("`scope`=\"team\" needs a team to scope to, but you belong to none")
+                })?;
+                filters.team_id = Some(team);
+            }
+            other => {
+                return Err(invalid(format!(
+                    "`scope` must be \"team\" or \"org\" (got \"{other}\")"
+                )))
+            }
+        }
+    }
+
+    if let Some(kinds) = args.get("kinds") {
+        let arr = kinds
+            .as_array()
+            .ok_or_else(|| invalid("`kinds` must be an array of memory kinds"))?;
+        let mut out = Vec::with_capacity(arr.len());
+        for k in arr {
+            let s = k
+                .as_str()
+                .ok_or_else(|| invalid("each `kinds` entry must be a string"))?
+                .trim();
+            let kind = MemoryKind::parse(s).ok_or_else(|| {
+                invalid(format!(
+                    "unknown memory kind `{s}` (fact|decision|pattern|pitfall|howto)"
+                ))
+            })?;
+            if !out.contains(&kind) {
+                out.push(kind);
+            }
+        }
+        filters.kinds = out;
+    }
+
+    if let Some(mc) = args.get("min_confidence") {
+        let c = mc
+            .as_f64()
+            .ok_or_else(|| invalid("`min_confidence` must be a number in [0,1]"))?;
+        if !(0.0..=1.0).contains(&c) {
+            return Err(invalid(format!(
+                "`min_confidence` must be in [0,1] (got {c})"
+            )));
+        }
+        filters.min_confidence = Some(c as f32);
+    }
+
+    Ok(filters)
+}
+
 async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let query = within_cap(required_str(args, "query")?, MAX_QUERY_CHARS, "query")?;
     let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(10).min(25) as usize;
@@ -421,6 +501,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
         .get("as_of")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse().ok());
+    let filters = parse_filters(state, args)?;
 
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
@@ -432,7 +513,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
             query: query.to_string(),
             k,
             as_of,
-            filters: Default::default(),
+            filters,
         },
     )
     .await?;
@@ -586,8 +667,87 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
     }))
 }
 
+/// `entities` cap — a manual note anchors a handful of things, never a bulk
+/// list; a runaway array is rejected before it can bloat the source text.
+const MAX_ENTITY_HINTS: usize = 32;
+
+/// The optional entity-name hints on `memory_add`: an array of non-empty,
+/// bounded, de-duplicated surface forms. Validation mirrors the rest of the
+/// surface — a bad shape is `-32602`, an oversized set is a tool error.
+fn parse_entity_names(args: &Value) -> Result<Vec<String>, ToolError> {
+    let Some(v) = args.get("entities") else {
+        return Ok(Vec::new());
+    };
+    let arr = v
+        .as_array()
+        .ok_or_else(|| invalid("`entities` must be an array of names"))?;
+    if arr.len() > MAX_ENTITY_HINTS {
+        return Err(rejected(format!(
+            "too many entities ({}); the limit is {MAX_ENTITY_HINTS}",
+            arr.len()
+        )));
+    }
+    let mut out: Vec<String> = Vec::with_capacity(arr.len());
+    for e in arr {
+        let name = e
+            .as_str()
+            .map(str::trim)
+            .ok_or_else(|| invalid("each `entities` entry must be a string"))?;
+        if name.is_empty() {
+            return Err(invalid("`entities` names must not be empty"));
+        }
+        within_cap(name, MAX_NAME_CHARS, "entities")?;
+        if !out.iter().any(|x| x.eq_ignore_ascii_case(name)) {
+            out.push(name.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// Weave the optional kind/entities hints into the source text the extractor
+/// reads. The pipeline consumes ONLY `sources.raw_text` (worker::process_job),
+/// so a short natural-language preamble the prompt-driven extractor incorporates
+/// is the in-scope lever that actually reaches extraction — no worker change, no
+/// new column. With no hints the stored text is the content verbatim (today's
+/// behavior preserved byte-for-byte).
+fn build_source_text(content: &str, kind: Option<MemoryKind>, entities: &[String]) -> String {
+    let mut hints: Vec<String> = Vec::new();
+    if let Some(k) = kind {
+        hints.push(format!("The author is recording this as a {}.", k.as_str()));
+    }
+    if !entities.is_empty() {
+        hints.push(format!(
+            "It concerns these entities: {}.",
+            entities.join(", ")
+        ));
+    }
+    if hints.is_empty() {
+        content.to_string()
+    } else {
+        format!("{content}\n\n[Context for extraction: {}]", hints.join(" "))
+    }
+}
+
 async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let content = within_cap(required_str(args, "content")?, MAX_CONTENT_CHARS, "content")?;
+    // Optional kind hint, validated against MemoryKind.
+    let kind = match args.get("kind") {
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("`kind` must be a string"))?
+                .trim();
+            Some(MemoryKind::parse(s).ok_or_else(|| {
+                invalid(format!(
+                    "unknown memory kind `{s}` (fact|decision|pattern|pitfall|howto)"
+                ))
+            })?)
+        }
+        None => None,
+    };
+    let entities = parse_entity_names(args)?;
+    let raw_text = build_source_text(content, kind, &entities);
+
     let team_id = state.principal.team_ids.first().copied();
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(&state.principal).await?;
@@ -597,7 +757,7 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         state.principal.org_id,
         team_id,
         "manual",
-        content,
+        &raw_text,
         Some(state.principal.user_id),
     )
     .await?;
@@ -609,6 +769,8 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         "accepted": true,
         "source_id": source_id,
         "job_id": job_id,
+        "kind": kind.map(|k| k.as_str()),
+        "entities": entities,
         "note": "queued for extraction; it becomes searchable after the pipeline runs and is subject to review before promotion"
     }))
 }
@@ -672,11 +834,25 @@ async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value, Tool
     }))
 }
 
+/// Canonicalize the documented feedback vocabulary onto the STORED verdicts.
+/// ARCHITECTURE.md §5.1 says useful / stale / wrong; the corpus stores
+/// helpful / wrong / outdated. Synonyms are mapped BEFORE validation so the doc
+/// terms are accepted while the stored vocabulary is left unchanged.
+fn canonical_verdict(v: &str) -> &str {
+    match v {
+        "useful" => "helpful",
+        "stale" => "outdated",
+        other => other,
+    }
+}
+
 async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let memory_id = required_uuid(args, "memory_id")?;
-    let verdict = required_str(args, "verdict")?;
+    let verdict = canonical_verdict(required_str(args, "verdict")?);
     if !brainiac_store::feedback::VERDICTS.contains(&verdict) {
-        return Err(rejected("verdict must be one of helpful|wrong|outdated"));
+        return Err(rejected(
+            "verdict must be one of helpful|wrong|outdated (aliases: useful→helpful, stale→outdated)",
+        ));
     }
     let note = args
         .get("note")
