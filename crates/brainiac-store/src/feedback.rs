@@ -137,8 +137,13 @@ pub struct FlaggedMemory {
 
 /// The triage queue: memories carrying unresolved wrong/outdated claims,
 /// most-disputed first, then oldest. RLS-scoped — a maintainer only ever
-/// sees claims against memories they can read.
-pub async fn flagged(conn: &mut PgConnection, limit: i64) -> Result<Vec<FlaggedMemory>> {
+/// sees claims against memories they can read. `offset` pages beyond the first
+/// window ([`flagged_count`] reports the full total).
+pub async fn flagged(
+    conn: &mut PgConnection,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<FlaggedMemory>> {
     let rows = sqlx::query(
         "SELECT f.memory_id, m.content, m.kind, m.status::text AS status, m.team_id, m.valid_to,
                 count(*) FILTER (WHERE f.verdict = 'wrong')    AS wrong,
@@ -157,9 +162,10 @@ pub async fn flagged(conn: &mut PgConnection, limit: i64) -> Result<Vec<FlaggedM
          ORDER BY (count(*) FILTER (WHERE f.verdict = 'wrong')) DESC,
                   count(*) DESC,
                   min(f.created_at) ASC
-         LIMIT $1",
+         LIMIT $1 OFFSET $2",
     )
     .bind(limit.clamp(1, 200))
+    .bind(offset.max(0))
     .fetch_all(conn)
     .await?;
     Ok(rows

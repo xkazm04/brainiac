@@ -872,7 +872,9 @@ async fn queue_claim_redeliver_and_dead_letter() {
     // Dead-letter inspection + requeue round trip. dead_letters() is the
     // operator recovery surface: it lists BOTH terminal outcomes, so the
     // 'failed' job above appears here.
-    let dead = queue::dead_letters(pool, "extract", 10).await.expect("dl");
+    let dead = queue::dead_letters(pool, "extract", 10, 0)
+        .await
+        .expect("dl");
     assert_eq!(dead.len(), 1);
     assert_eq!(dead[0].payload["task"], "extract");
     // Archive rows carry the DB-recorded claim count (the dead-letter above
@@ -948,7 +950,7 @@ async fn queue_reaps_crash_poison() {
     assert_eq!(h.archived_ok, 0);
 
     // And it's recoverable through the same operator surface.
-    let dl = queue::dead_letters(pool, "reap", 10).await.expect("dl");
+    let dl = queue::dead_letters(pool, "reap", 10, 0).await.expect("dl");
     assert_eq!(dl.len(), 1);
     assert_eq!(dl[0].payload["task"], "crasher");
 
@@ -1267,7 +1269,7 @@ async fn feedback_claims_queue_and_resolution() {
     .await
     .expect("helpful");
     assert!(
-        feedback::flagged(&mut tx, 50)
+        feedback::flagged(&mut tx, 50, 0)
             .await
             .expect("flagged")
             .is_empty(),
@@ -1291,7 +1293,7 @@ async fn feedback_claims_queue_and_resolution() {
         .await
         .expect("negative verdict");
     }
-    let flagged = feedback::flagged(&mut tx, 50).await.expect("flagged");
+    let flagged = feedback::flagged(&mut tx, 50, 0).await.expect("flagged");
     assert_eq!(
         flagged.len(),
         1,
@@ -1326,7 +1328,7 @@ async fn feedback_claims_queue_and_resolution() {
         .expect("resolve");
     assert_eq!(closed, 2, "both open claims close together");
     assert!(
-        feedback::flagged(&mut tx, 50)
+        feedback::flagged(&mut tx, 50, 0)
             .await
             .expect("flagged")
             .is_empty(),

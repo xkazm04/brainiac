@@ -247,6 +247,66 @@ async fn serve_health_auth_and_scoped_search() {
         .await
         .expect("add");
     assert_eq!(r.status(), reqwest::StatusCode::ACCEPTED);
+
+    // ── promotions pagination: a backlog past the first page is reachable ──
+    // The endpoint's whole job is the review backlog; seed 101 pending
+    // promotions and prove the 101st is reachable via offset while `total`
+    // reports the full count (the old hard LIMIT 100 hid everything past 100).
+    for _ in 0..101 {
+        sqlx::query(
+            "INSERT INTO promotions (id, org_id, memory_id, from_status, to_status, policy_decision, policy_rule)
+             VALUES ($1, $2, $3, 'raw', 'candidate', 'needs_review', 'test.page')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(org)
+        .bind(Uuid::parse_str(&mid).expect("mid uuid"))
+        .execute(&admin)
+        .await
+        .expect("seed promotion");
+    }
+    // Default page preserves the pre-paging behaviour: at most 100 rows.
+    let r = http
+        .get(format!("{base}/v1/reviews/promotions"))
+        .bearer_auth("tok_analyst")
+        .send()
+        .await
+        .expect("promotions default");
+    assert!(r.status().is_success());
+    let page1: serde_json::Value = r.json().await.expect("json");
+    let total = page1["total"].as_i64().expect("total");
+    assert!(total >= 101, "total reports the full backlog, got {total}");
+    assert_eq!(
+        page1["promotions"].as_array().expect("promotions").len(),
+        100,
+        "default page is still capped at 100 (behaviour preserved)"
+    );
+    // The 101st row (index 100) is reachable only via offset — the point of
+    // the change. Collect ids across two pages and prove they don't overlap.
+    let first_ids: std::collections::HashSet<String> = page1["promotions"]
+        .as_array()
+        .expect("promotions")
+        .iter()
+        .map(|p| p["id"].as_str().expect("id").to_string())
+        .collect();
+    let r = http
+        .get(format!("{base}/v1/reviews/promotions?limit=100&offset=100"))
+        .bearer_auth("tok_analyst")
+        .send()
+        .await
+        .expect("promotions page 2");
+    let page2: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(page2["total"].as_i64(), Some(total), "total is page-stable");
+    let page2_rows = page2["promotions"].as_array().expect("promotions");
+    assert!(
+        page2_rows.len() as i64 >= total - 100 && !page2_rows.is_empty(),
+        "the 101st+ promotions are reachable past offset 100"
+    );
+    assert!(
+        page2_rows
+            .iter()
+            .all(|p| !first_ids.contains(p["id"].as_str().expect("id"))),
+        "the second page returns rows the first page never showed"
+    );
 }
 
 async fn brainiac_server_router(

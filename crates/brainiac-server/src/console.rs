@@ -506,6 +506,7 @@ pub(crate) async fn resolve_contradiction(
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct FeedbackQueueQuery {
     limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 /// Open claim counts against one memory.
@@ -532,6 +533,9 @@ pub(crate) struct FlaggedMemory {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct FeedbackQueueResponse {
+    /// Total memories carrying open claims — the full triage backlog,
+    /// independent of the page window.
+    pub total: i64,
     pub flagged: Vec<FlaggedMemory>,
 }
 
@@ -543,8 +547,11 @@ pub(crate) struct FeedbackQueueResponse {
     path = "/v1/reviews/feedback",
     tag = "reviews",
     description = "Memories carrying unresolved wrong/outdated claims from the agents and operators served them, most-disputed first.",
-    params(("limit" = Option<i64>, Query, description = "Max rows (default 50)")),
-    responses((status = 200, description = "Feedback triage queue", body = FeedbackQueueResponse))
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
+        ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+    ),
+    responses((status = 200, description = "Feedback triage queue page", body = FeedbackQueueResponse))
 )]
 pub(crate) async fn feedback_queue(
     State(state): State<Arc<AppState>>,
@@ -552,11 +559,17 @@ pub(crate) async fn feedback_queue(
     headers: HeaderMap,
 ) -> Result<Json<FeedbackQueueResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let offset = q.offset.unwrap_or(0).max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    let rows = brainiac_store::feedback::flagged(&mut tx, q.limit.unwrap_or(50))
+    let rows = brainiac_store::feedback::flagged(&mut tx, limit, offset)
+        .await
+        .map_err(internal)?;
+    let total = brainiac_store::feedback::flagged_count(&mut tx)
         .await
         .map_err(internal)?;
     Ok(Json(FeedbackQueueResponse {
+        total,
         flagged: rows
             .iter()
             .map(|f| FlaggedMemory {
@@ -856,6 +869,7 @@ pub(crate) async fn memory_reverify(
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AuditQuery {
     limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 /// One governance action. `kind` is `promotion_review` |
@@ -875,6 +889,9 @@ pub(crate) struct AuditEvent {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct AuditResponse {
+    /// Total governance actions visible to the caller — the full feed length,
+    /// independent of the page window.
+    pub total: i64,
     pub events: Vec<AuditEvent>,
 }
 
@@ -887,8 +904,11 @@ pub(crate) struct AuditResponse {
     path = "/v1/audit",
     tag = "reviews",
     description = "Reverse-chronological feed of governance actions: promotion reviews (human and policy) and contradiction resolutions.",
-    params(("limit" = Option<i64>, Query, description = "Max events (default 50, clamped 1..200)")),
-    responses((status = 200, description = "Audit feed", body = AuditResponse))
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
+        ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+    ),
+    responses((status = 200, description = "Audit feed page", body = AuditResponse))
 )]
 pub(crate) async fn audit(
     State(state): State<Arc<AppState>>,
@@ -897,9 +917,12 @@ pub(crate) async fn audit(
 ) -> Result<Json<AuditResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let offset = q.offset.unwrap_or(0).max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    let rows = sqlx::query(
-        "SELECT * FROM (
+    // The governance feed is a UNION of reviewed promotions + resolved
+    // contradictions; keep the source SQL in one place so the page and its
+    // total can never describe different sets.
+    const AUDIT_FROM: &str = "FROM (
             SELECT 'promotion_review' AS kind, p.id, p.memory_id,
                    NULL::uuid AS memory_b,
                    p.policy_decision AS outcome, p.policy_rule AS detail,
@@ -915,14 +938,20 @@ pub(crate) async fn audit(
                    c.resolved_at AS at
             FROM contradictions c
             WHERE c.resolved_at IS NOT NULL
-         ) audit
-         ORDER BY at DESC
-         LIMIT $1",
-    )
+         ) audit";
+    let rows = sqlx::query(&format!(
+        "SELECT * {AUDIT_FROM} ORDER BY at DESC LIMIT $1 OFFSET $2"
+    ))
     .bind(limit)
+    .bind(offset)
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
+    let total: i64 = sqlx::query(&format!("SELECT count(*) AS n {AUDIT_FROM}"))
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(internal)?
+        .get("n");
     let out: Vec<AuditEvent> = rows
         .iter()
         .map(|r| AuditEvent {
@@ -936,7 +965,7 @@ pub(crate) async fn audit(
             at: r.get("at"),
         })
         .collect();
-    Ok(Json(AuditResponse { events: out }))
+    Ok(Json(AuditResponse { total, events: out }))
 }
 
 // ── graph ───────────────────────────────────────────────────────────────
@@ -2055,6 +2084,8 @@ pub(crate) async fn memory_detail(
 pub(crate) struct RecentParams {
     #[serde(default = "default_recent_limit")]
     limit: i64,
+    #[serde(default)]
+    offset: i64,
 }
 
 fn default_recent_limit() -> i64 {
@@ -2081,6 +2112,9 @@ pub(crate) struct SourceRow {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SourceFeedResponse {
+    /// Total sources visible to the caller — the full feed length, independent
+    /// of the page window.
+    pub total: i64,
     pub sources: Vec<SourceRow>,
 }
 
@@ -2092,8 +2126,11 @@ pub(crate) struct SourceFeedResponse {
     path = "/v1/sources",
     tag = "ingest",
     description = "Recent ingest sources with their pipeline rollup (memories, promoted, pending review) and derived queue status.",
-    params(("limit" = Option<i64>, Query, description = "Max rows (default 30, clamped 1..100)")),
-    responses((status = 200, description = "Recent sources", body = SourceFeedResponse))
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size (default 30, clamped 1..100)"),
+        ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+    ),
+    responses((status = 200, description = "Recent sources page", body = SourceFeedResponse))
 )]
 pub(crate) async fn sources_list(
     State(state): State<Arc<AppState>>,
@@ -2102,6 +2139,7 @@ pub(crate) async fn sources_list(
 ) -> Result<Json<SourceFeedResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
     let limit = p.limit.clamp(1, 100);
+    let offset = p.offset.max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let rows = sqlx::query(
@@ -2121,13 +2159,19 @@ pub(crate) async fn sources_list(
              LEFT JOIN promotions pr ON pr.memory_id = m.id
              WHERE pv.source_id = s.id
          ) p ON true
-         ORDER BY s.created_at DESC
-         LIMIT $1",
+         ORDER BY s.created_at DESC, s.id
+         LIMIT $1 OFFSET $2",
     )
     .bind(limit)
+    .bind(offset)
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
+    let total: i64 = sqlx::query("SELECT count(*) AS n FROM sources")
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(internal)?
+        .get("n");
     drop(tx);
 
     let ids: Vec<String> = rows
@@ -2192,7 +2236,10 @@ pub(crate) async fn sources_list(
         })
         .collect();
 
-    Ok(Json(SourceFeedResponse { sources: out }))
+    Ok(Json(SourceFeedResponse {
+        total,
+        sources: out,
+    }))
 }
 
 /// One worker run. `started_at` is an RFC3339 **string**; `duration_secs`
@@ -2209,6 +2256,9 @@ pub(crate) struct PipelineRunRow {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct PipelineRunsResponse {
+    /// Total pipeline runs visible to the caller — the full trail length,
+    /// independent of the page window.
+    pub total: i64,
     pub runs: Vec<PipelineRunRow>,
 }
 
@@ -2217,9 +2267,12 @@ pub(crate) struct PipelineRunsResponse {
     get,
     path = "/v1/pipeline/runs",
     tag = "ingest",
-    description = "Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS.",
-    params(("limit" = Option<i64>, Query, description = "Max rows (default 30, clamped 1..200)")),
-    responses((status = 200, description = "Recent pipeline runs", body = PipelineRunsResponse))
+    description = "Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS. Paged: `total` reports the full trail, `offset` reaches beyond the first page.",
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size (default 30, clamped 1..200)"),
+        ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+    ),
+    responses((status = 200, description = "Recent pipeline runs page", body = PipelineRunsResponse))
 )]
 pub(crate) async fn pipeline_runs(
     State(state): State<Arc<AppState>>,
@@ -2228,19 +2281,27 @@ pub(crate) async fn pipeline_runs(
 ) -> Result<Json<PipelineRunsResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
     let limit = p.limit.clamp(1, 200);
+    let offset = p.offset.max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let rows = sqlx::query(
         "SELECT id, stage, status, detail, started_at, finished_at,
                 EXTRACT(EPOCH FROM (COALESCE(finished_at, now()) - started_at))::bigint AS secs
          FROM pipeline_runs
-         ORDER BY started_at DESC
-         LIMIT $1",
+         ORDER BY started_at DESC, id
+         LIMIT $1 OFFSET $2",
     )
     .bind(limit)
+    .bind(offset)
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
+    let total: i64 = sqlx::query("SELECT count(*) AS n FROM pipeline_runs")
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(internal)?
+        .get("n");
     Ok(Json(PipelineRunsResponse {
+        total,
         runs: rows
             .iter()
             .map(|r| PipelineRunRow {

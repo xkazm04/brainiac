@@ -321,16 +321,24 @@ pub struct DeadLetter {
 /// the operator recovery surface, previously reachable only via manual SQL on
 /// queue.archive. Both outcomes are dead letters an operator may inspect and
 /// requeue; the `failed`/`dead` distinction is preserved in [`health`].
-pub async fn dead_letters(pool: &PgPool, queue: &str, limit: i64) -> Result<Vec<DeadLetter>> {
+/// `offset` pages beyond the first window ([`dead_letters_count`] reports the
+/// full total).
+pub async fn dead_letters(
+    pool: &PgPool,
+    queue: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DeadLetter>> {
     let rows = sqlx::query(
         "SELECT id, payload, attempts, enqueued_at, archived_at
          FROM queue.archive
          WHERE queue_name = $1 AND outcome IN ('failed', 'dead')
          ORDER BY archived_at DESC
-         LIMIT $2",
+         LIMIT $2 OFFSET $3",
     )
     .bind(queue)
     .bind(limit.clamp(1, 200))
+    .bind(offset.max(0))
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -343,6 +351,19 @@ pub async fn dead_letters(pool: &PgPool, queue: &str, limit: i64) -> Result<Vec<
             archived_at: r.get("archived_at"),
         })
         .collect())
+}
+
+/// Total dead-lettered jobs on a queue — the paging total behind
+/// [`dead_letters`]. Same `failed`/`dead` predicate, unbounded by limit/offset.
+pub async fn dead_letters_count(pool: &PgPool, queue: &str) -> Result<i64> {
+    let row = sqlx::query(
+        "SELECT count(*) AS n FROM queue.archive
+         WHERE queue_name = $1 AND outcome IN ('failed', 'dead')",
+    )
+    .bind(queue)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get("n"))
 }
 
 /// Move a dead-lettered job back into the live queue with a fresh attempt

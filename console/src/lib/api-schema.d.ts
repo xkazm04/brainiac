@@ -329,7 +329,7 @@ export interface paths {
         };
         /**
          * Recent pipeline runs — the worker's own audit trail, org-scoped by RLS.
-         * @description Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS.
+         * @description Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS. Paged: `total` reports the full trail, `offset` reaches beyond the first page.
          */
         get: operations["pipeline_runs"];
         put?: never;
@@ -347,7 +347,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Dead-lettered jobs, most recent first (default limit 50). */
+        /** @description Dead-lettered jobs, most recent first. Paged: `total` reports the full recovery backlog, `offset` reaches beyond the first page (default limit 50). */
         get: operations["queue_dead_letters"];
         put?: never;
         post?: never;
@@ -479,7 +479,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Promotions awaiting human review (oldest first, max 100). */
+        /** @description Promotions awaiting human review (oldest first). Paged: `total` reports the full backlog, `offset` reaches beyond the first page. */
         get: operations["pending_promotions"];
         put?: never;
         post?: never;
@@ -714,6 +714,12 @@ export interface components {
         };
         AuditResponse: {
             events: components["schemas"]["AuditEvent"][];
+            /**
+             * Format: int64
+             * @description Total governance actions visible to the caller — the full feed length,
+             *     independent of the page window.
+             */
+            total: number;
         };
         CanonicalDetailResponse: {
             canonical: components["schemas"]["CanonicalSummary"];
@@ -836,6 +842,12 @@ export interface components {
         };
         DeadLetterListResponse: {
             dead_letters: components["schemas"]["DeadLetterEntry"][];
+            /**
+             * Format: int64
+             * @description Total dead letters on the queue — the full recovery backlog, independent
+             *     of the page window, so an operator knows how far `offset` can reach.
+             */
+            total: number;
         };
         /**
          * @description The JSON error body. Documented once in the OpenAPI spec and returned by
@@ -893,6 +905,12 @@ export interface components {
         };
         FeedbackQueueResponse: {
             flagged: components["schemas"]["FlaggedMemory"][];
+            /**
+             * Format: int64
+             * @description Total memories carrying open claims — the full triage backlog,
+             *     independent of the page window.
+             */
+            total: number;
         };
         /**
          * @description The receipt: the verdict as stored (after synonym canonicalization) plus
@@ -1209,6 +1227,12 @@ export interface components {
         };
         PipelineRunsResponse: {
             runs: components["schemas"]["PipelineRunRow"][];
+            /**
+             * Format: int64
+             * @description Total pipeline runs visible to the caller — the full trail length,
+             *     independent of the page window.
+             */
+            total: number;
         };
         PreviewBody: {
             /** Format: uuid */
@@ -1236,6 +1260,12 @@ export interface components {
         };
         PromotionQueueResponse: {
             promotions: components["schemas"]["PendingPromotion"][];
+            /**
+             * Format: int64
+             * @description Total promotions awaiting review — the full backlog, independent of the
+             *     page window, so a caller knows how far `offset` can reach.
+             */
+            total: number;
         };
         /**
          * @description The originating source, with a bounded excerpt of its raw text. `null` when
@@ -1404,6 +1434,12 @@ export interface components {
         };
         SourceFeedResponse: {
             sources: components["schemas"]["SourceRow"][];
+            /**
+             * Format: int64
+             * @description Total sources visible to the caller — the full feed length, independent
+             *     of the page window.
+             */
+            total: number;
         };
         /** @description The source row itself, as the caller's RLS scope sees it. */
         SourceInfo: {
@@ -1656,8 +1692,10 @@ export interface operations {
     audit: {
         parameters: {
             query?: {
-                /** @description Max events (default 50, clamped 1..200) */
+                /** @description Page size (default 50, clamped 1..200) */
                 limit?: number;
+                /** @description Page offset (default 0) */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -1665,7 +1703,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Audit feed */
+            /** @description Audit feed page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2095,8 +2133,10 @@ export interface operations {
     pipeline_runs: {
         parameters: {
             query?: {
-                /** @description Max rows (default 30, clamped 1..200) */
+                /** @description Page size (default 30, clamped 1..200) */
                 limit?: number;
+                /** @description Page offset (default 0) */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -2104,7 +2144,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Recent pipeline runs */
+            /** @description Recent pipeline runs page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2122,13 +2162,16 @@ export interface operations {
             path: {
                 /** @description Queue name; defaults to the ingest queue. */
                 queue: string | null;
+                /** @description Page size for the dead-letter listing (default 50, clamped 1..200). */
                 limit: number | null;
+                /** @description Page offset for the dead-letter listing (default 0). */
+                offset: number | null;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Dead-letter listing */
+            /** @description Dead-letter listing page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2204,7 +2247,10 @@ export interface operations {
             path: {
                 /** @description Queue name; defaults to the ingest queue. */
                 queue: string | null;
+                /** @description Page size for the dead-letter listing (default 50, clamped 1..200). */
                 limit: number | null;
+                /** @description Page offset for the dead-letter listing (default 0). */
+                offset: number | null;
             };
             cookie?: never;
         };
@@ -2324,8 +2370,10 @@ export interface operations {
     feedback_queue: {
         parameters: {
             query?: {
-                /** @description Max rows (default 50) */
+                /** @description Page size (default 50, clamped 1..200) */
                 limit?: number;
+                /** @description Page offset (default 0) */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -2333,7 +2381,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Feedback triage queue */
+            /** @description Feedback triage queue page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2396,12 +2444,17 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Page size (default 100, clamped 1..200). */
+                limit: number | null;
+                /** @description Page offset (default 0). */
+                offset: number | null;
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Pending review queue */
+            /** @description Pending review queue page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2503,8 +2556,10 @@ export interface operations {
     sources_list: {
         parameters: {
             query?: {
-                /** @description Max rows (default 30, clamped 1..100) */
+                /** @description Page size (default 30, clamped 1..100) */
                 limit?: number;
+                /** @description Page offset (default 0) */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -2512,7 +2567,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Recent sources */
+            /** @description Recent sources page */
             200: {
                 headers: {
                     [name: string]: unknown;

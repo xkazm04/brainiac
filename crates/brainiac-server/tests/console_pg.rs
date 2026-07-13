@@ -482,4 +482,61 @@ async fn console_reviews_graph_analytics() {
     let analyst_total = analyst["visible"]["total"].as_i64().expect("n");
     assert!(lead_total >= 35 && analyst_total >= 35);
     assert!(lead["visible"]["canonical"].as_i64().expect("n") > 0);
+
+    // ── pipeline runs pagination: a trail past the first page is reachable ─
+    // Mirrors the promotions paging proof on a console.rs list endpoint. Seed
+    // 101 runs, then prove `offset` reaches the 101st while `total` reports the
+    // full count (limit-only truncation would have hidden everything past 100).
+    for i in 0..101 {
+        sqlx::query(
+            "INSERT INTO pipeline_runs (id, org_id, stage, status, started_at)
+             VALUES ($1, $2, 'extract', 'ok', now() - make_interval(secs => $3))",
+        )
+        .bind(Uuid::new_v4())
+        .bind(org)
+        .bind(f64::from(i))
+        .execute(&admin)
+        .await
+        .expect("seed pipeline run");
+    }
+    let r = http
+        .get(format!("{base}/v1/pipeline/runs?limit=100&offset=0"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("pipeline runs page 1");
+    assert!(r.status().is_success());
+    let page1: serde_json::Value = r.json().await.expect("json");
+    let total = page1["total"].as_i64().expect("total");
+    assert!(total >= 101, "total reports the full trail, got {total}");
+    assert_eq!(
+        page1["runs"].as_array().expect("runs").len(),
+        100,
+        "limit is honoured"
+    );
+    let first_ids: std::collections::HashSet<String> = page1["runs"]
+        .as_array()
+        .expect("runs")
+        .iter()
+        .map(|p| p["id"].as_str().expect("id").to_string())
+        .collect();
+    let r = http
+        .get(format!("{base}/v1/pipeline/runs?limit=100&offset=100"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("pipeline runs page 2");
+    let page2: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(page2["total"].as_i64(), Some(total), "total is page-stable");
+    let page2_rows = page2["runs"].as_array().expect("runs");
+    assert!(
+        !page2_rows.is_empty() && page2_rows.len() as i64 >= total - 100,
+        "the 101st+ runs are reachable past offset 100"
+    );
+    assert!(
+        page2_rows
+            .iter()
+            .all(|p| !first_ids.contains(p["id"].as_str().expect("id"))),
+        "the second page returns rows the first page never showed"
+    );
 }

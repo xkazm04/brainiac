@@ -702,8 +702,22 @@ pub(crate) struct PendingPromotion {
     provenance: Option<PromotionProvenance>,
 }
 
+/// Paging for the promotion review queue. Defaults preserve the pre-paging
+/// behaviour (first 100, oldest first); `offset` + the response `total` make a
+/// backlog beyond the first page reachable and countable.
+#[derive(Deserialize, utoipa::IntoParams)]
+pub(crate) struct PromotionsQuery {
+    /// Page size (default 100, clamped 1..200).
+    limit: Option<i64>,
+    /// Page offset (default 0).
+    offset: Option<i64>,
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct PromotionQueueResponse {
+    /// Total promotions awaiting review — the full backlog, independent of the
+    /// page window, so a caller knows how far `offset` can reach.
+    total: i64,
     promotions: Vec<PendingPromotion>,
 }
 
@@ -711,18 +725,22 @@ pub(crate) struct PromotionQueueResponse {
     get,
     path = "/v1/reviews/promotions",
     tag = "reviews",
-    description = "Promotions awaiting human review (oldest first, max 100).",
+    description = "Promotions awaiting human review (oldest first). Paged: `total` reports the full backlog, `offset` reaches beyond the first page.",
+    params(PromotionsQuery),
     responses(
-        (status = 200, description = "Pending review queue", body = PromotionQueueResponse),
+        (status = 200, description = "Pending review queue page", body = PromotionQueueResponse),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `read` scope"),
     )
 )]
 pub(crate) async fn pending_promotions(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<PromotionsQuery>,
     headers: HeaderMap,
 ) -> Result<Json<PromotionQueueResponse>, HttpError> {
     let principal = principal_of(&state, &headers).await?;
+    let limit = q.limit.unwrap_or(100).clamp(1, 200);
+    let offset = q.offset.unwrap_or(0).max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     use sqlx::Row;
     // LEFT JOINs: an RLS-invisible memory keeps the promotion row visible
@@ -742,12 +760,24 @@ pub(crate) async fn pending_promotions(
          LEFT JOIN provenance pv ON pv.id = m.provenance_id
          LEFT JOIN sources s ON s.id = pv.source_id
          WHERE p.policy_decision = 'needs_review' AND p.reviewed_at IS NULL
-         ORDER BY p.created_at ASC
-         LIMIT 100",
+         ORDER BY p.created_at ASC, p.id
+         LIMIT $1 OFFSET $2",
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
+    // Full backlog independent of the page window — the count this endpoint
+    // exists to expose (the old hard LIMIT 100 hid anything past the first page).
+    let total: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM promotions p
+         WHERE p.policy_decision = 'needs_review' AND p.reviewed_at IS NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?
+    .get("n");
     let out: Vec<PendingPromotion> = rows
         .iter()
         .map(|r| {
@@ -780,7 +810,10 @@ pub(crate) async fn pending_promotions(
             }
         })
         .collect();
-    Ok(Json(PromotionQueueResponse { promotions: out }))
+    Ok(Json(PromotionQueueResponse {
+        total,
+        promotions: out,
+    }))
 }
 
 // ── ingestion status ────────────────────────────────────────────────────
@@ -1116,7 +1149,10 @@ pub(crate) async fn revoke_token(
 pub(crate) struct QueueQuery {
     /// Queue name; defaults to the ingest queue.
     queue: Option<String>,
+    /// Page size for the dead-letter listing (default 50, clamped 1..200).
     limit: Option<i64>,
+    /// Page offset for the dead-letter listing (default 0).
+    offset: Option<i64>,
 }
 
 /// One bucket of the retry-attempt histogram over the ready jobs.
@@ -1203,6 +1239,9 @@ pub(crate) struct DeadLetterEntry {
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct DeadLetterListResponse {
+    /// Total dead letters on the queue — the full recovery backlog, independent
+    /// of the page window, so an operator knows how far `offset` can reach.
+    total: i64,
     dead_letters: Vec<DeadLetterEntry>,
 }
 
@@ -1210,10 +1249,10 @@ pub(crate) struct DeadLetterListResponse {
     get,
     path = "/v1/queue/dead-letters",
     tag = "queue",
-    description = "Dead-lettered jobs, most recent first (default limit 50).",
+    description = "Dead-lettered jobs, most recent first. Paged: `total` reports the full recovery backlog, `offset` reaches beyond the first page (default limit 50).",
     params(QueueQuery),
     responses(
-        (status = 200, description = "Dead-letter listing", body = DeadLetterListResponse),
+        (status = 200, description = "Dead-letter listing page", body = DeadLetterListResponse),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `admin` scope"),
     )
@@ -1227,11 +1266,19 @@ pub(crate) async fn queue_dead_letters(
     let queue = q
         .queue
         .unwrap_or_else(|| brainiac_pipeline::worker::INGEST_QUEUE.to_string());
-    let rows =
-        brainiac_store::queue::dead_letters(state.store.pool(), &queue, q.limit.unwrap_or(50))
-            .await
-            .map_err(internal)?;
+    let rows = brainiac_store::queue::dead_letters(
+        state.store.pool(),
+        &queue,
+        q.limit.unwrap_or(50),
+        q.offset.unwrap_or(0),
+    )
+    .await
+    .map_err(internal)?;
+    let total = brainiac_store::queue::dead_letters_count(state.store.pool(), &queue)
+        .await
+        .map_err(internal)?;
     Ok(Json(DeadLetterListResponse {
+        total,
         dead_letters: rows
             .iter()
             .map(|d| DeadLetterEntry {

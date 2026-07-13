@@ -105,7 +105,17 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Max events (default 50, clamped 1..200)",
+            "description": "Page size (default 50, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
             "required": false,
             "schema": {
               "type": "integer",
@@ -115,7 +125,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Audit feed",
+            "description": "Audit feed page",
             "content": {
               "application/json": {
                 "schema": {
@@ -626,13 +636,23 @@
           "ingest"
         ],
         "summary": "Recent pipeline runs — the worker's own audit trail, org-scoped by RLS.",
-        "description": "Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS.",
+        "description": "Recent pipeline runs — the worker's own audit trail, newest first, org-scoped by RLS. Paged: `total` reports the full trail, `offset` reaches beyond the first page.",
         "operationId": "pipeline_runs",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Max rows (default 30, clamped 1..200)",
+            "description": "Page size (default 30, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
             "required": false,
             "schema": {
               "type": "integer",
@@ -642,7 +662,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Recent pipeline runs",
+            "description": "Recent pipeline runs page",
             "content": {
               "application/json": {
                 "schema": {
@@ -659,7 +679,7 @@
         "tags": [
           "queue"
         ],
-        "description": "Dead-lettered jobs, most recent first (default limit 50).",
+        "description": "Dead-lettered jobs, most recent first. Paged: `total` reports the full recovery backlog, `offset` reaches beyond the first page (default limit 50).",
         "operationId": "queue_dead_letters",
         "parameters": [
           {
@@ -677,6 +697,20 @@
           {
             "name": "limit",
             "in": "path",
+            "description": "Page size for the dead-letter listing (default 50, clamped 1..200).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "description": "Page offset for the dead-letter listing (default 0).",
             "required": true,
             "schema": {
               "type": [
@@ -689,7 +723,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Dead-letter listing",
+            "description": "Dead-letter listing page",
             "content": {
               "application/json": {
                 "schema": {
@@ -772,6 +806,20 @@
           {
             "name": "limit",
             "in": "path",
+            "description": "Page size for the dead-letter listing (default 50, clamped 1..200).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "description": "Page offset for the dead-letter listing (default 0).",
             "required": true,
             "schema": {
               "type": [
@@ -940,7 +988,17 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Max rows (default 50)",
+            "description": "Page size (default 50, clamped 1..200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
             "required": false,
             "schema": {
               "type": "integer",
@@ -950,7 +1008,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Feedback triage queue",
+            "description": "Feedback triage queue page",
             "content": {
               "application/json": {
                 "schema": {
@@ -1020,11 +1078,39 @@
         "tags": [
           "reviews"
         ],
-        "description": "Promotions awaiting human review (oldest first, max 100).",
+        "description": "Promotions awaiting human review (oldest first). Paged: `total` reports the full backlog, `offset` reaches beyond the first page.",
         "operationId": "pending_promotions",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "Page size (default 100, clamped 1..200).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "description": "Page offset (default 0).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Pending review queue",
+            "description": "Pending review queue page",
             "content": {
               "application/json": {
                 "schema": {
@@ -1132,7 +1218,17 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Max rows (default 30, clamped 1..100)",
+            "description": "Page size (default 30, clamped 1..100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1142,7 +1238,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Recent sources",
+            "description": "Recent sources page",
             "content": {
               "application/json": {
                 "schema": {
@@ -1555,6 +1651,7 @@
       "AuditResponse": {
         "type": "object",
         "required": [
+          "total",
           "events"
         ],
         "properties": {
@@ -1563,6 +1660,11 @@
             "items": {
               "$ref": "#/components/schemas/AuditEvent"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total governance actions visible to the caller — the full feed length,\nindependent of the page window."
           }
         }
       },
@@ -1914,6 +2016,7 @@
       "DeadLetterListResponse": {
         "type": "object",
         "required": [
+          "total",
           "dead_letters"
         ],
         "properties": {
@@ -1922,6 +2025,11 @@
             "items": {
               "$ref": "#/components/schemas/DeadLetterEntry"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total dead letters on the queue — the full recovery backlog, independent\nof the page window, so an operator knows how far `offset` can reach."
           }
         }
       },
@@ -2055,6 +2163,7 @@
       "FeedbackQueueResponse": {
         "type": "object",
         "required": [
+          "total",
           "flagged"
         ],
         "properties": {
@@ -2063,6 +2172,11 @@
             "items": {
               "$ref": "#/components/schemas/FlaggedMemory"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total memories carrying open claims — the full triage backlog,\nindependent of the page window."
           }
         }
       },
@@ -3039,6 +3153,7 @@
       "PipelineRunsResponse": {
         "type": "object",
         "required": [
+          "total",
           "runs"
         ],
         "properties": {
@@ -3047,6 +3162,11 @@
             "items": {
               "$ref": "#/components/schemas/PipelineRunRow"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total pipeline runs visible to the caller — the full trail length,\nindependent of the page window."
           }
         }
       },
@@ -3136,6 +3256,7 @@
       "PromotionQueueResponse": {
         "type": "object",
         "required": [
+          "total",
           "promotions"
         ],
         "properties": {
@@ -3144,6 +3265,11 @@
             "items": {
               "$ref": "#/components/schemas/PendingPromotion"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total promotions awaiting review — the full backlog, independent of the\npage window, so a caller knows how far `offset` can reach."
           }
         }
       },
@@ -3558,6 +3684,7 @@
       "SourceFeedResponse": {
         "type": "object",
         "required": [
+          "total",
           "sources"
         ],
         "properties": {
@@ -3566,6 +3693,11 @@
             "items": {
               "$ref": "#/components/schemas/SourceRow"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total sources visible to the caller — the full feed length, independent\nof the page window."
           }
         }
       },
