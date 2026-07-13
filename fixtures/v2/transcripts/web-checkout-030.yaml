@@ -1,0 +1,42 @@
+# v2 extension: a team-web (TypeScript/Next) session — the source for the web
+# contract memories and the cross-stack (H3) probe. Stack-specific on purpose:
+# the abort/cancellation mechanism is genuinely correct for TS and a wrong
+# mental model in Rust, which is what makes H3 measurable at last.
+id: src-web-030
+team: team-web
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "The card form sometimes double-charges when the network is slow. We abort the request at 15 seconds and the user retries."
+  - role: assistant
+    text: "That 15s client abort is the bug. payments raised the psp-gateway client timeout to 30s after their incident review — so at 15s you're cancelling a request that is still going to succeed upstream, and the retry tokenizes a second time. Raise the abort envelope past 30s."
+  - role: user
+    text: "How do we cancel cleanly in the browser then? There's no thread to kill."
+  - role: assistant
+    text: "Right — in the browser you cancel a fetch with an AbortController signal; there is no thread to interrupt, so never port a server-side 'kill the worker' pattern here. Wire one AbortController per submit, and debounce the submit so autofill can't double-fire tokenization."
+  - role: user
+    text: "And money formatting — finance flagged a rounding cent."
+  - role: assistant
+    text: "Never format money client-side. The API returns integer minor units; render through formatAmount(). A JS float divide is where the rounding cent came from."
+gold_memories:
+  - id: mem-web-0001
+    kind: fact
+    content_gist: "checkout-web calls payment-service /v1/payments; the contract lives in payment-service openapi.yaml; checkout v2 is the live flow"
+    entities: [ent-web-checkout-web, ent-web-payment-client]
+    visibility: org
+    must_extract: true
+  - id: mem-web-0002
+    kind: pitfall
+    content_gist: "checkout-web must set its client abort envelope above the psp-gateway 30s client timeout, or a slow-but-successful payment is cancelled and the retry double-charges"
+    entities: [ent-web-checkout-web, ent-web-card-form]
+    visibility: org
+    must_extract: true
+  - id: mem-web-0003
+    kind: pitfall
+    content_gist: "in the browser cancel a fetch with an AbortController signal; there is no thread to interrupt, so do not port a server-side kill-the-worker pattern to checkout-web"
+    entities: [ent-web-checkout-web]
+    visibility: team
+    must_extract: true
+distractors:
+  - "finance's rounding-cent theory about a backend bug — debunked in-session (it was a client-side float divide), must NOT be extracted as a payments fact"

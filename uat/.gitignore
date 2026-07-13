@@ -1,0 +1,8 @@
+# Run artifacts: keep the reports, drop the bulk.
+runs/*/captures/
+runs/*/sessions/
+runs/*/*.log
+
+# Never commit a minted token.
+.tokens
+.env.uat

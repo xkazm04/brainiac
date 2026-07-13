@@ -1,0 +1,60 @@
+# Temporal "as-of" QA (EVAL.md §2.4). Metric: exact hit on the temporally
+# correct memory at rank 1; superseded memories absent from top-3 on
+# current-time queries.
+cases:
+  - id: tmp-001
+    question: "How do production deploys ship?"
+    as_of: "2026-02-01T00:00:00Z"
+    expected_memory: mem-plat-0110
+  - id: tmp-002
+    question: "How do production deploys ship?"
+    as_of: "2026-05-01T00:00:00Z"
+    expected_memory: mem-plat-0111
+  - id: tmp-003
+    question: "Which checkout version is live?"
+    as_of: "2026-01-15T00:00:00Z"
+    expected_memory: mem-pay-0021
+  - id: tmp-004
+    question: "What is the retry cap for refund-worker?"
+    as_of: "2026-03-01T00:00:00Z"
+    expected_memory: mem-plat-0107   # old policy still valid then
+  - id: tmp-005
+    question: "What is the retry cap for refund-worker?"
+    as_of: "2026-06-15T00:00:00Z"
+    expected_memory: mem-pay-0043    # after supersession
+  - id: tmp-006
+    question: "Which checkout version is live?"
+    as_of: "2026-04-01T00:00:00Z"
+    expected_memory: mem-pay-0022
+  - id: tmp-007
+    question: "What is the psp-gateway client timeout?"
+    as_of: "2026-04-01T00:00:00Z"
+    expected_memory: mem-pay-0063
+  - id: tmp-008
+    question: "What is the psp-gateway client timeout?"
+    as_of: "2026-06-01T00:00:00Z"
+    expected_memory: mem-pay-0064
+  - id: tmp-009
+    question: "What retry rules apply to internal service calls?"
+    as_of: "2026-01-15T00:00:00Z"
+    expected_memory: mem-plat-0107
+  - id: tmp-010
+    question: "Which checkout version is live?"
+    as_of: "2026-07-01T00:00:00Z"
+    expected_memory: mem-pay-0022
+  - id: tmp-011
+    question: "What is the feast online serving p99 target?"
+    as_of: "2026-01-15T00:00:00Z"
+    expected_memory: mem-data-0100
+  - id: tmp-012
+    question: "What is the feast online serving p99 target?"
+    as_of: "2026-06-01T00:00:00Z"
+    expected_memory: mem-data-0101
+  - id: tmp-013
+    question: "How do Grafana dashboards get deployed?"
+    as_of: "2026-02-01T00:00:00Z"
+    expected_memory: mem-plat-0122
+  - id: tmp-014
+    question: "How do Grafana dashboards get deployed?"
+    as_of: "2026-06-01T00:00:00Z"
+    expected_memory: mem-plat-0123

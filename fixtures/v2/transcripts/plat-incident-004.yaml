@@ -1,0 +1,39 @@
+# Transcript 6: platform MSK capacity incident — one org-visible decision
+# (partition counts) among team-scoped operational facts.
+id: src-plat-004
+team: team-platform
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "Broker disk alert during the checkout event replay — 82% and climbing."
+  - role: assistant
+    text: "Storage autoscaling is not enabled on the MSK cluster; expansion is a manual infra-live change. PR the broker volume bump now, it takes effect rolling."
+  - role: user
+    text: "The replay also seems to be starving other consumers."
+  - role: assistant
+    text: "That's the Kafka Streams state-store restore — it saturates broker network for the whole cluster. Throttle restores to 40 MB/s; the replay finishes later but nothing else degrades."
+  - role: user
+    text: "While we're here, can we bump partitions on checkout.events.v2 to spread load?"
+  - role: assistant
+    text: "Partition counts on payment topics are fixed at 24 and changing them needs a data-team sign-off — their funnel jobs key by partition. That's an org-wide decision, not an incident action."
+gold_memories:
+  - id: mem-plat-0124
+    kind: fact
+    content_gist: "MSK broker storage autoscaling is not enabled; disk expansion is a manual infra-live change"
+    entities: [ent-plat-msk, ent-plat-infra-live]
+    visibility: team
+    must_extract: true
+  - id: mem-plat-0125
+    kind: pitfall
+    content_gist: "Kafka Streams state-store restores saturate broker network; throttle to 40 MB/s"
+    entities: [ent-plat-kafka-streams, ent-plat-msk]
+    visibility: team
+    must_extract: true
+  - id: mem-plat-0126
+    kind: decision
+    content_gist: "payment topic partition counts are fixed at 24; changes need data-team sign-off because funnel jobs key by partition"
+    entities: [ent-plat-msk]
+    visibility: org
+    must_extract: true
+distractors: []

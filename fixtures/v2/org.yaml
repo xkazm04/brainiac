@@ -1,0 +1,72 @@
+# Meridian — the synthetic fintech (EVAL.md §1). All ids are stable strings.
+org: meridian
+teams:
+  - id: team-payments
+    name: payments
+  - id: team-platform
+    name: platform
+  - id: team-data
+    name: data
+  # v2 extension (UAT company.md): the fourth stack boundary — TypeScript/Next.
+  - id: team-web
+    name: web
+users:
+  - id: user-pay-dev1
+    email: dev1@meridian.example
+    teams: [team-payments]
+    role: member
+  - id: user-pay-lead
+    email: paylead@meridian.example
+    teams: [team-payments]
+    role: maintainer
+  - id: user-plat-dev1
+    email: platdev@meridian.example
+    teams: [team-platform]
+    role: member
+  - id: user-plat-lead
+    email: platlead@meridian.example
+    teams: [team-platform]
+    role: maintainer
+  - id: user-data-analyst1
+    email: analyst1@meridian.example
+    teams: [team-data]
+    role: member
+  - id: user-data-lead
+    email: datalead@meridian.example
+    teams: [team-data]
+    role: maintainer
+  # ── v2 extension: the UAT roster (company.md) ──────────────────────────
+  - id: user-web-dev1        # Jonas — frontend
+    email: jonas@meridian.example
+    teams: [team-web]
+    role: member
+  - id: user-web-lead        # web maintainer (reviews web promotions)
+    email: weblead@meridian.example
+    teams: [team-web]
+    role: maintainer
+  - id: user-pay-new         # Mira — new joiner, week 1
+    email: mira@meridian.example
+    teams: [team-payments]
+    role: member
+  - id: user-pay-oncall      # Nadia — on-call
+    email: nadia@meridian.example
+    teams: [team-payments]
+    role: member
+  - id: user-contractor      # Rafael — scoped contractor (single team, by the model's limits)
+    email: rafael@contractor.example
+    teams: [team-payments]
+    role: member
+  - id: user-plat-sec        # Yusuf — security engineer
+    email: yusuf@meridian.example
+    teams: [team-platform]
+    role: member
+  # Sam (staff) and Dana (EM) are DELIBERATELY teamless — the company.md
+  # structural finding: a cross-team principal cannot exist in this model.
+  - id: user-staff
+    email: sam@meridian.example
+    teams: []
+    role: member
+  - id: user-em
+    email: dana@meridian.example
+    teams: []
+    role: member

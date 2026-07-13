@@ -1,0 +1,20 @@
+{
+  "run": "2026-07-13-l1",
+  "level": "L1",
+  "note": "L1 is theoretical (code-grounded). Deltas are DIRECTIONAL projections of C - B, not measured. No live server, no real agent sessions, no blind judge. Every 'positive' below is retrievable-not-retrieved and must survive L2 before it is a delta. Provider/embedder: N/A at L1.",
+  "primary_endpoint": "efficiency (turns/tokens/exploration-reads) — quality is a guardrail",
+  "verdict_counts": { "L1-pass": 0, "L1-conditional": 6, "L1-redundant": 3, "L1-fail": 2 },
+  "units": [
+    { "id": "refund-cap-tuning",      "character": "ada-kovac",        "gap": "none",           "verdict": "L1-redundant",   "C_minus_B": "0 (100% duplicate-of-baseline)", "sign": "neutral-negative", "note": "H-null control CONFIRMED flat. Harness trustworthy." },
+    { "id": "decline-05-triage",       "character": "nadia-roth",       "gap": "none",           "verdict": "L1-redundant",   "C_minus_B": "negative (redundant + latency at 02:00)", "sign": "negative", "note": "H-null control CONFIRMED. Brainiac did not beat the .claude/rules glob." },
+    { "id": "ledger-payout-recon",     "character": "ada-kovac",        "gap": "none (H-decay)", "verdict": "L1-redundant",   "C_minus_B": "0 on knowledge; decay advantage thrown away by tool description", "sign": "negative", "note": "The sharpest thesis is refuted by the product's own surface, not the store." },
+    { "id": "v1-fallback-still-true",  "character": "sam-oduya",        "gap": "provenance",     "verdict": "L1-fail",        "C_minus_B": "negative (git blame wins; payload cannot carry when/who)", "sign": "negative", "note": "Pre-registered L1-fail CONFIRMED and sharpened to a latent H8 blocker." },
+    { "id": "contractor-webhook-scope","character": "rafael-ortiz",     "gap": "permission",     "verdict": "L1-fail",        "C_minus_B": "negative (Option A leaks by design, Option B breaks the ticket)", "sign": "negative", "note": "Visibility model has 3 tiers; a contractor needs a 4th. Plus the H4 verbatim-excerpt headline." },
+    { "id": "refund-burst-features",   "character": "ingrid-sol",       "gap": "cross-team",     "verdict": "L1-conditional", "C_minus_B": "positive-but-partial (knew-to-ask, not acted-on)", "sign": "positive-conditional", "note": "The load-bearing win survives — but only on the hand-marked org sliver." },
+    { "id": "std-retry-reversal",      "character": "tomas-reid",       "gap": "retraction",     "verdict": "L1-conditional", "C_minus_B": "positive-but-erasable (one CLAUDE.md edit closes it, for free)", "sign": "positive-conditional", "note": "Real cross-boundary fact; over-applies a scoped exception; no date." },
+    { "id": "checkout-timeout-drift",  "character": "jonas-weber",      "gap": "after-the-file", "verdict": "L1-conditional", "C_minus_B": "positive (cleanest case) — gated on unprompted retrieval + partial contract", "sign": "positive-conditional", "note": "L2 BLOCKED: team-web/checkout-web unseeded in fixtures/v1." },
+    { "id": "new-joiner-inherits-p2",  "character": "mira-haddad",      "gap": "cross-team",     "verdict": "L1-conditional", "C_minus_B": "HARM-BEARING: value redundant, arm C can inject a regression arm B prevents", "sign": "negative-risk", "note": "Top L2 priority. D1 canonical decoy + D2 raw decoy. Splits on whether the contradict worker fired." },
+    { "id": "retry-reversal-propagation","character": "tomas+ingrid+jonas","gap": "retraction",  "verdict": "L1-conditional", "C_minus_B": "positive-but-capped: the NUMBER crosses, the actionable DETAIL does not", "sign": "positive-conditional", "note": "org-visibility is a fixture property, not a pipeline outcome. Barrier-dependent." },
+    { "id": "promotion-queue-backlog", "character": "petra+lars+dana",  "gap": "none",           "verdict": "L1-conditional", "C_minus_B": "NEGATIVE / harmful-as-shaped", "sign": "harmful", "note": "Named failure is structurally over-determined by the shipped code, not merely possible." }
+  ]
+}

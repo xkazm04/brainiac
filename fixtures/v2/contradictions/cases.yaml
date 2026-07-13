@@ -1,0 +1,61 @@
+# Contradiction gold (EVAL.md §2.3). 4 supersede / 4 coexist / 4 dismissed —
+# the coexist and dismissed cases are the traps: an over-eager detector that
+# flags every tension trains reviewers to ignore the queue.
+cases:
+  # ── genuine supersessions ─────────────────────────────────────────────
+  - id: con-001
+    memory_a: mem-pay-0063          # timeout 10s (older)
+    memory_b: mem-pay-0064          # timeout 30s (newer)
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-002
+    memory_a: mem-plat-0110         # Jenkins deploys (older)
+    memory_b: mem-plat-0111         # ArgoCD only (newer)
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-003
+    memory_a: mem-plat-0107         # "std-retry: cap 2s, 3 attempts" (older)
+    memory_b: mem-pay-0043          # "cap 30s with jitter"           (newer)
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-004
+    memory_a: mem-pay-0021          # checkout v1 live (older)
+    memory_b: mem-pay-0022          # v2 replaced v1   (newer)
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+
+  # ── look conflicting, are NOT (coexist) ───────────────────────────────
+  - id: con-009
+    memory_a: mem-data-0071         # bge-m3 for search embeddings
+    memory_b: mem-data-0088         # nomic-embed for clustering
+    expected: resolved_coexist      # different scopes — NOT a real contradiction
+  - id: con-005
+    memory_a: mem-pay-0064          # 30s CLIENT TIMEOUT
+    memory_b: mem-pay-0043          # 30s RETRY CAP
+    expected: resolved_coexist      # different knobs that happen to share a number
+  - id: con-006
+    memory_a: mem-plat-0118         # refunds cron runs refund-worker nightly
+    memory_b: mem-pay-0062          # refunds only through refund-worker
+    expected: resolved_coexist      # complementary statements about the same worker
+  - id: con-007
+    memory_a: mem-data-0096         # registry enforces backward compat
+    memory_b: mem-data-0093         # backfills pin schema versions
+    expected: resolved_coexist      # policy vs procedure, both true
+
+  # ── not contradictions at all (dismiss) ───────────────────────────────
+  - id: con-008
+    memory_a: mem-plat-0114         # OPA gates deploys
+    memory_b: mem-plat-0111         # ArgoCD is the deploy path
+    expected: dismissed
+  - id: con-010
+    memory_a: mem-pay-0067          # trace declines via the collector
+    memory_b: mem-plat-0113         # collector drops spans over 5k queue
+    expected: dismissed
+  - id: con-011
+    memory_a: mem-data-0090         # funnel ingests hourly
+    memory_b: mem-data-0095         # product reviews dashboards weekly
+    expected: dismissed
+  - id: con-012
+    memory_a: mem-pay-0066          # EU rollout finished March
+    memory_b: mem-pay-0022          # v2 replaced v1 in February
+    expected: dismissed

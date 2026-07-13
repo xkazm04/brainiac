@@ -1,0 +1,359 @@
+# Retrieval QA (EVAL.md §2.5) — seed slice across all strata. Graded
+# relevance 0–3; `asking_as` is the RLS principal the query runs under, so
+# gold items are always visible to the asker (leak cases live in leak.yaml).
+queries:
+  # ── semantic (paraphrase; pure embedding quality) ─────────────────────
+  - id: qa-001
+    stratum: semantic
+    query: "why do refunds hammer the payment provider during latency spikes?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0042, grade: 3}
+      - {memory: mem-pay-0043, grade: 2}
+  - id: qa-002
+    stratum: semantic
+    query: "how should services back off when calling each other?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-pay-0043, grade: 3}
+  - id: qa-003
+    stratum: semantic
+    query: "what happens if the tracing pipeline gets overloaded?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0113, grade: 3}
+  - id: qa-004
+    stratum: semantic
+    query: "how do we avoid paying customers back twice during a rollback?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0069, grade: 3}
+  - id: qa-005
+    stratum: semantic
+    query: "which embedding model should power semantic search?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0071, grade: 3}
+      - {memory: mem-data-0088, grade: 1}
+  - id: qa-006
+    stratum: semantic
+    query: "where do the conversion numbers for the purchase flow come from?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0095, grade: 3}
+      - {memory: mem-data-0090, grade: 2}
+  - id: qa-007
+    stratum: semantic
+    query: "which system holds the truth about payment state?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0068, grade: 3}
+  - id: qa-008
+    stratum: semantic
+    query: "what's our standard for distributed tracing?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-plat-0120, grade: 3}
+  - id: qa-009
+    stratum: semantic
+    query: "how do we figure out why card payments are suddenly being declined?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0072, grade: 3}
+      - {memory: mem-pay-0071, grade: 2}
+  - id: qa-010
+    stratum: semantic
+    query: "is it safe to retry payments the issuer refused?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0073, grade: 3}
+  - id: qa-011
+    stratum: semantic
+    query: "who handles disputed transactions automatically?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0074, grade: 3}
+  - id: qa-012
+    stratum: semantic
+    query: "which system keeps the money books balanced?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0076, grade: 3}
+  - id: qa-013
+    stratum: semantic
+    query: "what went wrong with the money amounts in the fraud features?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0091, grade: 3}
+      - {memory: mem-data-0102, grade: 2}
+  - id: qa-014
+    stratum: semantic
+    query: "how do we keep credentials out of kubernetes manifests?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0129, grade: 3}
+  - id: qa-015
+    stratum: semantic
+    query: "what happens to the sandbox cluster every week?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0134, grade: 3}
+  - id: qa-016
+    stratum: semantic
+    query: "how is conversion actually defined for the purchase flow?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0111, grade: 3}
+      - {memory: mem-data-0095, grade: 1}
+
+  # ── exact-identifier (where vectors fail; BM25/hybrid must save you) ──
+  - id: qa-020
+    stratum: exact_identifier
+    query: "psp-gateway timeout"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0064, grade: 3}
+  - id: qa-021
+    stratum: exact_identifier
+    query: "otel-collector-config batch processor"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0113, grade: 3}
+  - id: qa-022
+    stratum: exact_identifier
+    query: "infra-live topic manifest"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0115, grade: 3}
+      - {memory: mem-plat-0112, grade: 1}
+  - id: qa-023
+    stratum: exact_identifier
+    query: "feast p99"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0094, grade: 3}
+  - id: qa-024
+    stratum: exact_identifier
+    query: "checkout.events.v2"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0061, grade: 3}
+  - id: qa-025
+    stratum: exact_identifier
+    query: "fraud-model weekly training"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0092, grade: 3}
+  - id: qa-026
+    stratum: exact_identifier
+    query: "psp.decline_code"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0071, grade: 3}
+      - {memory: mem-pay-0067, grade: 2}
+  - id: qa-027
+    stratum: exact_identifier
+    query: "conftest infra-live"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0128, grade: 3}
+  - id: qa-028
+    stratum: exact_identifier
+    query: "amounts sanity suite dbt"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0104, grade: 3}
+  - id: qa-029
+    stratum: exact_identifier
+    query: "representments 50 EUR"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0074, grade: 3}
+      - {memory: mem-pay-0081, grade: 2}
+  - id: qa-030
+    stratum: exact_identifier
+    query: "state-store restore 40 MB/s"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0125, grade: 3}
+
+  # ── cross-team graph (the product thesis) ─────────────────────────────
+  - id: qa-062
+    stratum: cross_team_graph
+    query: "why do our checkout payment retries sometimes hammer the PSP?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-pay-0042, grade: 3}
+      - {memory: mem-plat-0107, grade: 2}
+  - id: qa-041
+    stratum: cross_team_graph
+    query: "how do I get a new Kafka topic provisioned for payment events?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-plat-0115, grade: 3}
+  - id: qa-042
+    stratum: cross_team_graph
+    query: "what's the supported way to ship a service to production?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-plat-0111, grade: 3}
+  - id: qa-043
+    stratum: cross_team_graph
+    query: "which team's model retrains weekly, and from what data?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-data-0092, grade: 3}
+  - id: qa-044
+    stratum: cross_team_graph
+    query: "what replaced the old checkout flow?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-pay-0022, grade: 3}
+      - {memory: mem-pay-0021, grade: 1}
+  - id: qa-045
+    stratum: cross_team_graph
+    query: "why can't we change partition counts on payment topics ourselves?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-plat-0126, grade: 3}
+  - id: qa-046
+    stratum: cross_team_graph
+    query: "how do I get an exception to ship a deploy during the freeze?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-plat-0127, grade: 3}
+  - id: qa-047
+    stratum: cross_team_graph
+    query: "where can I check what a merchant was actually paid out?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-pay-0083, grade: 3}
+  - id: qa-048
+    stratum: cross_team_graph
+    query: "who must approve a change to the fraud scoring threshold?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-data-0107, grade: 3}
+
+  # ── temporal (as-of correctness; §2.4 wired into retrieval) ───────────
+  - id: qa-060
+    stratum: temporal
+    query: "what is the retry cap for refund-worker?"
+    as_of: "2026-03-01T00:00:00Z"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-plat-0107, grade: 3}
+  - id: qa-061
+    stratum: temporal
+    query: "what is the retry cap for refund-worker?"
+    as_of: "2026-06-15T00:00:00Z"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0043, grade: 3}
+    forbidden_top3: [mem-plat-0107]
+  - id: qa-063
+    stratum: temporal
+    query: "how do production deploys ship?"
+    as_of: "2026-02-01T00:00:00Z"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0110, grade: 3}
+  - id: qa-064
+    stratum: temporal
+    query: "what is the psp-gateway client timeout?"
+    as_of: "2026-06-01T00:00:00Z"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0064, grade: 3}
+    forbidden_top3: [mem-pay-0063]
+  - id: qa-065
+    stratum: temporal
+    query: "what's the p99 target for online feature serving?"
+    as_of: "2026-01-15T00:00:00Z"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0100, grade: 3}
+  - id: qa-066
+    stratum: temporal
+    query: "what's the p99 target for online feature serving?"
+    as_of: "2026-06-15T00:00:00Z"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0101, grade: 3}
+    forbidden_top3: [mem-data-0100]
+
+  # ── negative (no relevant memory exists; refusal quality) ─────────────
+  - id: qa-080
+    stratum: negative
+    query: "what is our Snowflake warehouse sizing policy?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant: []
+  - id: qa-081
+    stratum: negative
+    query: "where are the iOS push notification certificates?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant: []
+  - id: qa-082
+    stratum: negative
+    query: "what is the office wifi password?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant: []
+  - id: qa-083
+    stratum: negative
+    query: "what is the kubernetes control-plane upgrade cadence?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant: []
+  - id: qa-084
+    stratum: negative
+    query: "what's the corporate travel booking tool?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant: []
+  - id: qa-085
+    stratum: negative
+    query: "jaká je politika home office?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant: []
+
+  # ── Czech (cross-lingual both directions) ─────────────────────────────
+  - id: qa-090
+    stratum: czech
+    query: "jak založím nový Kafka topic?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0115, grade: 3}
+      - {memory: mem-plat-0119, grade: 2}
+  - id: qa-091
+    stratum: czech
+    query: "proč refundy přetěžují platební bránu?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0042, grade: 3}
+      - {memory: mem-pay-0070, grade: 2}
+  - id: qa-092
+    stratum: czech
+    query: "how is checkout conversion measured?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0095, grade: 3}
+      - {memory: mem-data-0097, grade: 2}
+  - id: qa-093
+    stratum: czech
+    query: "kdo automaticky řeší chargebacky?"
+    asking_as: {team: team-payments, user: user-pay-dev1}
+    relevant:
+      - {memory: mem-pay-0081, grade: 3}
+      - {memory: mem-pay-0074, grade: 2}
+  - id: qa-094
+    stratum: czech
+    query: "můžu pustit backfill během hodinového ingestu?"
+    asking_as: {team: team-data, user: user-data-analyst1}
+    relevant:
+      - {memory: mem-data-0106, grade: 3}
+      - {memory: mem-data-0105, grade: 2}
+  - id: qa-095
+    stratum: czech
+    query: "how do we request an exception from the deploy policy?"
+    asking_as: {team: team-platform, user: user-plat-dev1}
+    relevant:
+      - {memory: mem-plat-0127, grade: 3}
+      - {memory: mem-plat-0131, grade: 2}

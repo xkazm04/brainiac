@@ -1,0 +1,37 @@
+# Seed transcript 3: data team session on checkout funnel analytics —
+# exercises the cross-team surface forms ("the event bus" = Kafka,
+# "the payments backend" = payment-service).
+id: src-data-012
+team: team-data
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "Product asked why the checkout funnel dashboard lagged yesterday's launch by half a day."
+  - role: assistant
+    text: "The funnel reads checkout.events.v2 from the event bus into event-lake on an hourly schedule — the lag was one delayed backfill, not a pipeline break."
+  - role: user
+    text: "OK. Can we promise them fresher numbers?"
+  - role: assistant
+    text: "Hourly is the contract. The dashboards are the source of truth for conversion and product reviews them weekly, so hourly ingestion is comfortably within their cadence."
+  - role: user
+    text: "One more thing — someone on payments mentioned the payments backend changed an event field?"
+  - role: assistant
+    text: "That would show up as a schema registry compatibility failure before it ever hit us; nothing failed, so no change landed. I'd not act on hallway rumors."
+gold_memories:
+  - id: mem-data-0090
+    kind: fact
+    content_gist: "checkout funnel analytics reads checkout.events.v2 from the event bus into event-lake hourly"
+    entities: [ent-data-checkout-funnel, ent-data-event-bus, ent-data-event-lake]
+    relations:
+      - {src: ent-data-checkout-funnel, rel: uses, dst: ent-data-event-bus}
+    visibility: team
+    must_extract: true
+  - id: mem-data-0095
+    kind: decision
+    content_gist: "checkout funnel dashboards are the source of truth for conversion; product reviews them weekly"
+    entities: [ent-data-checkout-funnel]
+    visibility: team
+    must_extract: true
+distractors:
+  - "unverified hallway rumor about a payments backend field change, explicitly not acted on"

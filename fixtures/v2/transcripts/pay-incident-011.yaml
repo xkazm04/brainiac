@@ -1,0 +1,43 @@
+# Transcript 4: payments decline-spike triage — exercises identifier-heavy
+# extraction (span attributes, decline codes) and a pitfall the assistant
+# must NOT turn into a retry recommendation.
+id: src-pay-011
+team: team-payments
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "Declines jumped 4x in the last hour. Where do I even start?"
+  - role: assistant
+    text: "Group the tracing collector spans by psp.decline_code — the PSP adapter normalizes all three PSPs' codes into that one attribute, so the spike will have a shape. Check the PSP status page before rolling anything back."
+  - role: user
+    text: "It's almost all code 05. Should we just retry those?"
+  - role: assistant
+    text: "No — 05 is do-not-honor, which is issuer-side. Retrying burns PSP quota and looks like fraud velocity to the issuer; it can get merchants flagged. Let the spike pass and alert merchant support instead."
+  - role: user
+    text: "OK, I also saw someone suggest bumping the adapter pool size while we're in here."
+  - role: assistant
+    text: "Unrelated to a decline spike and not something to change mid-incident. Park it as a follow-up ticket."
+gold_memories:
+  - id: mem-pay-0071
+    kind: fact
+    content_gist: "PSP adapter normalizes decline codes from all three PSPs into psp.decline_code for the tracing collector"
+    entities: [ent-pay-psp-adapter, ent-pay-tracing-collector]
+    relations:
+      - {src: ent-pay-psp-adapter, rel: uses, dst: ent-pay-tracing-collector}
+    visibility: team
+    must_extract: true
+  - id: mem-pay-0072
+    kind: howto
+    content_gist: "triage a decline spike by grouping tracing spans by psp.decline_code, then check the PSP status page before rollback"
+    entities: [ent-pay-tracing-collector, ent-pay-psp-gateway]
+    visibility: team
+    must_extract: true
+  - id: mem-pay-0073
+    kind: pitfall
+    content_gist: "decline code 05 spikes are issuer-side; retrying burns PSP quota and reads as fraud velocity"
+    entities: [ent-pay-psp-adapter, ent-pay-retry-rules]
+    visibility: team
+    must_extract: true
+distractors:
+  - "mid-incident suggestion to bump the adapter pool size, explicitly parked as a follow-up"
