@@ -7,7 +7,7 @@ use std::sync::Arc;
 use brainiac_core::embed::DeterministicEmbedder;
 use brainiac_core::Principal;
 use brainiac_fixtures::ids::stable_uuid;
-use brainiac_server::mcp::{handle_message, McpState};
+use brainiac_server::mcp::{handle_message, process_line, McpState};
 use brainiac_store::Store;
 use serde_json::{json, Value};
 
@@ -373,8 +373,100 @@ async fn mcp_handshake_and_tools() {
     let r = handle_message(&state, &rpc(15, "resources/list", json!({})))
         .await
         .expect("response");
+    assert_eq!(r["error"]["code"], -32601);
     assert!(r["error"]["message"]
         .as_str()
         .expect("err")
         .contains("method not found"));
+
+    // ── JSON-RPC conformance & session hardening (Direction 1) ──────────
+    // An unparseable line → -32700 with a null id (per spec), never dropped.
+    let r = process_line(&state, "{ this is not json ]")
+        .await
+        .expect("a malformed frame must still be answered");
+    assert_eq!(r["error"]["code"], -32700);
+    assert!(r["id"].is_null());
+    // A blank line yields no reply.
+    assert!(process_line(&state, "   ").await.is_none());
+
+    // A well-formed object carrying an id but NO method is an invalid request
+    // (-32600) — it must get a reply, never silence (the agent would hang).
+    let r = handle_message(&state, &json!({ "jsonrpc": "2.0", "id": 16 }))
+        .await
+        .expect("id-carrying request without method must be answered");
+    assert_eq!(r["error"]["code"], -32600);
+    assert_eq!(r["id"], 16);
+
+    // A non-request shape (a stray response object) that still carries an id
+    // gets -32600, not silence.
+    let r = handle_message(
+        &state,
+        &json!({ "jsonrpc": "2.0", "id": 17, "result": { "anything": true } }),
+    )
+    .await
+    .expect("non-request with id must be answered");
+    assert_eq!(r["error"]["code"], -32600);
+
+    // A true notification (no id) still gets no reply, whatever its method.
+    assert!(
+        handle_message(&state, &json!({ "jsonrpc": "2.0", "method": "ping" }))
+            .await
+            .is_none()
+    );
+
+    // tools/call with no `name` → invalid params (-32602), a protocol error
+    // (no `result`), not a tool result.
+    let r = handle_message(&state, &rpc(18, "tools/call", json!({ "arguments": {} })))
+        .await
+        .expect("response");
+    assert_eq!(r["error"]["code"], -32602);
+    assert!(r.get("result").is_none());
+
+    // An unknown tool name → -32602.
+    let r = handle_message(
+        &state,
+        &rpc(19, "tools/call", json!({ "name": "does_not_exist" })),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["error"]["code"], -32602);
+
+    // A required argument missing (query) → -32602, not a tool error.
+    let r = handle_message(
+        &state,
+        &rpc(
+            20,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": {} }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["error"]["code"], -32602);
+
+    // Oversized input is a CLEAR TOOL ERROR (isError), not unbounded work and
+    // not a protocol error.
+    let huge = "x".repeat(3_000);
+    let r = handle_message(
+        &state,
+        &rpc(
+            21,
+            "tools/call",
+            json!({ "name": "memory_search", "arguments": { "query": huge } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(r["result"]["isError"], true, "oversized query: {r}");
+    assert!(r["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .contains("too large"));
+
+    // The session keeps serving after every failure frame above: a normal call
+    // still succeeds.
+    let r = handle_message(&state, &rpc(22, "ping", json!({})))
+        .await
+        .expect("response");
+    assert!(r["result"].is_object(), "session must keep serving: {r}");
 }

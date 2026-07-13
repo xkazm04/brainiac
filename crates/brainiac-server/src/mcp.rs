@@ -28,6 +28,117 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Token budget for the memory_context bundle (chars ≈ tokens × 4).
 const CONTEXT_CHAR_BUDGET: usize = 6000;
 
+// ── Input size caps (§5.1 hardening) ────────────────────────────────────
+// The MCP surface is a trust boundary reached by autonomous agents; every
+// free-text field is bounded so a runaway caller can never hand us an
+// unbounded blob to embed, store, or scan. Oversized input is rejected as a
+// clear tool error before any work is done — never silently truncated.
+/// `memory_add` content — one self-contained statement, generously sized.
+const MAX_CONTENT_CHARS: usize = 8_000;
+/// `memory_search` query and `memory_context` task_hint.
+const MAX_QUERY_CHARS: usize = 2_000;
+/// `entity_lookup` name — a surface form, not prose.
+const MAX_NAME_CHARS: usize = 200;
+/// `memory_feedback` note — a short human explanation.
+const MAX_NOTE_CHARS: usize = 2_000;
+
+/// A JSON-RPC-level error (maps to an `error` object with a spec code). Distinct
+/// from a *tool* error, which is a successful response carrying `isError: true`.
+struct RpcError {
+    code: i64,
+    message: String,
+}
+
+impl RpcError {
+    fn new(code: i64, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+/// Outcome of running a tool. The three arms map to distinct wire shapes so the
+/// caller can tell a protocol mistake from a rejected input from an internal
+/// fault — and so raw internal/DB error strings NEVER reach the agent.
+enum ToolError {
+    /// Malformed/missing arguments → JSON-RPC `-32602 Invalid params`.
+    InvalidParams(String),
+    /// The tool ran and deliberately refused (business rule, RLS not-found,
+    /// oversized input) → a tool error (`isError: true`) with this message,
+    /// which is safe to show the agent.
+    Rejected(String),
+    /// An internal fault (DB, embedder, queue). The detail is logged; the agent
+    /// gets a generic tool error so no internal string ever leaks.
+    Internal(anyhow::Error),
+}
+
+impl From<anyhow::Error> for ToolError {
+    fn from(e: anyhow::Error) -> Self {
+        ToolError::Internal(e)
+    }
+}
+
+impl From<sqlx::Error> for ToolError {
+    fn from(e: sqlx::Error) -> Self {
+        ToolError::Internal(e.into())
+    }
+}
+
+fn invalid(msg: impl Into<String>) -> ToolError {
+    ToolError::InvalidParams(msg.into())
+}
+
+fn rejected(msg: impl Into<String>) -> ToolError {
+    ToolError::Rejected(msg.into())
+}
+
+/// A required string argument, present and non-empty after trimming.
+fn required_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {
+    match args.get(key).and_then(|v| v.as_str()).map(str::trim) {
+        Some(s) if !s.is_empty() => Ok(s),
+        Some(_) => Err(invalid(format!("`{key}` must not be empty"))),
+        None => Err(invalid(format!("`{key}` is required and must be a string"))),
+    }
+}
+
+/// Enforce a documented character cap on a free-text field. Oversized input is
+/// a clear tool error (rejected), never silent truncation or unbounded work.
+fn within_cap<'a>(value: &'a str, cap: usize, field: &str) -> Result<&'a str, ToolError> {
+    if value.chars().count() > cap {
+        return Err(rejected(format!(
+            "`{field}` is too large ({} chars); the limit is {cap}",
+            value.chars().count()
+        )));
+    }
+    Ok(value)
+}
+
+/// A required argument parsed as a UUID (bad format is a param error, not an
+/// internal fault).
+fn required_uuid(args: &Value, key: &str) -> Result<Uuid, ToolError> {
+    let raw = required_str(args, key)?;
+    raw.parse()
+        .map_err(|_| invalid(format!("`{key}` must be a UUID")))
+}
+
+/// A JSON-RPC error frame. `id` is `Null` for pre-dispatch failures (parse /
+/// invalid request) per the spec.
+fn error_frame(id: Value, code: i64, message: impl Into<String>) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id,
+        "error": { "code": code, "message": message.into() }
+    })
+}
+
+/// A successful response whose payload is a tool error (`isError: true`).
+fn tool_error(message: &str) -> Value {
+    json!({
+        "content": [{ "type": "text", "text": message }],
+        "isError": true
+    })
+}
+
 pub struct McpState {
     pub store: Store,
     pub embedder: Arc<dyn Embedder>,
@@ -64,46 +175,96 @@ impl McpState {
     }
 }
 
-/// Blocking stdio loop: one JSON-RPC message per line.
+/// Blocking stdio loop: one JSON-RPC message per line. Individual frame faults
+/// (unparseable line, write hiccup) never take the session down — the loop logs
+/// and continues; only a broken/closed stdout ends it, cleanly.
 pub async fn serve_stdio(state: Arc<McpState>) -> Result<()> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, BufReader};
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut lines = BufReader::new(stdin).lines();
     tracing::info!("brainiac MCP server on stdio");
-    while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let msg: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
+    loop {
+        let line = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            Ok(None) => break, // clean EOF on stdin
             Err(e) => {
-                tracing::warn!(error = %e, "unparseable MCP frame");
-                continue;
+                // A read fault means the peer is gone; end the session cleanly.
+                tracing::warn!(error = %e, "stdin read error; ending MCP session");
+                break;
             }
         };
-        if let Some(response) = handle_message(&state, &msg).await {
-            let mut out = serde_json::to_vec(&response)?;
-            out.push(b'\n');
-            stdout.write_all(&out).await?;
-            stdout.flush().await?;
+        let Some(response) = process_line(&state, &line).await else {
+            continue; // blank line or notification — no reply
+        };
+        if !write_frame(&mut stdout, &response).await {
+            break; // stdout is broken/closed — exit cleanly
         }
     }
     Ok(())
 }
 
-/// Handle one JSON-RPC message. Returns None for notifications.
+/// Process one raw input line into an optional reply frame. Blank lines and
+/// notifications yield `None`; a malformed frame yields a spec `-32700` reply
+/// (id null) instead of being silently dropped, so an id-carrying caller never
+/// hangs. Exposed so tests can drive the raw-line failure paths.
+pub async fn process_line(state: &McpState, line: &str) -> Option<Value> {
+    if line.trim().is_empty() {
+        return None;
+    }
+    match serde_json::from_str::<Value>(line) {
+        Ok(msg) => handle_message(state, &msg).await,
+        Err(e) => {
+            tracing::warn!(error = %e, "unparseable MCP frame");
+            Some(error_frame(Value::Null, -32700, "parse error"))
+        }
+    }
+}
+
+/// Serialize and write one frame. Returns `false` if the write path is broken
+/// (session should end); a mere serialization fault is logged and swallowed
+/// (returns `true`) so one bad response can't kill the loop.
+async fn write_frame(stdout: &mut tokio::io::Stdout, response: &Value) -> bool {
+    use tokio::io::AsyncWriteExt;
+    let mut out = match serde_json::to_vec(response) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to serialize MCP response; dropping frame");
+            return true; // keep serving
+        }
+    };
+    out.push(b'\n');
+    if let Err(e) = stdout.write_all(&out).await {
+        tracing::warn!(error = %e, "stdout write failed; ending MCP session");
+        return false;
+    }
+    if let Err(e) = stdout.flush().await {
+        tracing::warn!(error = %e, "stdout flush failed; ending MCP session");
+        return false;
+    }
+    true
+}
+
+/// Handle one JSON-RPC message. Returns `None` only for notifications (a frame
+/// with no `id`); every id-carrying frame gets a reply.
 pub async fn handle_message(state: &McpState, msg: &Value) -> Option<Value> {
-    let method = msg.get("method")?.as_str()?;
-    let id = msg.get("id").cloned();
-    // Notifications (no id) get no response.
-    let id = match id {
-        Some(id) if !id.is_null() => id,
+    // A notification carries no id and never gets a reply, whatever its shape.
+    let id = match msg.get("id") {
+        Some(id) if !id.is_null() => id.clone(),
         _ => return None,
+    };
+    // An id-carrying frame that is not a well-formed request (no string method —
+    // e.g. a stray response object) must still get a reply, never silence.
+    let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
+        return Some(error_frame(
+            id,
+            -32600,
+            "invalid request: `method` must be present and a string",
+        ));
     };
     let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
 
-    let result = match method {
+    let result: Result<Value, RpcError> = match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
@@ -112,15 +273,12 @@ pub async fn handle_message(state: &McpState, msg: &Value) -> Option<Value> {
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_definitions() })),
         "tools/call" => call_tool(state, &params).await,
-        other => Err(format!("method not found: {other}")),
+        other => Err(RpcError::new(-32601, format!("method not found: {other}"))),
     };
 
     Some(match result {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err(message) => json!({
-            "jsonrpc": "2.0", "id": id,
-            "error": { "code": -32601, "message": message }
-        }),
+        Err(e) => error_frame(id, e.code, e.message),
     })
 }
 
@@ -199,11 +357,11 @@ fn tool_definitions() -> Value {
     ])
 }
 
-async fn call_tool(state: &McpState, params: &Value) -> Result<Value, String> {
+async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> {
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or("tools/call requires a name")?;
+        .ok_or_else(|| RpcError::new(-32602, "tools/call requires a string `name`"))?;
     let args = params
         .get("arguments")
         .cloned()
@@ -216,7 +374,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, String> {
         "entity_lookup" => entity_lookup(state, &args).await,
         "memory_feedback" => memory_feedback(state, &args).await,
         "knowledge_propose" => knowledge_propose(state, &args).await,
-        other => return Err(format!("unknown tool: {other}")),
+        other => return Err(RpcError::new(-32602, format!("unknown tool: {other}"))),
     };
 
     match payload {
@@ -224,18 +382,23 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, String> {
             "content": [{ "type": "text", "text": value.to_string() }],
             "isError": false
         })),
-        Err(e) => Ok(json!({
-            "content": [{ "type": "text", "text": format!("error: {e}") }],
-            "isError": true
-        })),
+        // A malformed call is a protocol error, not a tool result.
+        Err(ToolError::InvalidParams(msg)) => Err(RpcError::new(-32602, msg)),
+        // A deliberate refusal is safe to show the agent.
+        Err(ToolError::Rejected(msg)) => Ok(tool_error(&msg)),
+        // An internal fault: log the detail, hand back a generic message so no
+        // internal/DB string ever reaches the agent.
+        Err(ToolError::Internal(e)) => {
+            tracing::error!(tool = name, error = ?e, "MCP tool internal error");
+            Ok(tool_error(
+                "brainiac hit an internal error handling this call; it has been logged",
+            ))
+        }
     }
 }
 
-async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
-    let query = args
-        .get("query")
-        .and_then(|v| v.as_str())
-        .context("query is required")?;
+async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let query = within_cap(required_str(args, "query")?, MAX_QUERY_CHARS, "query")?;
     let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(10).min(25) as usize;
     let as_of: Option<DateTime<Utc>> = args
         .get("as_of")
@@ -284,7 +447,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
                 });
                 if t.disputed() {
                     m["warning"] = json!(
-                        "readers have reported this memory as wrong or outdated and it has not                          been re-verified — treat it as unconfirmed"
+                        "readers have reported this memory as wrong or outdated and it has not been re-verified — treat it as unconfirmed"
                     );
                 }
             }
@@ -293,11 +456,12 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value> {
     }))
 }
 
-async fn memory_context(state: &McpState, args: &Value) -> Result<Value> {
-    let hint = args
-        .get("task_hint")
-        .and_then(|v| v.as_str())
-        .context("task_hint is required")?;
+async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let hint = within_cap(
+        required_str(args, "task_hint")?,
+        MAX_QUERY_CHARS,
+        "task_hint",
+    )?;
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
@@ -340,13 +504,8 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value> {
     }))
 }
 
-async fn memory_add(state: &McpState, args: &Value) -> Result<Value> {
-    let content = args
-        .get("content")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .context("content is required")?;
+async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let content = within_cap(required_str(args, "content")?, MAX_CONTENT_CHARS, "content")?;
     let team_id = state.principal.team_ids.first().copied();
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(&state.principal).await?;
@@ -372,14 +531,9 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value> {
     }))
 }
 
-async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value> {
+async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     use sqlx::Row;
-    let memory_id: Uuid = args
-        .get("memory_id")
-        .and_then(|v| v.as_str())
-        .context("memory_id is required")?
-        .parse()
-        .context("memory_id must be a UUID")?;
+    let memory_id = required_uuid(args, "memory_id")?;
 
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     // Visibility gate under the caller's RLS — proposing a memory you can't
@@ -388,7 +542,7 @@ async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value> {
         .bind(memory_id)
         .fetch_optional(&mut *tx)
         .await?
-        .context("memory not found")?;
+        .ok_or_else(|| rejected("memory not found"))?;
     let status: String = row.get("status");
     let (from, to) = match status.as_str() {
         "raw" => (
@@ -400,7 +554,9 @@ async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value> {
             brainiac_core::MemoryStatus::Canonical,
         ),
         other => {
-            anyhow::bail!("only raw or candidate memories can be proposed (this one is {other})")
+            return Err(rejected(format!(
+                "only raw or candidate memories can be proposed (this one is {other})"
+            )))
         }
     };
     let pending = sqlx::query(
@@ -410,7 +566,9 @@ async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value> {
     .bind(memory_id)
     .fetch_optional(&mut *tx)
     .await?;
-    anyhow::ensure!(pending.is_none(), "already awaiting review");
+    if pending.is_some() {
+        return Err(rejected("already awaiting review"));
+    }
 
     brainiac_store::governance::insert_promotion(
         &mut tx,
@@ -432,26 +590,20 @@ async fn knowledge_propose(state: &McpState, args: &Value) -> Result<Value> {
     }))
 }
 
-async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value> {
-    let memory_id: Uuid = args
-        .get("memory_id")
-        .and_then(|v| v.as_str())
-        .context("memory_id is required")?
-        .parse()
-        .context("memory_id must be a UUID")?;
-    let verdict = args
-        .get("verdict")
-        .and_then(|v| v.as_str())
-        .context("verdict is required")?;
-    anyhow::ensure!(
-        brainiac_store::feedback::VERDICTS.contains(&verdict),
-        "verdict must be one of helpful|wrong|outdated"
-    );
+async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let memory_id = required_uuid(args, "memory_id")?;
+    let verdict = required_str(args, "verdict")?;
+    if !brainiac_store::feedback::VERDICTS.contains(&verdict) {
+        return Err(rejected("verdict must be one of helpful|wrong|outdated"));
+    }
     let note = args
         .get("note")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty());
+    if let Some(note) = note {
+        within_cap(note, MAX_NOTE_CHARS, "note")?;
+    }
 
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     // Visibility gate under the caller's RLS: feedback on a memory you can't
@@ -461,7 +613,9 @@ async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value> {
         .bind(memory_id)
         .fetch_optional(&mut *tx)
         .await?;
-    anyhow::ensure!(visible.is_some(), "memory not found");
+    if visible.is_none() {
+        return Err(rejected("memory not found"));
+    }
     brainiac_store::feedback::insert(
         &mut tx,
         Uuid::new_v4(),
@@ -484,14 +638,9 @@ async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value> {
     }))
 }
 
-async fn entity_lookup(state: &McpState, args: &Value) -> Result<Value> {
+async fn entity_lookup(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     use sqlx::Row;
-    let name = args
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .context("name is required")?;
+    let name = within_cap(required_str(args, "name")?, MAX_NAME_CHARS, "name")?;
     let mut tx = state.store.scoped_tx(&state.principal).await?;
 
     // Resolve: canonical by name, or via a raw entity's link.
