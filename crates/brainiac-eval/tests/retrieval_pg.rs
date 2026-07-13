@@ -120,6 +120,38 @@ async fn retrieval_profile_end_to_end() {
         exact.ndcg_at_10.unwrap_or(0.0) > 0.5,
         "exact-identifier stratum should be strong under hybrid FTS"
     );
+
+    // ── Direction 2: latency captured (informational, never gated) ────────
+    // Overall covers every retrieval call across the three suites.
+    assert_eq!(
+        report.latency.overall.count, report.queries_run,
+        "one latency sample per retrieval call"
+    );
+    assert!(
+        report.latency.overall.p95_ms >= report.latency.overall.p50_ms,
+        "p95 must be >= p50: {:?}",
+        report.latency.overall
+    );
+    assert!(
+        report.latency.overall.mean_ms > 0.0,
+        "real retrieval calls take measurable time"
+    );
+    // Per-suite sample counts partition the overall count.
+    let suite_total: usize = report.latency.per_suite.values().map(|s| s.count).sum();
+    assert_eq!(suite_total, report.latency.overall.count);
+    assert_eq!(
+        report.latency.per_suite["qa"].count,
+        fx.qa.queries.len(),
+        "qa suite latency covers every qa query"
+    );
+    // Per-stratum latency covers exactly the QA queries.
+    let stratum_total: usize = report.latency.per_stratum.values().map(|s| s.count).sum();
+    assert_eq!(stratum_total, fx.qa.queries.len());
+    // Every diagnostic carries its own per-query ms.
+    assert!(
+        diagnostics.queries.iter().all(|q| q.latency_ms >= 0.0),
+        "each diagnostic records a non-negative per-query latency"
+    );
 }
 
 /// Direction 1: a lexical-reranker run produces a report TAGGED with the

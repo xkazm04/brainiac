@@ -153,7 +153,7 @@ pub fn regression_failures(report: &RetrievalReport, baseline: &Baseline) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::StratumScores;
+    use crate::report::{LatencyBreakdown, LatencyStats, StratumScores};
 
     fn scores(n: Option<f64>) -> StratumScores {
         StratumScores {
@@ -179,6 +179,11 @@ mod tests {
             negative_empty_rate: 0.0,
             rls_leaks: vec![],
             queries_run: 83,
+            latency: LatencyBreakdown {
+                overall: LatencyStats::from_samples(vec![]),
+                per_stratum: BTreeMap::new(),
+                per_suite: BTreeMap::new(),
+            },
         }
     }
 

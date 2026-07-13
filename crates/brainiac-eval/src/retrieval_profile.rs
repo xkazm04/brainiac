@@ -8,6 +8,7 @@
 //! attributable to specific queries without re-running anything.
 
 use std::collections::{BTreeMap, HashMap};
+use std::time::Instant;
 
 use anyhow::Result;
 use brainiac_core::embed::Embedder;
@@ -20,7 +21,8 @@ use brainiac_store::Store;
 use uuid::Uuid;
 
 use crate::report::{
-    DiagExpected, DiagHit, QueryDiagnostic, RetrievalDiagnostics, RetrievalReport, StratumScores,
+    DiagExpected, DiagHit, LatencyBreakdown, LatencyStats, QueryDiagnostic, RetrievalDiagnostics,
+    RetrievalReport, StratumScores,
 };
 use crate::seed::principal_for_user;
 
@@ -85,11 +87,18 @@ pub async fn run(
     let mut superseded_in_top3 = 0usize;
     let names = fixture_id_map(fx);
 
+    // Per-query retrieval latency samples (Direction 2, EVAL.md §2.5).
+    // INFORMATIONAL only — see `LatencyStats`; never a regression gate.
+    let mut qa_latencies: Vec<(String, f64)> = Vec::new();
+    let mut temporal_latencies: Vec<f64> = Vec::new();
+    let mut leak_latencies: Vec<f64> = Vec::new();
+
     // ── QA suite ─────────────────────────────────────────────────────────
     for q in &fx.qa.queries {
         let principal = principal_for_user(fx, &q.asking_as.user)
             .ok_or_else(|| anyhow::anyhow!("unknown asker {}", q.asking_as.user))?;
         let mut tx = store.scoped_tx(&principal).await?;
+        let t0 = Instant::now();
         let hits = search_reranked(
             &mut tx,
             store.pool(),
@@ -104,7 +113,9 @@ pub async fn run(
             },
         )
         .await?;
+        let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
         drop(tx);
+        qa_latencies.push((q.stratum.clone(), latency_ms));
 
         let ranked: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
         let grades: HashMap<Uuid, u8> = q
@@ -153,6 +164,7 @@ pub async fn run(
                 Some(rr)
             },
             recall_at_5: recall5,
+            latency_ms,
             expected: q
                 .relevant
                 .iter()
@@ -197,6 +209,7 @@ pub async fn run(
             .ok_or_else(|| anyhow::anyhow!("no user in team {}", expected.team))?;
         let principal = principal_for_user(fx, &asker.id).expect("asker principal");
         let mut tx = store.scoped_tx(&principal).await?;
+        let t0 = Instant::now();
         let hits = search_reranked(
             &mut tx,
             store.pool(),
@@ -211,7 +224,9 @@ pub async fn run(
             },
         )
         .await?;
+        let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
         drop(tx);
+        temporal_latencies.push(latency_ms);
         temporal_total += 1;
         let expected_uuid = stable_uuid(&t.expected_memory);
         let rank1_hit = hits.first().map(|h| h.memory.id) == Some(expected_uuid);
@@ -232,6 +247,7 @@ pub async fn run(
             ndcg_at_10: None,
             reciprocal_rank: None,
             recall_at_5: None,
+            latency_ms,
             expected: vec![DiagExpected {
                 memory: t.expected_memory.clone(),
                 grade: 3,
@@ -261,6 +277,7 @@ pub async fn run(
         let principal = principal_for_user(fx, &q.asking_as.user)
             .ok_or_else(|| anyhow::anyhow!("unknown asker {}", q.asking_as.user))?;
         let mut tx = store.scoped_tx(&principal).await?;
+        let t0 = Instant::now();
         let hits = search_reranked(
             &mut tx,
             store.pool(),
@@ -275,7 +292,9 @@ pub async fn run(
             },
         )
         .await?;
+        let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
         drop(tx);
+        leak_latencies.push(latency_ms);
         let mut violations: Vec<String> = Vec::new();
         for forbidden in &q.forbidden {
             let fid = stable_uuid(forbidden);
@@ -297,6 +316,7 @@ pub async fn run(
             ndcg_at_10: None,
             reciprocal_rank: None,
             recall_at_5: None,
+            latency_ms,
             expected: q
                 .forbidden
                 .iter()
@@ -335,6 +355,36 @@ pub async fn run(
     }
     let all: Vec<&PerQuery> = per_query.iter().collect();
 
+    // ── latency breakdown (Direction 2, informational) ───────────────────
+    // `overall` spans every retrieval call across all three suites; the slices
+    // group the SAME samples by QA stratum and by suite.
+    let mut per_stratum_latency: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for (s, ms) in &qa_latencies {
+        per_stratum_latency.entry(s.clone()).or_default().push(*ms);
+    }
+    let qa_ms: Vec<f64> = qa_latencies.iter().map(|(_, ms)| *ms).collect();
+    let overall_ms: Vec<f64> = qa_ms
+        .iter()
+        .chain(temporal_latencies.iter())
+        .chain(leak_latencies.iter())
+        .copied()
+        .collect();
+    let latency = LatencyBreakdown {
+        overall: LatencyStats::from_samples(overall_ms),
+        per_stratum: per_stratum_latency
+            .into_iter()
+            .map(|(k, v)| (k, LatencyStats::from_samples(v)))
+            .collect(),
+        per_suite: [
+            ("qa", qa_ms),
+            ("temporal", temporal_latencies),
+            ("leak", leak_latencies),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), LatencyStats::from_samples(v)))
+        .collect(),
+    };
+
     let report = RetrievalReport {
         fixture_version: "v1".into(),
         embedding_model: embedder.model_name().to_string(),
@@ -350,6 +400,7 @@ pub async fn run(
         negative_empty_rate,
         rls_leaks: leaks,
         queries_run: per_query.len() + temporal_total + fx.leak.queries.len(),
+        latency,
     };
     let mut diagnostics = RetrievalDiagnostics {
         fixture_version: report.fixture_version.clone(),
