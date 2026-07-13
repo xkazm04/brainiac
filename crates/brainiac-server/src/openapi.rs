@@ -264,13 +264,11 @@ mod tests {
         let Ok(committed) = std::fs::read_to_string(&path) else {
             panic!("openapi.json is missing — run `cargo run -p brainiac-server -- openapi`");
         };
-        let current = ApiDoc::openapi().to_pretty_json().expect("serialize spec")
-            + "
-";
+        let current = ApiDoc::openapi().to_pretty_json().expect("serialize spec") + "\n";
+        // EOL-insensitive: git autocrlf may smudge the working copy to CRLF
+        // on Windows; the contract is the content, not the line endings.
         assert_eq!(
-            committed.replace("
-", "
-"),
+            committed.replace("\r\n", "\n"),
             current,
             "openapi.json is stale — regenerate with `cargo run -p brainiac-server -- openapi --out openapi.json` and re-run `npm run gen:api` in console/"
         );
