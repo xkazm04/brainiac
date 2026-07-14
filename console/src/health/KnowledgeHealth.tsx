@@ -29,6 +29,8 @@ import {
 } from "@/design/theme";
 import type { KhAttention, KnowledgeHealth as Health } from "@/lib/types";
 
+import { age, propagationVerdict } from "./age";
+
 /** Grade → accent. Red is reserved: only a failing org gets the alarm colour. */
 const gradeAccent = (grade: string): string => {
   switch (grade) {
@@ -43,16 +45,6 @@ const gradeAccent = (grade: string): string => {
 
 const severityAccent = (s: string): string =>
   s === "critical" ? MAGENTA : s === "warning" ? band("gamma") : band("beta");
-
-/** Humanize an age in seconds — leaders read "2d 16h", not "232000". */
-const age = (secs: number): string => {
-  if (secs <= 0) return "—";
-  const d = Math.floor(secs / 86_400);
-  const h = Math.floor((secs % 86_400) / 3_600);
-  if (d > 0) return `${d}d ${h}h`;
-  const m = Math.floor((secs % 3_600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-};
 
 const PILLAR_COPY: Record<string, { label: string; asks: string }> = {
   consistency: {
@@ -179,6 +171,9 @@ function Signal({ label, value }: { label: string; value: string | number }) {
 export default function KnowledgeHealthReport({ data }: { data: Health }) {
   const { score, grade, pillars, signals, attention, trend } = data;
   const accent = gradeAccent(grade);
+  const prop = propagationVerdict(signals.pages_dirty, signals.oldest_dirty_secs);
+  const propTone =
+    prop.tone === "good" ? band("alpha") : prop.tone === "watch" ? band("gamma") : MAGENTA;
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-12">
       <header className="flex flex-col gap-6">
@@ -251,6 +246,41 @@ export default function KnowledgeHealthReport({ data }: { data: Health }) {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="flex flex-col gap-5">
+        <h2 className={`${FONT_DISPLAY} text-xl`} style={{ color: INK }}>
+          The pages the corpus writes
+        </h2>
+        <p className={`${FONT_MONO} text-[11px]`} style={{ color: INK_FAINT }}>
+          The knowledge base is a projection of the memories above, so it inherits their health —
+          and adds one failure of its own: a page can fall behind the corpus it is compiled from.
+        </p>
+        <div
+          className="grid grid-cols-2 gap-6 rounded-lg p-6 sm:grid-cols-4"
+          style={{ background: PANEL, border: `1px solid ${propTone}44` }}
+        >
+          <Signal label="pages published" value={signals.pages_published} />
+          <Signal label="recomposing (dirty)" value={signals.pages_dirty} />
+          <Signal label="revisions awaiting review" value={signals.pages_pending_review} />
+          <Signal label="propagation age" value={age(signals.oldest_dirty_secs)} />
+        </div>
+        <p className="text-[14px] leading-relaxed" style={{ color: INK_DIM }}>
+          <span style={{ color: propTone }}>{prop.verdict}.</span>{" "}
+          {signals.pages_dirty > 0 ? (
+            <>
+              {signals.pages_dirty} {signals.pages_dirty === 1 ? "page is" : "pages are"} serving
+              readers something the org has already moved past. The product&rsquo;s promise is that
+              a resolved contradiction reaches every page automatically — the propagation age is the
+              number that says whether &ldquo;automatically&rdquo; means minutes or means never.
+            </>
+          ) : (
+            <>
+              Nothing is behind: every memory change that landed has already been recomposed into
+              the pages that cite it. This is what the promise looks like when it is kept.
+            </>
+          )}
+        </p>
       </section>
 
       <section className="flex flex-col gap-5">

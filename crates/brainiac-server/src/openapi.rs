@@ -101,6 +101,7 @@ impl Modify for BearerAuth {
         crate::docs::doc_get,
         crate::docs::doc_revisions,
         crate::docs::doc_approve,
+        crate::docs::doc_edit,
         // ops (admin)
         crate::sweeps::sweeps_list,
         crate::sweeps::sweep_update,
@@ -215,9 +216,12 @@ impl Modify for BearerAuth {
         crate::docs::DocsListResponse,
         crate::docs::DocRevisionView,
         crate::docs::Citation,
+        crate::docs::DocSectionView,
         crate::docs::DocDetailResponse,
         crate::docs::DocRevisionsResponse,
         crate::docs::DocApproveResponse,
+        crate::docs::EditSectionBody,
+        crate::docs::EditSectionResponse,
         // ops
         crate::sweeps::SweepSchedule,
         crate::sweeps::SweepsResponse,

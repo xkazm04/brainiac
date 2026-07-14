@@ -12,6 +12,8 @@ import type {
   Contradiction,
   ContradictionResolution,
   DocApproval,
+  EditSectionBody,
+  EditSectionResponse,
   DocDetail,
   DocRevisionSummary,
   DocSummary,
@@ -293,4 +295,18 @@ export async function approveDocRevision(
   revisionId: string,
 ): Promise<DocApproval> {
   return call(cfg, "POST", `/v1/docs/revisions/${revisionId}/approve`);
+}
+
+/**
+ * Edit one section of a page (KB4). The response's `outcome` is the point: a
+ * pinned section is `saved` (human prose, never regenerated over), a composed
+ * section is `captured` (the edit becomes proposed knowledge and goes through
+ * review — the text is not written into the page).
+ */
+export async function editDocSection(
+  cfg: ApiConfig,
+  slug: string,
+  body: EditSectionBody,
+): Promise<EditSectionResponse> {
+  return call(cfg, "POST", `/v1/docs/${encodeURIComponent(slug)}/edit`, body);
 }

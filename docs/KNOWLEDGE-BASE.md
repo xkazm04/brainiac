@@ -1,10 +1,19 @@
 # Brainiac — the knowledge base layer
 
-**Status: v0.5, in progress.** The substrate (KB0) is merged; the document layer
-itself (KB1) is under construction; publishing (KB3) is designed and unbuilt.
-The status table at the bottom of this document is the honest map, and it mirrors
-the status log in [`docs/KB-PLAN.md`](KB-PLAN.md) — that plan is the contract,
-this document is the feature story. The public page is `/kb` in the console.
+**Status: v0.5 built end to end (KB0–KB5), and switched OFF.** The whole layer —
+substrate, document core, read surfaces, publishing, the human round trip — is
+merged and tested. Nothing is enabled for any real org: `kb_enabled` is false by
+default, and no publish target exists until someone deliberately creates one.
+
+One rule still gates the last step: **external publishing must not be turned on
+for a real org until the extraction-recall workstream clears its gate.** A
+composed page inherits the trustworthiness of the memories under it, and
+publishing amplifies whatever is wrong down there. Everything is ready; turning
+it on is a decision, not an upgrade.
+
+The status table at the bottom is the honest map, and it mirrors the status log
+in [`docs/KB-PLAN.md`](KB-PLAN.md) — that plan is the contract, this document is
+the feature story. The public page is `/kb` in the console.
 
 Nothing described here as shipped is unshipped. Where a capability is not built,
 it says **roadmap**, in the same voice as the pitch page's "where we lose".
@@ -66,12 +75,16 @@ page ──────────────✗──────────
 agent ─────────────✗──────────────▶ page                 (does not exist)
 ```
 
-- A human **may** edit a composed section. The edit is not saved as prose: the
-  diff goes back through the **extraction pipeline** as candidate memories and
-  faces the same review gate as any agent proposal. The editor is told "your
-  change was captured as N proposed knowledge updates," and the section
-  regenerates once they land. *A human editing the wiki is just another
-  ingestion source.*
+- A human **may** edit a composed section (`POST /v1/docs/{slug}/edit`, shipped).
+  The edit is not saved as prose: it goes back through the **extraction
+  pipeline** as candidate memories and faces the same review gate as any agent
+  proposal. The API says the change was **captured**, never *saved* — because it
+  wasn't, and a tool that says "saved" when it means "queued for someone else's
+  approval" has lied to the person most likely to notice. Their stated *reason*
+  travels with the edit, since the reason is exactly the knowledge a diff cannot
+  recover. *A human editing the wiki is just another ingestion source.*
+- A **pinned** section is the opposite: it is the human's own prose, it saves,
+  and regeneration returns it byte-identically. Forever. The eval gates on it.
 - There is **no** direct write-back from a page into canonical memory, and no
   bidirectional sync with any external tool. That asymmetry *is* the anti-rot
   mechanism: it means the wiki can never become a second place where truth is
@@ -95,27 +108,40 @@ redacted through the same secret firewall. A retry policy is a table, not a
 clause; a page that can only render the clause has a quality ceiling. (Also
 shipped — `0015`.)
 
-## 5. Health-gated publishing (roadmap — KB3)
+## 5. Health-gated publishing (built — KB3 — and switched off)
 
 The Knowledge Health composite is **live today** at `/health`: a score with four
 pillars — consistency, currency, liquidity, governance — over the real corpus.
 
-What is **not** built yet is wiring it as an *actuator*. The design: before any
-**external** publish, the composite is consulted, and if the currency or
-governance pillar falls below threshold, **the sync pauses.** Pages hold their
-last published revision behind a "verification pending" stamp rather than
-broadcasting stale beliefs to the whole company at machine speed.
+It is now also an **actuator**. Before any *external* publish, the currency and
+governance pillars are consulted, and if either falls below its floor
+(`PUBLISH_MIN_CURRENCY` 70, `PUBLISH_MIN_GOVERNANCE` 50), **the sync pauses.**
+Pages hold their last published revision rather than broadcasting stale belief to
+the whole company at machine speed. Silence beats confident staleness.
+
+The formulas live in one place (`brainiac-core::health`) and are used by both the
+leadership report and the breaker — a brake that disagreed with the dashboard it
+is named after would be indefensible.
 
 An auto-synced wiki is an amplifier. Our own UAT found the failure it amplifies:
-a stalled review queue kept being served as truth and nothing went red. The
-circuit breaker is what turns the health score from a report into a brake.
+a stalled review queue kept being served as truth and nothing went red. This is
+what turns the health score from a report into a brake. It is tested: degrade the
+corpus, and the live page keeps showing the last good revision while the new one
+is held back.
 
-## 6. Confluence: your wiki becomes a render target (roadmap — KB3)
+## 6. Confluence: your wiki becomes a render target (built — KB3 — and switched off)
 
-Publishing is designed as a single `Publisher` trait with pluggable targets: Git
-(`docs/`, semver) and **Confluence** (PAT). You do not have to abandon the wiki
-your company already reads — Brainiac keeps it honest, and Confluence stops being
-a competing source of truth.
+Publishing is a single `Publisher` trait with pluggable targets: **Git** (writes
+markdown files into a checkout — it deliberately does not commit or push, because
+branch protection and release policy are yours) and **Confluence** (Cloud REST v2,
+PAT, update-in-place). You do not have to abandon the wiki your company already
+reads — Brainiac keeps it honest, and Confluence stops being a competing source of
+truth.
+
+Markdown → Confluence storage format is escape-first and deliberately small:
+anything unrecognized degrades to visible text, so nothing a model writes can
+reach your wiki as live markup. Citations survive the trip as links back into the
+console — strip those and you have published just another wiki page.
 
 Hard invariants on every external target:
 
@@ -130,7 +156,7 @@ Hard invariants on every external target:
   the publish-path leak count is a **build failure at zero**, not a warning.
 - **Health-gated** (§5).
 
-## 7. How a team turns it on (roadmap — KB3)
+## 7. How a team turns it on (built — KB3 — and deliberately manual)
 
 The KB layer is designed as an **org-level capability flag** — optional, and
 recommended only where it pays. Our own controlled trial says the memory layer is
@@ -141,9 +167,13 @@ API tokens carry **KB scopes** alongside their memory scopes:
 
 | Scope | Grants | Who should hold it |
 |---|---|---|
-| `kb:read` | Read composed pages (console; later the MCP doc tools) | agents |
-| `kb:compose` | Trigger a recompose | the worker, maintainers |
-| `kb:publish` | Push to an external target | a small number of humans |
+| `kb:read` | Read composed pages (console + the MCP doc tools) | agents |
+| `kb:publish` | Sign a page revision into the org's mouth (and, with a target configured, into its wiki) | a small number of humans |
+
+Turning the layer on is deliberately manual: set `orgs.kb_enabled` and insert a
+`publish_targets` row. It cannot happen by upgrading. Credentials are never stored
+— a target holds the *name* of an env var, so a database dump can never contain a
+token that writes to your wiki.
 
 An agent's token can read every page it is permitted to see without ever being
 able to publish one. **Agents write memories; pages follow from them.**
@@ -179,10 +209,10 @@ its status log, not an independent claim.
 | Phase | What it is | Status |
 |---|---|---|
 | **KB0** — substrate | Memory `lifecycle` facet + `detail_md` (migration `0015`) end-to-end: core types, extraction prompt + facet firewall, store, retrieval, fixtures/gold. Knowledge Health console page at `/health`. | **shipped** (2026-07-14) — extraction eval gate passed on real qwen-max: recall 0.381 / precision 0.727 vs a 0.417 / 0.806 baseline, inside the gate. One noisy sample: it shows no *detectable* regression, it does not prove the facets are free. |
-| **KB1** — document layer core | `documents` / `document_sections` / `document_revisions` / `document_dependencies` + RLS; the `compose` job on the existing queue; dirty-marking; `[m:uuid]` citations; diff + auto-publish policy; a `docs` eval profile gated at hallucination = 0 for auto-published revisions and leak = 0 as a build failure. | **in progress** |
-| **KB2** — read surfaces | Console page reader (sanitized markdown, per-claim provenance popovers, revision diffs), pinned/composed-aware editor, MCP `doc_get` / `doc_search`, entity-page auto-scaffolding, optional deterministic mermaid entity neighborhood. | **roadmap** |
-| **KB3** — publishing | `Publisher` trait, Git target, Confluence adapter (PAT, one-way, banner + backlinks), KB token scopes + org capability flag, health circuit breaker wired as an actuator. | **roadmap** |
-| **KB4** — round-trip & hardening | Human-edit reingestion end to end, propagation SLA measured, docs signals feeding the health score. | **roadmap** |
+| **KB1** — document layer core | `documents` / `document_sections` / `document_revisions` / `document_dependencies` + RLS; the compose worker; dirty-marking; `[m:uuid]` citations; diff + auto-publish policy. | **shipped** (2026-07-14) — the `docs` eval profile passed on real qwen-max: coverage 1.0, hallucination 0.0, and **zero** leaks, pin violations, staleness failures and auto-published hallucinations. Those four are build failures, not scores. |
+| **KB2** — read surfaces | Console page reader (markdown sanitized *by construction* — the renderer has no raw-HTML node kind), per-claim provenance chips, revision history, MCP `doc_get` / `doc_search` (read-only: agents propose memories, never pages), entity-page auto-scaffolding at ≥4 org memories across ≥2 teams. | **shipped** (2026-07-14). Deterministic mermaid entity-neighborhood: still deferred. |
+| **KB3** — publishing | `Publisher` trait, Git target, Confluence adapter (PAT, one-way, banner + backlinks), `kb:read` / `kb:publish` token scopes + org capability flag, health circuit breaker wired as an actuator. | **built, not enabled** (2026-07-14). Off by default; see the sequencing rule at the top. |
+| **KB4** — round-trip & hardening | Human-edit reingestion end to end (`POST /v1/docs/{slug}/edit` — composed edits are *captured*, never *saved*), propagation SLA measured and surfaced, KB signals feeding Knowledge Health. | **shipped** (2026-07-14) |
 | **KB5** — public surfaces | The `/kb` page, the pitch page's KB section, this document, the README. | **shipped** |
 
 Deferred beyond the ladder (see KB-PLAN "Follow-ups"): LLM-authored diagrams,

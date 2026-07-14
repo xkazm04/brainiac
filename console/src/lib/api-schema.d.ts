@@ -210,6 +210,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/docs/{slug}/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Edit a section of a page.
+         * @description This endpoint is where the document layer's central asymmetry becomes a
+         *     product experience rather than an architecture diagram (KB-PLAN D1):
+         *
+         *     - A **pinned** section is human-owned prose. It saves. Done.
+         *     - A **composed** section is a *projection of memories*. Saving the edited
+         *       text into the page would fork the truth: the page would say one thing, the
+         *       memory layer another, and the next recompose would silently revert the
+         *       human — the single most infuriating behaviour a wiki can have. So the edit
+         *       is sent through the EXTRACTION pipeline instead. It becomes candidate
+         *       memories, passes the same review gate as everything else, and the section
+         *       regenerates once they land.
+         *
+         *     The editor is told exactly that: "your change was captured as proposed
+         *     knowledge". Not "saved" — because it wasn't, and a tool that says "saved"
+         *     when it means "queued for someone else's approval" has lied to the person
+         *     most likely to notice.
+         */
+        post: operations["doc_edit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/docs/{slug}/revisions": {
         parameters: {
             query?: never;
@@ -1126,6 +1161,7 @@ export interface components {
             document: components["schemas"]["DocSummary"];
             pending?: null | components["schemas"]["DocRevisionView"];
             revision?: null | components["schemas"]["DocRevisionView"];
+            sections: components["schemas"]["DocSectionView"][];
         };
         DocRevisionView: {
             composed_from: string[];
@@ -1138,6 +1174,23 @@ export interface components {
         };
         DocRevisionsResponse: {
             revisions: components["schemas"]["DocRevisionView"][];
+        };
+        /**
+         * @description A section as the reader needs to know it. Without this the console cannot
+         *     offer an editor at all: an edit needs the section's id, and there is nothing
+         *     in the rendered markdown to invent one from. It also carries `mode`, because
+         *     the editor must tell a human WHICH KIND of edit they are about to make —
+         *     their prose, or a proposal — before they type, not after.
+         */
+        DocSectionView: {
+            heading: string;
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description `composed` (a projection — edits become proposed knowledge) or `pinned`
+             *     (the human's own prose — edits save).
+             */
+            mode: string;
         };
         DocSummary: {
             /**
@@ -1158,6 +1211,36 @@ export interface components {
         };
         DocsListResponse: {
             documents: components["schemas"]["DocSummary"][];
+        };
+        EditSectionBody: {
+            /** @description The section as the human now wants it to read. */
+            content: string;
+            /**
+             * @description Optional: why. Carried into the extraction source, because "why" is
+             *     exactly the knowledge a diff cannot recover.
+             */
+            note?: string | null;
+            /** Format: uuid */
+            section_id: string;
+        };
+        EditSectionResponse: {
+            /** Format: int64 */
+            job_id?: number | null;
+            /**
+             * @description What to tell the editor. The wording matters more than it looks — see
+             *     the handler.
+             */
+            message: string;
+            /**
+             * @description `saved` (pinned prose — the human owns it) or `captured` (composed
+             *     section — the edit became proposed knowledge).
+             */
+            outcome: string;
+            /**
+             * Format: uuid
+             * @description For a composed edit: the ingest source the edit became.
+             */
+            source_id?: string | null;
         };
         /**
          * @description The JSON error body. Documented once in the OpenAPI spec and returned by
@@ -1379,12 +1462,33 @@ export interface components {
              * @description org_wide / total, as a percentage — knowledge liquidity.
              */
             liquidity_pct: number;
+            /**
+             * Format: int64
+             * @description How long the most overdue page has been out of date, in seconds. THE
+             *     propagation SLA: the product's promise is that a resolved contradiction
+             *     reaches every page automatically, and this is the number that says
+             *     whether "automatically" means minutes or means never.
+             */
+            oldest_dirty_secs: number;
             /** Format: int64 */
             oldest_review_secs: number;
             /** Format: int64 */
             open_contradictions: number;
             /** Format: int64 */
             org_wide: number;
+            /**
+             * Format: int64
+             * @description Pages whose memories moved and which have NOT recomposed yet. Every one
+             *     is a page currently telling readers something the org no longer believes.
+             */
+            pages_dirty: number;
+            /**
+             * Format: int64
+             * @description Page revisions awaiting a human — the KB's own review backlog.
+             */
+            pages_pending_review: number;
+            /** Format: int64 */
+            pages_published: number;
             /** Format: int64 */
             review_backlog: number;
             /** Format: int64 */
@@ -2332,6 +2436,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocDetailResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    doc_edit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditSectionBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditSectionResponse"];
                 };
             };
             404: {

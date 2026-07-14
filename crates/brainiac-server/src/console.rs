@@ -82,6 +82,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/docs", get(crate::docs::docs_list))
         .route("/v1/docs/{slug}", get(crate::docs::doc_get))
         .route("/v1/docs/{slug}/revisions", get(crate::docs::doc_revisions))
+        .route("/v1/docs/{slug}/edit", post(crate::docs::doc_edit))
         .route(
             "/v1/docs/revisions/{id}/approve",
             post(crate::docs::doc_approve),
@@ -1523,6 +1524,18 @@ pub(crate) struct KhSignals {
     pub cross_team_contradictions: i64,
     /// Superseded/expired beliefs still sitting in the corpus (landmines).
     pub stale_beliefs: i64,
+    // ── the knowledge base (KB4) ────────────────────────────────────────
+    /// Pages whose memories moved and which have NOT recomposed yet. Every one
+    /// is a page currently telling readers something the org no longer believes.
+    pub pages_dirty: i64,
+    /// How long the most overdue page has been out of date, in seconds. THE
+    /// propagation SLA: the product's promise is that a resolved contradiction
+    /// reaches every page automatically, and this is the number that says
+    /// whether "automatically" means minutes or means never.
+    pub oldest_dirty_secs: i64,
+    /// Page revisions awaiting a human — the KB's own review backlog.
+    pub pages_pending_review: i64,
+    pub pages_published: i64,
     pub org_wide: i64,
     pub team_only: i64,
     pub siloed_private: i64,
@@ -1845,6 +1858,69 @@ pub(crate) async fn knowledge_health(
         0
     };
 
+    // ── the knowledge base (KB4) ────────────────────────────────────────
+    // The KB's own health, in the leadership report rather than a page nobody
+    // visits. `oldest_dirty_secs` is the propagation SLA made visible: the
+    // product promises that a resolved contradiction reaches every page by
+    // itself, and a page that has been dirty for three days is that promise
+    // quietly failing. It belongs where a leader will see it go red.
+    let kb = sqlx::query(
+        "SELECT
+           count(*) FILTER (WHERE dirty_at IS NOT NULL)             AS dirty,
+           count(*) FILTER (WHERE status = 'published')             AS published,
+           COALESCE(EXTRACT(EPOCH FROM now() - min(dirty_at)), 0)::bigint AS oldest_dirty
+         FROM documents",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let pages_dirty: i64 = kb.get("dirty");
+    let pages_published: i64 = kb.get("published");
+    let oldest_dirty_secs: i64 = kb.get("oldest_dirty");
+
+    let kb_review = sqlx::query(
+        "SELECT count(*) AS pending FROM document_revisions
+         WHERE policy_decision = 'needs_review' AND reviewed_by IS NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let pages_pending_review: i64 = kb_review.get("pending");
+
+    // One hour is generous for a loop that runs every tick; past it, propagation
+    // is not "eventual", it is broken, and the pages are lying in the meantime.
+    const PROPAGATION_SLA_SECS: i64 = 3600;
+    if pages_dirty > 0 && oldest_dirty_secs > PROPAGATION_SLA_SECS {
+        attention.push(KhAttention {
+            severity: if oldest_dirty_secs > 24 * 3600 {
+                "critical"
+            } else {
+                "warning"
+            }
+            .into(),
+            kind: "staleness".into(),
+            headline: format!(
+                "{pages_dirty} knowledge-base page(s) are serving beliefs the org has moved past"
+            ),
+            detail: format!(
+                "The most overdue has been waiting {} to recompose. Pages are supposed to \
+                 self-heal within minutes of a memory changing — if this number keeps growing, \
+                 the compose worker is not running and the wiki is rotting like any other.",
+                human_age(oldest_dirty_secs)
+            ),
+        });
+    }
+    if pages_pending_review > 0 {
+        attention.push(KhAttention {
+            severity: "info".into(),
+            kind: "governance".into(),
+            headline: format!("{pages_pending_review} page revision(s) waiting on a human"),
+            detail: "A page revision publishes only when a maintainer signs it. Until then \
+                     readers see the previous version."
+                .into(),
+        });
+    }
+
     // The trend: recorded snapshots, oldest→newest, RLS-scoped to this org.
     let trend = sqlx::query(
         "SELECT captured_at, score, consistency, currency, liquidity, governance
@@ -1881,6 +1957,10 @@ pub(crate) async fn knowledge_health(
             open_contradictions: open_contra,
             cross_team_contradictions: cross_contra,
             stale_beliefs: stale,
+            pages_dirty,
+            oldest_dirty_secs,
+            pages_pending_review,
+            pages_published,
             org_wide,
             team_only,
             siloed_private: siloed,
@@ -2040,6 +2120,21 @@ pub(crate) async fn practice_divergence(
 }
 
 /// Trim a claim to a legible length for the attention list, on a char boundary.
+/// "2d 16h" — a leader reads durations, not seconds.
+fn human_age(secs: i64) -> String {
+    if secs <= 0 {
+        return "no time".into();
+    }
+    let d = secs / 86_400;
+    let h = (secs % 86_400) / 3_600;
+    let m = (secs % 3_600) / 60;
+    match (d, h) {
+        (0, 0) => format!("{m}m"),
+        (0, _) => format!("{h}h {m}m"),
+        _ => format!("{d}d {h}h"),
+    }
+}
+
 fn clip(s: &str, n: usize) -> String {
     let t = s.trim();
     if t.chars().count() > n {

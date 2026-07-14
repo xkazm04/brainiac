@@ -325,5 +325,38 @@ Ordered roughly by leverage; none block the phase ladder.
         own enforcement hides it before the publisher's check runs. The code
         check stays as the second line; the first line is the same RLS path every
         user query takes.
-- [ ] KB4 round-trip & hardening (edit reingestion, propagation SLA, docs
-      health signals)
+- [x] **KB4 round-trip & hardening** (2026-07-14)
+      - `POST /v1/docs/{slug}/edit` — the asymmetry (D1) as a product
+        experience. A PINNED section saves: it is the human's prose and
+        regeneration never touches it. A COMPOSED section does NOT save: writing
+        the text into the page would fork the truth (the page would say one
+        thing, the memory layer another, and the next recompose would silently
+        revert the human — the single most infuriating thing a wiki can do to
+        someone who took the time to fix it). The edit becomes an ingest source,
+        goes through extraction, and passes the same review gate as everything
+        else. The response says **"captured"**, never "saved" — a tool that says
+        "saved" when it means "queued for someone else's approval" has lied to
+        the person most likely to notice. The editor's stated REASON rides along
+        with the edit, because the reason is exactly the knowledge a diff cannot
+        recover.
+      - Knowledge Health gains the KB's own signals: `pages_dirty`,
+        `oldest_dirty_secs` (**the propagation SLA made visible** — the product
+        promises a resolved contradiction reaches every page by itself, and this
+        number says whether "automatically" means minutes or means never),
+        `pages_pending_review`, `pages_published`; plus attention items that go
+        critical when a page has been out of date for over a day.
+      - Tests: `doc_edit_pg.rs` drives the real HTTP surface end to end — a
+        composed edit is captured (not written into the page, section still
+        composed, reason preserved in the source), a pinned edit saves and marks
+        the page dirty, and then the full loop closes: compose → page clean →
+        the human's prose in the published revision. Measured propagation on one
+        page: ~95ms with a mock composer.
+      - Full Rust suite green (exit 0, serial).
+
+## The KB line is complete
+
+KB0–KB5 are all shipped. What remains is the deferred backlog below — and the
+standing sequencing rule: **external publishing (KB3) must not be enabled for a
+real org until the extraction-recall workstream clears its gate.** Everything is
+built and tested; nothing is turned on. `kb_enabled` is false by default and no
+publish target exists until someone deliberately creates one.

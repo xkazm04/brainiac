@@ -104,6 +104,15 @@ consumer; an unverified webhook is dropped, never queued. [m:${M.webhook}]
 
 export const DEMO_DOC: DocDetail = {
   document: DEMO_DOCS[0],
+  // The page's sections, as the API names them (KB4). Two composed projections
+  // and one pinned human-owned section — the asymmetry the editor exists to
+  // make legible. Offline these are read-only: the editor is never wired to
+  // demo data (see app/docs/[slug]/page.tsx).
+  sections: [
+    { id: "5e000000-0000-4000-8000-000000000001", heading: "What it is", mode: "composed" },
+    { id: "5e000000-0000-4000-8000-000000000002", heading: "Reliability", mode: "composed" },
+    { id: "5e000000-0000-4000-8000-000000000003", heading: "Webhooks", mode: "pinned" },
+  ],
   revision: {
     id: "r0000000-0000-4000-8000-000000000009",
     content_md: CONTENT_MD,

@@ -25,6 +25,7 @@ import type { DocDetail, DocRevisionSummary, RevisionPolicy } from "@/lib/types"
 import { asPolicy } from "./facets";
 import ApproveRevision, { type ApproveRevisionProps } from "./ApproveRevision";
 import DocReader from "./DocReader";
+import type { SectionEditorProps } from "./SectionEditor";
 
 const when = (iso: string | null): string =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
@@ -64,10 +65,12 @@ export interface DocPageProps {
   revisions: DocRevisionSummary[];
   /** The approve server action — omitted offline, where the banner is read-only. */
   approve?: ApproveRevisionProps["approve"];
+  /** The section-edit server action (KB4) — omitted offline, same rule. */
+  edit?: SectionEditorProps["edit"];
 }
 
-export default function DocPage({ detail, revisions, approve }: DocPageProps) {
-  const { document: doc, revision, pending, citations } = detail;
+export default function DocPage({ detail, revisions, approve, edit }: DocPageProps) {
+  const { document: doc, revision, pending, citations, sections } = detail;
   const accent = band("gamma");
 
   return (
@@ -130,13 +133,23 @@ export default function DocPage({ detail, revisions, approve }: DocPageProps) {
 
       <div className="mt-10">
         {revision ? (
-          <DocReader contentMd={revision.content_md} citations={citations} />
+          <DocReader
+            contentMd={revision.content_md}
+            citations={citations}
+            sections={sections}
+            edit={edit}
+          />
         ) : pending ? (
           <>
             <p className={`${FONT_MONO} mb-4 text-[12px]`} style={{ color: INK_FAINT }}>
               This page has never been published — what follows is the revision awaiting review.
             </p>
-            <DocReader contentMd={pending.content_md} citations={citations} draft />
+            <DocReader
+              contentMd={pending.content_md}
+              citations={citations}
+              sections={sections}
+              draft
+            />
           </>
         ) : (
           <p className={`${FONT_MONO} text-[13px]`} style={{ color: INK_DIM }}>

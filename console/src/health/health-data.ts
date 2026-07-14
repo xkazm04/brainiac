@@ -27,6 +27,13 @@ export const DEMO_HEALTH: KnowledgeHealth = {
     liquidity_pct: 33,
     review_backlog: 9,
     oldest_review_secs: 232_000,
+    // The document layer (KB4). An honest demo, consistent with "Watch": two
+    // pages are behind the corpus and the oldest has been behind for ~19h —
+    // propagation is happening, but not fast enough to call it automatic.
+    pages_published: 14,
+    pages_dirty: 2,
+    pages_pending_review: 1,
+    oldest_dirty_secs: 69_000,
   },
   attention: [
     {

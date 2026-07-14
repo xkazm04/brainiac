@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { ApiError, approveDocRevision, configFromEnv } from "@/lib/api";
+import { ApiError, approveDocRevision, configFromEnv, editDocSection } from "@/lib/api";
+import type { EditResult } from "@/docs/SectionEditor";
 
 export interface ActionResult {
   ok: boolean;
@@ -32,6 +33,35 @@ export async function approveRevisionAction(
     revalidatePath(`/docs/${slug}`);
     revalidatePath("/docs");
     return { ok: true, message: "Revision published — this page now serves it." };
+  } catch (e) {
+    return { ok: false, message: describe(e) };
+  }
+}
+
+/**
+ * Edit one section (KB4). The server decides what an edit *means* — a pinned
+ * section is saved, a composed section is captured as proposed knowledge — so
+ * the action returns the `outcome` untouched rather than deciding for it, and
+ * the UI's copy is keyed off it (src/docs/edit-copy.ts).
+ *
+ * Revalidates the page either way: a pinned edit recomposes it, and a captured
+ * edit at minimum changes what is pending review.
+ */
+export async function editSectionAction(
+  slug: string,
+  sectionId: string,
+  content: string,
+  note: string,
+): Promise<EditResult> {
+  try {
+    const res = await editDocSection(configFromEnv(), slug, {
+      section_id: sectionId,
+      content,
+      note: note.length > 0 ? note : null,
+    });
+    revalidatePath(`/docs/${slug}`);
+    revalidatePath("/docs");
+    return { ok: true, outcome: res.outcome, message: res.message };
   } catch (e) {
     return { ok: false, message: describe(e) };
   }

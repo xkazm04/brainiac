@@ -98,3 +98,28 @@ export type DocDocument = S["DocSummary"];
 export type DocDetail = S["DocDetailResponse"];
 export type DocRevisionSummary = S["DocRevisionView"];
 export type DocApproval = S["DocApproveResponse"];
+
+/** POST /v1/docs/{slug}/edit (KB4) — a maintainer's edit of one section. */
+export type EditSectionBody = S["EditSectionBody"];
+export type EditSectionResponse = S["EditSectionResponse"];
+
+/**
+ * The asymmetry at the heart of KB4, and the whole reason the endpoint does not
+ * say "saved" for both:
+ *
+ *  - `saved`    — a PINNED section is the human's own prose. It is written to
+ *                 the page and regeneration never touches it.
+ *  - `captured` — a COMPOSED section is a *projection of the org's memories*.
+ *                 The typed text is NOT written into the page; it is sent
+ *                 through extraction, becomes candidate memories, passes the
+ *                 same human review gate as everything else, and the section
+ *                 recomposes once they land.
+ */
+export type EditOutcome = "saved" | "captured";
+
+/** A section of a page: which one (`id` — the handle an edit needs), what it is
+ *  called, and — the load-bearing fact — whose prose it is. */
+export type DocSection = S["DocSectionView"];
+/** `mode` is a bare string on the wire; the UI narrows it at the boundary
+ *  (docs/edit-copy.ts) so the copy tables are total over the union. */
+export type DocSectionMode = "composed" | "pinned";

@@ -38,10 +38,11 @@ import {
   PANEL,
   band,
 } from "@/design/theme";
-import type { DocCitation, MemoryLifecycle } from "@/lib/types";
+import type { DocCitation, DocSection, MemoryLifecycle } from "@/lib/types";
 
 import { asLifecycle } from "./facets";
 import { parseDoc, type Block, type InlineNode } from "./markdown";
+import SectionEditor, { type SectionEditorProps } from "./SectionEditor";
 
 /** A citation whose `lifecycle` has been narrowed at the boundary (facets.ts):
  *  the wire type is a plain string, the UI's colour/caption tables are total
@@ -333,11 +334,38 @@ function BlockView({ b, ctx, path }: { b: Block; ctx: Ctx; path: string }) {
   }
 }
 
+/** The plain text of an inline run — used to match a rendered `## heading`
+ *  back to the section the API named, which is the only handle the editor has
+ *  on a `section_id`. */
+function plainText(nodes: InlineNode[]): string {
+  return nodes
+    .map((n) => {
+      switch (n.t) {
+        case "text":
+        case "code":
+          return n.v;
+        case "strong":
+        case "em":
+        case "link":
+          return plainText(n.kids);
+        default:
+          return "";
+      }
+    })
+    .join("")
+    .trim();
+}
+
 export interface DocReaderProps {
   contentMd: string;
   citations: DocCitation[];
   /** Rendered greyed as "the version awaiting review", not as the page. */
   draft?: boolean;
+  /** The page's sections — the reader matches each `## heading` back to one so
+   *  the editor knows which `section_id` it is editing, and in which mode. */
+  sections: DocSection[];
+  /** The edit server action — passed ONLY when the console is live. */
+  edit?: SectionEditorProps["edit"];
 }
 
 /**
@@ -346,11 +374,25 @@ export interface DocReaderProps {
  * The right-hand rail is the same data as the markers — the page's whole
  * source list, numbered — so provenance is legible even before anyone hovers.
  */
-export default function DocReader({ contentMd, citations, draft = false }: DocReaderProps) {
+export default function DocReader({
+  contentMd,
+  citations,
+  draft = false,
+  sections,
+  edit,
+}: DocReaderProps) {
   const [open, setOpen] = useState<string | null>(null);
   const byId = new Map(citations.map((c) => [c.memory_id.toLowerCase(), narrow(c)]));
   const { blocks, order } = parseDoc(contentMd);
   const ctx: Ctx = { byId, open, setOpen };
+
+  // heading → section. Editing is offered only on the published page (never on
+  // a draft) and only when the console is live enough to carry the action.
+  const editable = new Map<string, DocSection>(
+    !draft && edit ? sections.map((s) => [s.heading.trim().toLowerCase(), s]) : [],
+  );
+  const sectionAt = (b: Block): DocSection | undefined =>
+    b.t === "heading" && b.level <= 2 ? editable.get(plainText(b.kids).toLowerCase()) : undefined;
 
   const used = order.map((id, i) => ({ n: i + 1, id, mem: byId.get(id) }));
   const unshipped = used.filter((u) => u.mem && u.mem.lifecycle !== "shipped");
@@ -386,9 +428,16 @@ export default function DocReader({ contentMd, citations, draft = false }: DocRe
           </div>
         )}
         {blocks.map((b, i) => {
+          const sec = sectionAt(b);
           const lc = blockLifecycles(b, byId);
           const hot = lc.find((l) => l !== "shipped");
-          if (!hot) return <BlockView key={i} b={b} ctx={ctx} path={`b${i}`} />;
+          if (!hot)
+            return (
+              <div key={i}>
+                <BlockView b={b} ctx={ctx} path={`b${i}`} />
+                {sec && edit && <SectionEditor section={sec} edit={edit} />}
+              </div>
+            );
           const accent = lifecycleAccent(hot);
           return (
             <div

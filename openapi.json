@@ -292,6 +292,51 @@
         }
       }
     },
+    "/v1/docs/{slug}/edit": {
+      "post": {
+        "tags": [
+          "crate::docs"
+        ],
+        "summary": "Edit a section of a page.",
+        "description": "This endpoint is where the document layer's central asymmetry becomes a\nproduct experience rather than an architecture diagram (KB-PLAN D1):\n\n- A **pinned** section is human-owned prose. It saves. Done.\n- A **composed** section is a *projection of memories*. Saving the edited\n  text into the page would fork the truth: the page would say one thing, the\n  memory layer another, and the next recompose would silently revert the\n  human — the single most infuriating behaviour a wiki can have. So the edit\n  is sent through the EXTRACTION pipeline instead. It becomes candidate\n  memories, passes the same review gate as everything else, and the section\n  regenerates once they land.\n\nThe editor is told exactly that: \"your change was captured as proposed\nknowledge\". Not \"saved\" — because it wasn't, and a tool that says \"saved\"\nwhen it means \"queued for someone else's approval\" has lied to the person\nmost likely to notice.",
+        "operationId": "doc_edit",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditSectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditSectionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/docs/{slug}/revisions": {
       "get": {
         "tags": [
@@ -2541,6 +2586,7 @@
         "type": "object",
         "required": [
           "document",
+          "sections",
           "citations"
         ],
         "properties": {
@@ -2574,6 +2620,12 @@
                 "description": "The published view. `None` for a page whose first revision is still\nawaiting a human — nothing publishes itself into existence."
               }
             ]
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocSectionView"
+            }
           }
         }
       },
@@ -2626,6 +2678,28 @@
             "items": {
               "$ref": "#/components/schemas/DocRevisionView"
             }
+          }
+        }
+      },
+      "DocSectionView": {
+        "type": "object",
+        "description": "A section as the reader needs to know it. Without this the console cannot\noffer an editor at all: an edit needs the section's id, and there is nothing\nin the rendered markdown to invent one from. It also carries `mode`, because\nthe editor must tell a human WHICH KIND of edit they are about to make —\ntheir prose, or a proposal — before they type, not after.",
+        "required": [
+          "id",
+          "heading",
+          "mode"
+        ],
+        "properties": {
+          "heading": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "type": "string",
+            "description": "`composed` (a projection — edits become proposed knowledge) or `pinned`\n(the human's own prose — edits save)."
           }
         }
       },
@@ -2686,6 +2760,62 @@
             "items": {
               "$ref": "#/components/schemas/DocSummary"
             }
+          }
+        }
+      },
+      "EditSectionBody": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The section as the human now wants it to read."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional: why. Carried into the extraction source, because \"why\" is\nexactly the knowledge a diff cannot recover."
+          },
+          "section_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "EditSectionResponse": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "message"
+        ],
+        "properties": {
+          "job_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "message": {
+            "type": "string",
+            "description": "What to tell the editor. The wording matters more than it looks — see\nthe handler."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`saved` (pinned prose — the human owns it) or `captured` (composed\nsection — the edit became proposed knowledge)."
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "For a composed edit: the ingest source the edit became."
           }
         }
       },
@@ -3200,6 +3330,10 @@
           "open_contradictions",
           "cross_team_contradictions",
           "stale_beliefs",
+          "pages_dirty",
+          "oldest_dirty_secs",
+          "pages_pending_review",
+          "pages_published",
           "org_wide",
           "team_only",
           "siloed_private",
@@ -3227,6 +3361,11 @@
             "format": "int64",
             "description": "org_wide / total, as a percentage — knowledge liquidity."
           },
+          "oldest_dirty_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the most overdue page has been out of date, in seconds. THE\npropagation SLA: the product's promise is that a resolved contradiction\nreaches every page automatically, and this is the number that says\nwhether \"automatically\" means minutes or means never."
+          },
           "oldest_review_secs": {
             "type": "integer",
             "format": "int64"
@@ -3236,6 +3375,20 @@
             "format": "int64"
           },
           "org_wide": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pages_dirty": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pages whose memories moved and which have NOT recomposed yet. Every one\nis a page currently telling readers something the org no longer believes."
+          },
+          "pages_pending_review": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Page revisions awaiting a human — the KB's own review backlog."
+          },
+          "pages_published": {
             "type": "integer",
             "format": "int64"
           },

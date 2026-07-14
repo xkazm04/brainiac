@@ -7,7 +7,7 @@ import { configFromEnv, getDoc, getDocRevisions } from "@/lib/api";
 import { withDemoFallback } from "@/lib/demo-fallback";
 import type { DocDetail, DocRevisionSummary } from "@/lib/types";
 
-import { approveRevisionAction } from "./actions";
+import { approveRevisionAction, editSectionAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +53,7 @@ export default async function DocDetailPage({ params }: { params: Promise<{ slug
         detail={data.detail}
         revisions={data.revisions}
         approve={live ? approveRevisionAction.bind(null, slug) : undefined}
+        edit={live ? editSectionAction.bind(null, slug) : undefined}
       />
     </>
   );

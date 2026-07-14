@@ -421,7 +421,7 @@ CREATE TABLE document_dependencies (  -- inverted index: which pages a memory fe
 Humans can edit pages in the UI, but edits do not fork the truth:
 
 - Edits inside **pinned** sections: saved directly (they're owned prose).
-- Edits inside **composed** sections: the diff is sent through the **extraction pipeline** — proposed memory updates/additions enter the normal promote flow, and the section regenerates once they land. The editor sees "your change was captured as 2 proposed knowledge updates" rather than a silently diverging page. A human editing the wiki is just another ingestion source.
+- Edits inside **composed** sections: the edit is sent through the **extraction pipeline** — proposed memory updates/additions enter the normal promote flow, and the section regenerates once they land. The editor is told their change was *captured as proposed knowledge*, not "saved" — because it wasn't, and a tool that says "saved" when it means "queued for someone else's approval" has lied to the person most likely to notice. A human editing the wiki is just another ingestion source, and their stated *reason* rides along with the edit, since the reason is precisely the knowledge a diff cannot recover. (Implemented: `POST /v1/docs/{slug}/edit`, KB4.)
 
 ### 8.4 Surface additions
 

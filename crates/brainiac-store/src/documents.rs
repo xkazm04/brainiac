@@ -163,6 +163,22 @@ pub async fn sections(conn: &mut PgConnection, document_id: Uuid) -> Result<Vec<
         .collect()
 }
 
+/// Update a PINNED section's prose (KB4). Only pinned sections can be written
+/// this way — a composed section's text is a projection, and overwriting it here
+/// would fork the truth. The API enforces that; this function is the honest
+/// primitive underneath it.
+pub async fn update_pinned(conn: &mut PgConnection, section_id: Uuid, content: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE document_sections SET pinned_content = $2
+         WHERE id = $1 AND mode = 'pinned'",
+    )
+    .bind(section_id)
+    .bind(content)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// THE anti-rot call. A canonical memory was inserted, superseded, deprecated,
 /// or lost a contradiction → every page that cited it is now suspect. Marking
 /// them dirty is cheap; the compose worker does the expensive part later.

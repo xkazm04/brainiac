@@ -74,9 +74,24 @@ pub(crate) struct Citation {
     pub detail_md: Option<String>,
 }
 
+/// A section as the reader needs to know it. Without this the console cannot
+/// offer an editor at all: an edit needs the section's id, and there is nothing
+/// in the rendered markdown to invent one from. It also carries `mode`, because
+/// the editor must tell a human WHICH KIND of edit they are about to make —
+/// their prose, or a proposal — before they type, not after.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct DocSectionView {
+    pub id: Uuid,
+    pub heading: String,
+    /// `composed` (a projection — edits become proposed knowledge) or `pinned`
+    /// (the human's own prose — edits save).
+    pub mode: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct DocDetailResponse {
     pub document: DocSummary,
+    pub sections: Vec<DocSectionView>,
     /// The published view. `None` for a page whose first revision is still
     /// awaiting a human — nothing publishes itself into existence.
     pub revision: Option<DocRevisionView>,
@@ -211,10 +226,21 @@ pub(crate) async fn doc_get(
             })
             .collect();
     }
+    let sections = brainiac_store::documents::sections(&mut tx, doc.id)
+        .await
+        .map_err(internal)?
+        .iter()
+        .map(|s| DocSectionView {
+            id: s.id,
+            heading: s.heading.clone(),
+            mode: s.mode.as_str().to_string(),
+        })
+        .collect();
     tx.commit().await.map_err(internal)?;
 
     Ok(Json(DocDetailResponse {
         document: summary(&doc, pending.is_some()),
+        sections,
         revision: current.as_ref().map(view),
         pending: pending.as_ref().map(view),
         citations,
@@ -309,6 +335,154 @@ pub(crate) async fn doc_approve(
         revision_id: id,
         document_id: doc.id,
         published,
+    }))
+}
+
+// ── KB4: a human edits a page, and the truth does not fork ──────────────
+
+#[derive(serde::Deserialize, ToSchema)]
+pub(crate) struct EditSectionBody {
+    pub section_id: Uuid,
+    /// The section as the human now wants it to read.
+    pub content: String,
+    /// Optional: why. Carried into the extraction source, because "why" is
+    /// exactly the knowledge a diff cannot recover.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct EditSectionResponse {
+    /// `saved` (pinned prose — the human owns it) or `captured` (composed
+    /// section — the edit became proposed knowledge).
+    pub outcome: String,
+    /// For a composed edit: the ingest source the edit became.
+    pub source_id: Option<Uuid>,
+    pub job_id: Option<i64>,
+    /// What to tell the editor. The wording matters more than it looks — see
+    /// the handler.
+    pub message: String,
+}
+
+/// Edit a section of a page.
+///
+/// This endpoint is where the document layer's central asymmetry becomes a
+/// product experience rather than an architecture diagram (KB-PLAN D1):
+///
+/// - A **pinned** section is human-owned prose. It saves. Done.
+/// - A **composed** section is a *projection of memories*. Saving the edited
+///   text into the page would fork the truth: the page would say one thing, the
+///   memory layer another, and the next recompose would silently revert the
+///   human — the single most infuriating behaviour a wiki can have. So the edit
+///   is sent through the EXTRACTION pipeline instead. It becomes candidate
+///   memories, passes the same review gate as everything else, and the section
+///   regenerates once they land.
+///
+/// The editor is told exactly that: "your change was captured as proposed
+/// knowledge". Not "saved" — because it wasn't, and a tool that says "saved"
+/// when it means "queued for someone else's approval" has lied to the person
+/// most likely to notice.
+#[utoipa::path(
+    post,
+    path = "/v1/docs/{slug}/edit",
+    params(("slug" = String, Path,)),
+    request_body = EditSectionBody,
+    responses((status = 200, body = EditSectionResponse), (status = 404))
+)]
+pub(crate) async fn doc_edit(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Json(body): Json<EditSectionBody>,
+) -> Result<Json<EditSectionResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
+    let content = body.content.trim().to_string();
+    if content.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "an empty edit is a deletion; delete the section instead".to_string(),
+        )
+            .into());
+    }
+
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let doc = brainiac_store::documents::get_document_by_slug(&mut tx, &slug)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| -> HttpError {
+            (StatusCode::NOT_FOUND, "document not found".to_string()).into()
+        })?;
+    let sections = brainiac_store::documents::sections(&mut tx, doc.id)
+        .await
+        .map_err(internal)?;
+    let section = sections
+        .iter()
+        .find(|s| s.id == body.section_id)
+        .ok_or_else(|| -> HttpError {
+            (StatusCode::NOT_FOUND, "section not found".to_string()).into()
+        })?;
+
+    if section.mode == brainiac_core::SectionMode::Pinned {
+        brainiac_store::documents::update_pinned(&mut tx, section.id, &content)
+            .await
+            .map_err(internal)?;
+        // The page must recompose so the published markdown carries the new
+        // prose — a pinned edit that never reaches a revision is invisible.
+        brainiac_store::documents::mark_dirty(&mut tx, doc.id)
+            .await
+            .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        return Ok(Json(EditSectionResponse {
+            outcome: "saved".into(),
+            source_id: None,
+            job_id: None,
+            message: "Saved. This section is yours — regeneration never touches it.".into(),
+        }));
+    }
+
+    // Composed: the edit is knowledge, not prose. Send it where knowledge goes.
+    //
+    // The source text is framed so the extractor sees a claim about the world
+    // rather than a diff: it is being asked "what does this person now believe?",
+    // which is the same question it answers for a transcript.
+    let source_id = Uuid::new_v4();
+    let raw = format!(
+        "A maintainer edited the \"{}\" section of the knowledge-base page \"{}\".\n\
+         They now state:\n\n{}\n\n{}",
+        section.heading,
+        doc.title,
+        content,
+        body.note
+            .as_deref()
+            .map(|n| format!("Their reason: {n}"))
+            .unwrap_or_default()
+    );
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        principal.org_id,
+        doc.team_id,
+        "doc",
+        &raw,
+        Some(principal.user_id),
+    )
+    .await
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+
+    let job_id =
+        brainiac_pipeline::worker::enqueue_source(&state.store, principal.org_id, source_id)
+            .await
+            .map_err(internal)?;
+
+    Ok(Json(EditSectionResponse {
+        outcome: "captured".into(),
+        source_id: Some(source_id),
+        job_id: Some(job_id),
+        message: "Captured as proposed knowledge. This section is compiled from the org's \
+                  memories, so your edit goes through the same review gate as everything else — \
+                  once it is approved, the section will say so on its own."
+            .into(),
     }))
 }
 
