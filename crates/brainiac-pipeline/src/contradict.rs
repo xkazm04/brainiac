@@ -93,6 +93,7 @@ pub async fn run_contradict(
                 user: format!("A: {}\nB: {}", other.content, memory.content),
                 json_mode: true,
                 max_tokens: 256,
+                temperature: 0.0,
             })
             .await
             .context("contradiction call")?;

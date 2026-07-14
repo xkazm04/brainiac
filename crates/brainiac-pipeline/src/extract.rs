@@ -317,11 +317,19 @@ fn parse_extraction(text: &str) -> std::result::Result<ExtractionOutput, String>
     serde_json::from_str(json_str).map_err(|e| e.to_string())
 }
 
-/// One extraction call with a single bounded JSON-repair re-prompt. A
-/// malformed first response is re-asked once — echoing the parse error and
-/// the bad output and demanding corrected JSON only. A second failure returns
-/// Err, which the worker maps onto the queue's attempt-aware fail path
-/// (queue::fail → dead-letter after MAX_ATTEMPTS, never infinite retry).
+/// Bounded JSON-repair re-prompts after a malformed first response. Real Qwen
+/// parse failures are largely STOCHASTIC (the `extraction` eval showed the
+/// zero-extraction count swinging 3→6 across identical runs on the same prompt),
+/// so a single repair leaves a chunk of recoverable extractions on the floor —
+/// a fresh re-ask often just succeeds. Two attempts (three total calls max) is
+/// the cost/recall trade; the FINAL attempt also offers the empty-result escape
+/// hatch, so a genuine "nothing to extract" (or a model that keeps returning
+/// prose) resolves to a clean `{"memories":[]}` — 0 memories, job succeeds —
+/// instead of failing the job and clogging the queue. Only a persistent failure
+/// past the budget returns Err, which the worker maps onto the queue's
+/// attempt-aware path (dead-letter after MAX_ATTEMPTS, never infinite retry).
+const MAX_REPAIR_ATTEMPTS: usize = 2;
+
 struct LlmExtract {
     output: ExtractionOutput,
     model_ref: String,
@@ -336,44 +344,63 @@ async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtr
             user: user.to_string(),
             json_mode: true,
             max_tokens: MAX_EXTRACT_TOKENS,
+            temperature: 0.0,
         })
         .await
         .context("extract LLM call")?;
 
-    match parse_extraction(&resp.text) {
-        Ok(output) => Ok(LlmExtract {
+    if let Ok(output) = parse_extraction(&resp.text) {
+        return Ok(LlmExtract {
             output,
             model_ref: resp.model_ref,
             repaired: false,
-        }),
-        Err(err) => {
-            // Bounded to exactly one repair attempt.
-            let repair_user = format!(
-                "Your previous response could not be parsed as JSON ({err}).\n\
-                 Here is the exact response that failed:\n\n{}\n\n\
-                 Return ONLY the corrected JSON object matching the required \
-                 schema — no prose, no code fences, nothing else.",
-                resp.text
-            );
-            let repaired = provider
-                .complete(&ChatRequest {
-                    system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
-                    user: repair_user,
-                    json_mode: true,
-                    max_tokens: MAX_EXTRACT_TOKENS,
-                })
-                .await
-                .context("extract repair LLM call")?;
-            let output = parse_extraction(&repaired.text).map_err(|e| {
-                anyhow::anyhow!("extractor output unparseable after one repair: {e}")
-            })?;
-            Ok(LlmExtract {
-                output,
-                model_ref: repaired.model_ref,
-                repaired: true,
+        });
+    }
+
+    // Retry loop: re-ask up to MAX_REPAIR_ATTEMPTS times, each echoing the parse
+    // error and the bad output. A fresh sample clears most stochastic failures.
+    let mut last_err = parse_extraction(&resp.text).err().unwrap_or_default();
+    let mut last_text = resp.text;
+    for attempt in 1..=MAX_REPAIR_ATTEMPTS {
+        let escape_hatch = if attempt == MAX_REPAIR_ATTEMPTS {
+            " If there is genuinely no durable knowledge to extract, respond with \
+             exactly {\"memories\":[]} — but NEVER respond with prose or an explanation."
+        } else {
+            ""
+        };
+        let repair_user = format!(
+            "Your previous response could not be parsed as JSON ({last_err}).\n\
+             Here is the exact response that failed:\n\n{last_text}\n\n\
+             Return ONLY the corrected JSON object matching the required schema — \
+             no prose, no code fences, nothing else.{escape_hatch}"
+        );
+        let repaired = provider
+            .complete(&ChatRequest {
+                system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
+                user: repair_user,
+                json_mode: true,
+                max_tokens: MAX_EXTRACT_TOKENS,
+                temperature: 0.0,
             })
+            .await
+            .context("extract repair LLM call")?;
+        match parse_extraction(&repaired.text) {
+            Ok(output) => {
+                return Ok(LlmExtract {
+                    output,
+                    model_ref: repaired.model_ref,
+                    repaired: true,
+                });
+            }
+            Err(e) => {
+                last_err = e;
+                last_text = repaired.text;
+            }
         }
     }
+    Err(anyhow::anyhow!(
+        "extractor output unparseable after {MAX_REPAIR_ATTEMPTS} repairs: {last_err}"
+    ))
 }
 
 /// Idempotency guard: has a memory with this exact content already been

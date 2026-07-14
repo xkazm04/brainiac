@@ -143,6 +143,7 @@ pub async fn resolve_entity(
                     user: format!("Name A: {entity_name}\nName B: {canonical_name}"),
                     json_mode: true,
                     max_tokens: 128,
+                    temperature: 0.0,
                 })
                 .await
                 .context("adjudication call")?;

@@ -24,6 +24,13 @@ pub struct ChatRequest {
     /// Ask the provider for a strict-JSON response when supported.
     pub json_mode: bool,
     pub max_tokens: u32,
+    /// Sampling temperature. The pipeline's calls are all structured
+    /// extraction/classification, not generation, so they pass 0.0 — high
+    /// temperature was the dominant source of run-to-run variance AND of the
+    /// malformed JSON that failed extraction (UAT extraction eval, 2026-07-14:
+    /// the same transcript yielded 4–18 memories across runs at the API
+    /// default). 0.0 makes the pipeline near-deterministic and schema-faithful.
+    pub temperature: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +125,7 @@ impl ChatProvider for QwenProvider {
                 {"role": "user", "content": req.user}
             ],
             "max_tokens": req.max_tokens,
+            "temperature": req.temperature,
         });
         if req.json_mode {
             body["response_format"] = json!({"type": "json_object"});
@@ -449,6 +457,7 @@ mod tests {
                 user: "hello".into(),
                 json_mode: false,
                 max_tokens: 10,
+                temperature: 0.0,
             })
             .await
             .expect("mock");
