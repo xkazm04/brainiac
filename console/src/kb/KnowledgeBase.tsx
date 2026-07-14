@@ -51,16 +51,31 @@ const rise = {
 
 /* The one piece of visual vocabulary this page adds to the system: a status
    stamp. Shipped is mint (the console's "active recall" band), in-progress is
-   gold, roadmap is a dashed cyan outline — dashed because it is not there. */
+   gold, roadmap is a dashed cyan outline — dashed because it is not there.
+
+   `built · not enabled` (KB3's external publishing) gets its own treatment:
+   gold, and solid — the code IS there — but ringed rather than filled, because
+   nothing is running. It must be impossible to mistake for shipped and equally
+   impossible to mistake for roadmap. Understating is as dishonest as
+   overstating, and this stamp is the page's proof that we know the difference. */
 const STATUS_TONE: Record<Status, string> = {
   shipped: MINT,
+  built_off: GOLD,
   in_progress: GOLD,
   roadmap: ALPHA,
+};
+
+const STATUS_GLYPH: Record<Status, string> = {
+  shipped: "●",
+  built_off: "◍",
+  in_progress: "◐",
+  roadmap: "○",
 };
 
 function Stamp({ status, className = "" }: { status: Status; className?: string }) {
   const tone = STATUS_TONE[status];
   const roadmap = status === "roadmap";
+  const off = status === "built_off";
   return (
     <span
       className={`${FONT_MONO} inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] ${className}`}
@@ -68,11 +83,11 @@ function Stamp({ status, className = "" }: { status: Status; className?: string 
         borderColor: tone,
         borderStyle: roadmap ? "dashed" : "solid",
         color: tone,
-        background: roadmap ? "transparent" : `${tone.replace(", 1)", ", 0.08)")}`,
+        background: roadmap || off ? "transparent" : `${tone.replace(", 1)", ", 0.08)")}`,
         opacity: roadmap ? 0.85 : 1,
       }}
     >
-      {status === "shipped" ? "●" : status === "in_progress" ? "◐" : "○"} {STATUS_LABEL[status]}
+      {STATUS_GLYPH[status]} {STATUS_LABEL[status]}
     </span>
   );
 }
@@ -166,7 +181,8 @@ export default function KnowledgeBase() {
             <div className={LABEL} style={{ color: ALPHA }}>
               the document layer
             </div>
-            <Stamp status="in_progress" />
+            <Stamp status="shipped" />
+            <Stamp status="built_off" className="opacity-90" />
           </div>
           <h1 className="mt-6 max-w-4xl text-[2.6rem] font-semibold leading-[1.06] tracking-tight text-white lg:text-6xl">
             Your wiki is a{" "}
@@ -238,8 +254,9 @@ export default function KnowledgeBase() {
       <Section eyebrow="four properties · four honest statuses" tone={MINT}>
         <H2>What makes a page that cannot rot — and how much of it exists today.</H2>
         <Lede>
-          Two of these are shipped and you can check them in the repo. One is being built as
-          you read this. One is designed and unbuilt. Nothing on this page pretends otherwise.
+          Four of these are shipped and you can check every one of them in the repo. One — the
+          health breaker that gates external publishing — is built, tested, and switched off, and
+          says so. Nothing on this page pretends otherwise in either direction.
         </Lede>
 
         <div className="mt-14 grid gap-6 md:grid-cols-2">
