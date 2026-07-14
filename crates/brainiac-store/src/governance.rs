@@ -192,18 +192,47 @@ pub async fn apply_supersession(
     applied_by: Option<Uuid>,
     rule: &str,
 ) -> Result<bool> {
-    // Snapshot the pre-transition status (also the existence + RLS gate) before
-    // the update overwrites it; a live supersession is final, so skip rows that
-    // already carry a forward pointer.
-    let Some(from_status) = sqlx::query_scalar::<_, String>(
-        "SELECT status::text FROM memories WHERE id = $1 AND superseded_by IS NULL",
+    // A memory cannot supersede itself: a self-merge would deprecate a live memory
+    // and point it at itself, corrupting the temporal chain.
+    if loser == winner {
+        return Ok(false);
+    }
+
+    // Lock BOTH rows in a fixed order (by id) and read them together. This is the
+    // existence + RLS gate for both sides AND the serialization point: two
+    // opposite-direction applies (A->B and B->A) would otherwise each snapshot the
+    // other as still-`superseded_by NULL` — the reads touch different rows so the
+    // row locks never collide — and both commit, closing an A<->B cycle. Locking
+    // the pair in id order makes them serialize.
+    let rows = sqlx::query(
+        "SELECT id, status::text AS status, superseded_by
+         FROM memories WHERE id IN ($1, $2) ORDER BY id FOR UPDATE",
     )
     .bind(loser)
-    .fetch_optional(&mut *conn)
-    .await?
-    else {
+    .bind(winner)
+    .fetch_all(&mut *conn)
+    .await?;
+    let loser_row = rows.iter().find(|r| r.get::<Uuid, _>("id") == loser);
+    let winner_row = rows.iter().find(|r| r.get::<Uuid, _>("id") == winner);
+
+    // Loser must be visible and not already superseded (a live supersession is
+    // final) — otherwise an idempotent no-op.
+    let Some(loser_row) = loser_row else {
         return Ok(false);
     };
+    if loser_row.get::<Option<Uuid>, _>("superseded_by").is_some() {
+        return Ok(false);
+    }
+    let from_status: String = loser_row.get("status");
+
+    // Winner must be visible to the caller (absent ⇒ not in scope) and must not
+    // already point back at the loser, which would close a two-node cycle.
+    let Some(winner_row) = winner_row else {
+        return Ok(false);
+    };
+    if winner_row.get::<Option<Uuid>, _>("superseded_by") == Some(loser) {
+        return Ok(false);
+    }
 
     sqlx::query(
         "UPDATE memories
