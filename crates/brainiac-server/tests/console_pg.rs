@@ -609,4 +609,92 @@ async fn console_reviews_graph_analytics() {
             .all(|p| !first_ids.contains(p["id"].as_str().expect("id"))),
         "the second page returns rows the first page never showed"
     );
+
+    // ── operator sweeps: schedule + run-now (admin) ───────────────────────
+    // sweep_schedules is global config (not in the TRUNCATE list), so a prior
+    // run of this test may have armed it — reset the seeded rows to a known
+    // baseline before asserting.
+    sqlx::query(
+        "UPDATE sweep_schedules
+         SET enabled = false, cadence_secs = 604800, next_run_at = NULL,
+             last_status = NULL, last_detail = NULL, last_duration_ms = NULL",
+    )
+    .execute(&admin)
+    .await
+    .expect("reset sweeps");
+
+    // List: both seeded sweeps, disabled and never run.
+    let r = http
+        .get(format!("{base}/v1/ops/sweeps"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("list sweeps");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    let sweeps = body["sweeps"].as_array().expect("sweeps");
+    assert_eq!(sweeps.len(), 2, "two seeded sweeps: {body}");
+    assert!(
+        sweeps
+            .iter()
+            .all(|s| s["enabled"] == false && s["last_status"].is_null()),
+        "seeded sweeps start disabled and unrun: {body}"
+    );
+    assert!(
+        sweeps.iter().any(|s| s["kind"] == "divergence")
+            && sweeps.iter().any(|s| s["kind"] == "health_snapshot"),
+        "both known sweep kinds present: {body}"
+    );
+
+    // Enable divergence at an hourly cadence → it arms next_run_at.
+    let r = http
+        .put(format!("{base}/v1/ops/sweeps/divergence"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({"enabled": true, "cadence_secs": 3600}))
+        .send()
+        .await
+        .expect("enable divergence");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["cadence_secs"], 3600);
+    assert!(
+        body["next_run_at"].is_string(),
+        "enabling arms the schedule: {body}"
+    );
+
+    // A cadence below the floor is rejected.
+    let r = http
+        .put(format!("{base}/v1/ops/sweeps/divergence"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({"cadence_secs": 30}))
+        .send()
+        .await
+        .expect("too-fast cadence");
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    // Run-now on a disabled sweep still arms it (a one-shot trigger).
+    let r = http
+        .post(format!("{base}/v1/ops/sweeps/health_snapshot/run"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("run health snapshot");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["queued"], true);
+    assert!(
+        body["next_run_at"].is_string(),
+        "run-now arms next_run_at: {body}"
+    );
+
+    // An unknown sweep kind is a 404, not a silent no-op.
+    let r = http
+        .put(format!("{base}/v1/ops/sweeps/nonesuch"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({"enabled": true}))
+        .send()
+        .await
+        .expect("unknown kind");
+    assert_eq!(r.status(), reqwest::StatusCode::NOT_FOUND);
 }

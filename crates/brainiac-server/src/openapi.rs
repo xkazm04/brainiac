@@ -56,6 +56,7 @@ impl Modify for BearerAuth {
                                           disputed memories, and the audit trail."),
         (name = "graph", description = "The canonical entity graph and its cortex map."),
         (name = "analytics", description = "Governance health counters and the observatory."),
+        (name = "ops", description = "Operator sweeps: scheduling the periodic org-intelligence scans (admin)."),
         (name = "ingest", description = "Source feed and pipeline runs."),
         (name = "queue", description = "Job queue health and dead-letter recovery (admin)."),
         (name = "tokens", description = "Managed API keys and their blast radius (admin)."),
@@ -95,6 +96,10 @@ impl Modify for BearerAuth {
         console::knowledge_health,
         console::knowledge_health_snapshot,
         console::practice_divergence,
+        // ops (admin)
+        crate::sweeps::sweeps_list,
+        crate::sweeps::sweep_update,
+        crate::sweeps::sweep_run,
         // ingest
         console::sources_list,
         console::pipeline_runs,
@@ -200,6 +205,11 @@ impl Modify for BearerAuth {
         console::SnapshotResponse,
         console::PracticeDivergence,
         console::PracticeDivergenceResponse,
+        // ops
+        crate::sweeps::SweepSchedule,
+        crate::sweeps::SweepsResponse,
+        crate::sweeps::UpdateSweepBody,
+        crate::sweeps::RunSweepResponse,
         // ingest
         console::SourceRow,
         console::SourceFeedResponse,

@@ -482,9 +482,19 @@ async fn worker_loop(
                 .context("set DASHSCOPE_API_KEY (or pass --mock for dev)")?,
         )
     };
+    // The org-intelligence sweeps (divergence adjudication) adjudicate with the
+    // default provider; keep a handle before it's moved into the router.
+    let sweep_provider = default_provider.clone();
     // Per-stage overrides (BRAINIAC_MODEL_EXTRACT / _RESOLVE / _CONTRADICT)
     // let extraction run a stronger model than adjudication.
     let providers = brainiac_gateway::ProviderRouter::from_env(default_provider)?;
+
+    // Admin (RLS-bypassing) pool for the scheduled cross-org sweeps — they loop
+    // every org, exactly like reembed, so they cannot run on the app-role pool.
+    let sweep_admin = brainiac_store::admin_pool(&database_url()?).await?;
+    // Stagger the first scheduler check so a just-booted worker drains any
+    // backlog before it also fires sweeps; then every SCHED_INTERVAL.
+    let mut last_sched_check = tokio::time::Instant::now();
 
     let version = {
         let principal = brainiac_pipeline::pipeline_principal(uuid::Uuid::nil());
@@ -545,7 +555,20 @@ async fn worker_loop(
                 }
             }
         }
+
+        // Sweep scheduler: at most once per SCHED_INTERVAL, dispatch any due
+        // org-intelligence sweeps. Claiming is one atomic UPDATE and each due
+        // sweep runs on its own spawned task, so this never delays ingest.
+        if last_sched_check.elapsed() >= brainiac_server::sweeps::SCHED_INTERVAL {
+            last_sched_check = tokio::time::Instant::now();
+            match brainiac_server::sweeps::run_due(&sweep_admin, sweep_provider.clone()).await {
+                Ok(n) if n > 0 => tracing::info!(dispatched = n, "sweep scheduler ran due sweeps"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "sweep scheduler check failed"),
+            }
+        }
     }
+    sweep_admin.close().await;
     tracing::info!("brainiac worker shut down gracefully");
     Ok(())
 }

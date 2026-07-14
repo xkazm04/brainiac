@@ -7,3 +7,4 @@ pub mod console;
 pub mod http;
 pub mod mcp;
 pub mod openapi;
+pub mod sweeps;

@@ -726,6 +726,107 @@
         }
       }
     },
+    "/v1/ops/sweeps": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "description": "Every configured org-intelligence sweep with its cadence and last-run status. Admin scope.",
+        "operationId": "sweeps_list",
+        "responses": {
+          "200": {
+            "description": "Sweep schedules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SweepsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/ops/sweeps/{kind}": {
+      "put": {
+        "tags": [
+          "ops"
+        ],
+        "description": "Enable/disable a sweep or retune its cadence. Enabling schedules it to run on the next scheduler tick. Admin scope.",
+        "operationId": "sweep_update",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "Sweep kind: divergence | health_snapshot",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSweepBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SweepSchedule"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such sweep kind"
+          }
+        }
+      }
+    },
+    "/v1/ops/sweeps/{kind}/run": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "description": "Trigger a one-shot run now — marks the sweep due so the worker picks it up within ~20s. Works whether or not the sweep is enabled. Admin scope.",
+        "operationId": "sweep_run",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "Sweep kind: divergence | health_snapshot",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSweepResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such sweep kind"
+          }
+        }
+      }
+    },
     "/v1/org/users": {
       "get": {
         "tags": [
@@ -3995,6 +4096,29 @@
           }
         }
       },
+      "RunSweepResponse": {
+        "type": "object",
+        "required": [
+          "kind",
+          "queued"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "The sweep was marked due; the worker picks it up within ~20s."
+          }
+        }
+      },
       "SearchBody": {
         "type": "object",
         "required": [
@@ -4394,6 +4518,82 @@
           }
         }
       },
+      "SweepSchedule": {
+        "type": "object",
+        "required": [
+          "kind",
+          "enabled",
+          "cadence_secs"
+        ],
+        "properties": {
+          "cadence_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds between runs when enabled."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the scheduler runs this sweep on its cadence."
+          },
+          "kind": {
+            "type": "string",
+            "description": "'divergence' | 'health_snapshot'."
+          },
+          "last_detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human summary of the last run (\"7 clusters, 1 divergences\") or its error."
+          },
+          "last_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Wall-clock of the last run."
+          },
+          "last_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it last started."
+          },
+          "last_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "'ok' | 'error' | 'running' — null until it has run once."
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the scheduler will next run it (null once disabled and idle)."
+          }
+        }
+      },
+      "SweepsResponse": {
+        "type": "object",
+        "required": [
+          "sweeps"
+        ],
+        "properties": {
+          "sweeps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SweepSchedule"
+            },
+            "description": "Every configured sweep, ordered by kind."
+          }
+        }
+      },
       "TeamLink": {
         "type": "object",
         "description": "Binding strength between two team lobes = canonicals both teams link into.",
@@ -4628,6 +4828,26 @@
           }
         }
       },
+      "UpdateSweepBody": {
+        "type": "object",
+        "properties": {
+          "cadence_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Retune the cadence (seconds; floored at 300)."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Turn the sweep's schedule on or off."
+          }
+        }
+      },
       "WeeklyPoint": {
         "type": "object",
         "description": "One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the\ncaptured/promoted series stay joinable client-side.",
@@ -4674,6 +4894,10 @@
     {
       "name": "analytics",
       "description": "Governance health counters and the observatory."
+    },
+    {
+      "name": "ops",
+      "description": "Operator sweeps: scheduling the periodic org-intelligence scans (admin)."
     },
     {
       "name": "ingest",

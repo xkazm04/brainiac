@@ -71,6 +71,13 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/pipeline/runs", get(pipeline_runs))
         .route("/v1/org/users", get(org_users))
         .route("/v1/tokens/preview", post(token_preview))
+        // operator sweeps (admin) — schedule the periodic org-intelligence scans
+        .route("/v1/ops/sweeps", get(crate::sweeps::sweeps_list))
+        .route(
+            "/v1/ops/sweeps/{kind}",
+            axum::routing::put(crate::sweeps::sweep_update),
+        )
+        .route("/v1/ops/sweeps/{kind}/run", post(crate::sweeps::sweep_run))
 }
 
 /// `{status, count}` — the shape every status histogram in this module emits
@@ -1601,8 +1608,18 @@ struct HealthCore {
     score: i64,
 }
 
+/// Compute the health pillars + signals.
+///
+/// `org_filter` is `None` for the live endpoints — they run under a scoped_tx,
+/// so RLS already restricts every table to the caller's org (and their visible
+/// slice of it). It is `Some(org)` for the scheduled cross-org sweep, which runs
+/// on the RLS-bypassing admin pool: the explicit filter is then the only thing
+/// scoping each query to one org, and it sees that org's TRUE totals (every
+/// visibility), independent of any viewer's vantage. The `$1 IS NULL OR …`
+/// shape lets one query serve both callers.
 async fn compute_health_core(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_filter: Option<Uuid>,
 ) -> Result<HealthCore, HttpError> {
     // Corpus size + currency (deprecated or past valid_to = stale).
     let corpus = sqlx::query(
@@ -1613,8 +1630,10 @@ async fn compute_health_core(
            count(*) FILTER (WHERE visibility = 'org')     AS org_wide,
            count(*) FILTER (WHERE visibility = 'team')    AS team_only,
            count(*) FILTER (WHERE visibility = 'private') AS private_siloed
-         FROM memories WHERE status <> 'rejected'",
+         FROM memories WHERE status <> 'rejected'
+           AND ($1::uuid IS NULL OR org_id = $1)",
     )
+    .bind(org_filter)
     .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
@@ -1632,8 +1651,10 @@ async fn compute_health_core(
          FROM contradictions c
          JOIN memories ma ON ma.id = c.memory_a
          JOIN memories mb ON mb.id = c.memory_b
-         WHERE c.status = 'open'",
+         WHERE c.status = 'open'
+           AND ($1::uuid IS NULL OR ma.org_id = $1)",
     )
+    .bind(org_filter)
     .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
@@ -1647,10 +1668,12 @@ async fn compute_health_core(
            FROM canonical_entities ce
            JOIN entity_links el ON el.canonical_id = ce.id
            JOIN entities e ON e.id = el.entity_id
+           WHERE ($1::uuid IS NULL OR ce.org_id = $1)
            GROUP BY ce.id)
          SELECT count(*) AS canon, count(*) FILTER (WHERE teams >= 2) AS cross_team
          FROM spans",
     )
+    .bind(org_filter)
     .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
@@ -1661,8 +1684,10 @@ async fn compute_health_core(
     let gov = sqlx::query(
         "SELECT count(*) AS pending,
                 COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::bigint AS oldest
-         FROM promotions WHERE policy_decision = 'needs_review' AND reviewed_at IS NULL",
+         FROM promotions WHERE policy_decision = 'needs_review' AND reviewed_at IS NULL
+           AND ($1::uuid IS NULL OR org_id = $1)",
     )
+    .bind(org_filter)
     .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
@@ -1758,7 +1783,7 @@ pub(crate) async fn knowledge_health(
         liquidity,
         governance,
         score,
-    } = compute_health_core(&mut tx).await?;
+    } = compute_health_core(&mut tx, None).await?;
     let grade = grade_of(score).to_string();
 
     // ── attention list (ranked; the score made actionable) ──────────────
@@ -1906,7 +1931,7 @@ pub(crate) async fn knowledge_health_snapshot(
 ) -> Result<Json<SnapshotResponse>, HttpError> {
     let principal = auth_of(&state, &headers, "write").await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    let c = compute_health_core(&mut tx).await?;
+    let c = compute_health_core(&mut tx, None).await?;
     let captured_at: DateTime<Utc> = sqlx::query(
         "INSERT INTO knowledge_health_snapshots
            (org_id, score, consistency, currency, liquidity, governance,
@@ -1933,6 +1958,44 @@ pub(crate) async fn knowledge_health_snapshot(
         score: c.score,
         grade: grade_of(c.score).to_string(),
     }))
+}
+
+/// The scheduled cross-org Knowledge Health snapshot (the `health_snapshot`
+/// sweep). Runs on the RLS-bypassing admin pool and writes one snapshot row per
+/// org from that org's TRUE totals — this is what fills the trend line over
+/// weeks without a leader having to click "snapshot" by hand. Mirrors the POST
+/// handler's insert, once per org. Returns (orgs snapshotted, summary).
+pub(crate) async fn snapshot_all_orgs(admin: &sqlx::PgPool) -> anyhow::Result<(usize, String)> {
+    let orgs: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM orgs")
+        .fetch_all(admin)
+        .await?;
+    let mut n = 0usize;
+    for org in orgs {
+        let mut tx = admin.begin().await?;
+        let c = compute_health_core(&mut tx, Some(org))
+            .await
+            .map_err(|e| anyhow::anyhow!("health compute for org {org}: {}", e.message))?;
+        sqlx::query(
+            "INSERT INTO knowledge_health_snapshots
+               (org_id, score, consistency, currency, liquidity, governance,
+                cross_team_contradictions, stale_beliefs, total_memories)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        )
+        .bind(org)
+        .bind(c.score as i32)
+        .bind(c.consistency as i32)
+        .bind(c.currency as i32)
+        .bind(c.liquidity as i32)
+        .bind(c.governance as i32)
+        .bind(c.cross_contra as i32)
+        .bind(c.stale as i32)
+        .bind(c.total as i32)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        n += 1;
+    }
+    Ok((n, format!("{n} orgs snapshotted")))
 }
 
 // ── Practice divergence (the standardization surface) ───────────────────
