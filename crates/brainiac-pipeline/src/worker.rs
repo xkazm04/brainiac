@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use futures::stream::StreamExt;
 
-use crate::policy::PolicyEngine;
+use crate::policy::{PolicyContext, PolicyEngine};
 use crate::{compose, contradict, extract, pipeline_principal, resolve};
 
 pub const INGEST_QUEUE: &str = "ingest";
@@ -528,7 +528,12 @@ async fn process_job(
         .await?;
         run.contradictions_opened += c.opened;
 
-        let (decision, rule) = engine.evaluate(m, MemoryStatus::Candidate);
+        // Pass the just-opened contradiction count into the policy so a conflicting
+        // memory is held for review instead of auto-promoted into retrieval.
+        let ctx = PolicyContext {
+            open_contradictions: c.opened,
+        };
+        let (decision, rule) = engine.evaluate(m, MemoryStatus::Candidate, &ctx);
         brainiac_store::governance::insert_promotion(
             &mut tx,
             org_id,
