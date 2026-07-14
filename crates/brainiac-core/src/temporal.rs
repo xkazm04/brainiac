@@ -32,18 +32,33 @@ pub fn valid_at(memory: &Memory, t: DateTime<Utc>) -> bool {
 }
 
 /// Follow `superseded_by` pointers to the chain head reachable within `pool`.
-/// Cycle-safe: stops if a hop revisits a node (data corruption should degrade,
-/// not hang).
+///
+/// Cycle-*canonical*, not merely cycle-terminating: if the walk revisits a node,
+/// the members of that cycle all resolve to ONE deterministic head (the min id
+/// among the cycle's members). A start-dependent head would put two members of a
+/// single cycle into different `chain_of` buckets, and `dedupe_for_time` would
+/// then serve both — the exact "a superseded memory and its successor must never
+/// coexist" invariant this module owns. Corrupt data degrades to one winner, not
+/// a hang and not a double.
 pub fn chain_head<'a>(start: &'a Memory, pool: &'a HashMap<Uuid, &'a Memory>) -> &'a Memory {
     let mut current = start;
     let mut seen = vec![current.id];
     while let Some(next_id) = current.superseded_by {
+        if let Some(pos) = seen.iter().position(|id| *id == next_id) {
+            // Cycle detected. The cycle members are `seen[pos..]` (the tail from
+            // the revisited node onward); the prefix `seen[..pos]` is a lead-in
+            // that funnels into the same cycle. Pick the min id of the cycle so
+            // every start node reaching this cycle returns the same head.
+            let rep_id = *seen[pos..].iter().min().expect("cycle slice is non-empty");
+            return pool.get(&rep_id).copied().unwrap_or(current);
+        }
         match pool.get(&next_id) {
-            Some(next) if !seen.contains(&next_id) => {
+            Some(next) => {
                 seen.push(next_id);
                 current = next;
             }
-            _ => break,
+            // Pointer leaves the pool → `current` is the reachable head.
+            None => break,
         }
     }
     current
@@ -189,14 +204,33 @@ mod tests {
     }
 
     #[test]
-    fn chain_head_is_cycle_safe() {
-        // 1 -> 2 -> 1 (corrupt). Must terminate.
+    fn cyclic_chain_members_share_one_head_and_collapse() {
+        // 1 <-> 2 (corrupt cycle). Both members must resolve to the SAME head (the
+        // min id) so they land in one chain bucket — not terminate at a
+        // start-dependent node that would let both survive dedupe.
         let m1 = mem(1, None, None, Some(2));
         let m2 = mem(2, None, None, Some(1));
-        let all = [m1.clone(), m2];
+        let all = [m1.clone(), m2.clone()];
         let pool: HashMap<Uuid, &Memory> = all.iter().map(|m| (m.id, m)).collect();
-        let head = chain_head(&all[0], &pool);
-        assert_eq!(head.id, uuid(2), "stops after one revisit");
+        assert_eq!(chain_head(&all[0], &pool).id, uuid(1), "canonical head = min id");
+        assert_eq!(
+            chain_head(&all[1], &pool).id,
+            uuid(1),
+            "the other cycle member agrees on the head"
+        );
+        // Both valid at as_of ⇒ the cycle must collapse to exactly one survivor.
+        let out = dedupe_for_time(&[m1, m2], ts(3));
+        assert_eq!(out.len(), 1, "a supersession cycle must not surface both versions");
+    }
+
+    #[test]
+    fn self_supersession_resolves_to_itself() {
+        // A memory pointing at itself (self-merge corruption) is its own head.
+        let m = mem(1, None, None, Some(1));
+        let all = [m.clone()];
+        let pool: HashMap<Uuid, &Memory> = all.iter().map(|x| (x.id, x)).collect();
+        assert_eq!(chain_head(&all[0], &pool).id, uuid(1));
+        assert_eq!(dedupe_for_time(&[m], ts(3)).len(), 1);
     }
 
     #[test]
