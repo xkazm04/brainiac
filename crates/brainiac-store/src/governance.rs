@@ -151,16 +151,29 @@ pub async fn insert_promotion(
     Ok(())
 }
 
+/// Returns `true` when a row actually changed. A 0-row update means the memory
+/// was deleted since the promotion was queued, or points outside the caller's RLS
+/// scope — the caller MUST treat that as a failure (not commit a phantom
+/// approval), which is why this reports it instead of silently returning Ok.
 pub async fn set_memory_status(
     conn: &mut PgConnection,
     memory_id: Uuid,
     status: MemoryStatus,
-) -> Result<()> {
-    sqlx::query("UPDATE memories SET status = $2::memory_status, updated_at = now() WHERE id = $1")
-        .bind(memory_id)
-        .bind(status.as_str())
-        .execute(&mut *conn)
-        .await?;
+) -> Result<bool> {
+    let changed = sqlx::query(
+        "UPDATE memories SET status = $2::memory_status, updated_at = now() WHERE id = $1",
+    )
+    .bind(memory_id)
+    .bind(status.as_str())
+    .execute(&mut *conn)
+    .await?
+    .rows_affected()
+        == 1;
+    if !changed {
+        // Nothing changed — do not mark_dirty (there is no new standing to
+        // propagate) and let the caller reject.
+        return Ok(false);
+    }
     // §8: any page built on this memory is now suspect — a promotion added a
     // claim, a deprecation removed one. Marking here (rather than in each
     // caller) is what makes the guarantee unconditional: there is no way to
@@ -168,7 +181,7 @@ pub async fn set_memory_status(
     // wiki. Cheap when the org has no pages: an indexed lookup that matches
     // nothing.
     crate::documents::mark_dirty_for_memory(conn, memory_id).await?;
-    Ok(())
+    Ok(true)
 }
 
 /// Apply a governance-decided supersession: the losing memory is deprecated,

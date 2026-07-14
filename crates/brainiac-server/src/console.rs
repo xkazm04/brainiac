@@ -212,9 +212,20 @@ async fn review_promotion(
         )
             .into());
     }
-    brainiac_store::governance::set_memory_status(&mut tx, pending.memory_id, new_status)
+    // If the memory changed 0 rows (hard-deleted since the promotion was queued,
+    // or out of RLS scope) the status never actually moved — reject rather than
+    // commit a phantom approval. Returning before commit rolls back the promotion
+    // stamp above, keeping the audit trail and the memory's real status in sync.
+    let status_changed = brainiac_store::governance::set_memory_status(&mut tx, pending.memory_id, new_status)
         .await
         .map_err(internal)?;
+    if !status_changed {
+        return Err((
+            StatusCode::CONFLICT,
+            "the memory no longer exists or is out of scope — nothing was approved".into(),
+        )
+            .into());
+    }
     tx.commit().await.map_err(internal)?;
     Ok(Json(ReviewDecisionResponse {
         promotion_id: id,
