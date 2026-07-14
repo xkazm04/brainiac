@@ -1,57 +1,35 @@
-import Link from "next/link";
+import type { Metadata } from "next";
 
 import Observatory from "@/observatory/Observatory";
 import { DEMO_OBSERVATORY } from "@/observatory/observatory-data";
-import { band, FONT_MONO, LABEL } from "@/design/theme";
+import { FONT_MONO, GOLD, LABEL } from "@/design/theme";
 
-// Public demo — no token, no API call: visitors see the Observatory exactly
-// as an operator would, running on the Meridian fixture org. Static and
-// safe to expose.
-export const metadata = {
-  title: "Brainiac — Live Demo",
+export const metadata: Metadata = {
+  title: "Brainiac — the demo org",
   description:
-    "The Brainiac Observatory on a demo organization — governed AI knowledge, measured.",
+    "Walk a governed knowledge base end to end on a synthetic org: the review gate, contradictions, the canonical graph, the archive, and a knowledge-health score.",
 };
 
-export default function DemoPage() {
+export default function DemoOverviewPage() {
   return (
     <div>
       <section className="mx-auto max-w-7xl px-6 pt-8">
-        <div
-          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-5"
-          style={{ borderColor: band("beta", 68, 0.3), background: band("beta", 60, 0.05) }}
-        >
-          <div>
-            <div className={LABEL} style={{ color: band("beta") }}>
-              visitor demo · org “meridian” (synthetic fintech, 3 teams)
-            </div>
-            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-white">
-              This is what your organization&apos;s memory looks like, governed.
-            </h1>
-            <p className={`${FONT_MONO} mt-1.5 max-w-2xl text-sm leading-relaxed text-[#e9edff]/55`}>
-              Every number below is produced by the real pipeline — capture → extract →
-              resolve → contradict → promote — on a fixture org. Plug in your own teams
-              and the wall goes live.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className={`${FONT_MONO} rounded-full border px-5 py-2.5 text-sm font-medium transition hover:bg-white/5`}
-              style={{ borderColor: band("gamma"), color: band("gamma") }}
-            >
-              see how it works
-            </Link>
-            <a
-              href="https://github.com/xkazm04/brainiac"
-              target="_blank"
-              rel="noreferrer"
-              className={`${FONT_MONO} rounded-full border border-white/15 px-5 py-2.5 text-sm text-[#e9edff]/70 transition hover:border-white/40 hover:text-white`}
-            >
-              github
-            </a>
-          </div>
+        <div className={LABEL} style={{ color: GOLD }}>
+          the overview
         </div>
+        <h1 className="mt-2 max-w-3xl text-3xl font-semibold leading-tight tracking-tight text-white md:text-4xl">
+          This is what your organization&apos;s memory looks like once someone is
+          accountable for it.
+        </h1>
+        <p
+          className={`${FONT_MONO} mt-4 max-w-2xl text-sm leading-relaxed`}
+          style={{ color: "rgba(233,237,255,0.55)" }}
+        >
+          Every number below was produced by the real pipeline — capture → extract →
+          resolve → contradict → promote — running on a fixture org. The tabs above walk
+          the same surfaces an operator uses. Plug in your own teams and the wall goes
+          live.
+        </p>
       </section>
       <Observatory data={DEMO_OBSERVATORY} />
     </div>

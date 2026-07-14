@@ -49,7 +49,7 @@ export default function NavStatus() {
     <span className={`${FONT_MONO} flex items-center gap-3`}>
       {status.live && waiting > 0 && (
         <Link
-          href="/reviews"
+          href="/console/reviews"
           className="rounded-full border px-2.5 py-0.5 transition hover:text-white"
           style={{ borderColor: band("beta", 68, 0.4), color: band("beta") }}
           title={`${status.pending} pending promotions, ${status.contradictions} open contradictions, ${status.flagged} disputed memories`}

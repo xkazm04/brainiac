@@ -37,6 +37,86 @@ body {
   background: transparent;
 }
 
+/* ── Recharts: kill the built-in focus outline ───────────────────────────
+   Recharts puts tabindex=0 on its surface and on several inner layers, so a
+   click paints a white focus ring around the chart (and around individual bars
+   and sectors). That ring is browser chrome leaking into the artwork — it
+   communicates nothing here, since these charts are not keyboard-operable
+   controls. Suppressed for pointer focus only: :focus-visible is left alone, so
+   a keyboard user still gets a ring. */
+.recharts-wrapper:focus,
+.recharts-surface:focus,
+.recharts-wrapper *:focus,
+.recharts-layer:focus,
+.recharts-sector:focus,
+.recharts-rectangle:focus {
+  outline: none;
+}
+
+.recharts-wrapper:focus-visible,
+.recharts-surface:focus-visible {
+  outline: 2px solid rgba(243, 199, 79, 0.6);
+  outline-offset: 2px;
+}
+
+/* ── The pitch surface ───────────────────────────────────────────────────
+   The background was flat #08070c — monotone, with no light in it at all. This
+   gives it depth without decoration competing with the content: two very low
+   -opacity band-hued glows (gamma warm, alpha cool) that never move, over a
+   fine engineering grid that only reads as texture. */
+.pitch-surface {
+  position: relative;
+  background-color: #08070c;
+}
+
+.pitch-surface::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(ellipse 70% 50% at 15% 0%, hsla(46, 90%, 55%, 0.055), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 90% 15%, hsla(190, 90%, 55%, 0.04), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 50% 100%, hsla(262, 90%, 60%, 0.05), transparent 65%);
+}
+
+/* The grid: 48px engineering paper at ~2% ink. Present, never noticed. */
+.pitch-surface::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(to right, rgba(233, 237, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(233, 237, 255, 0.022) 1px, transparent 1px);
+  background-size: 48px 48px;
+  /* Fade the grid out toward the edges so it never forms a hard rectangle. */
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 30%, transparent 100%);
+}
+
+/* Content sits above the two decorative layers.
+   NOT a blanket `.pitch-surface > *` rule: that sets position:relative on every
+   direct child, which silently overrides the nav's `position: sticky` and drops
+   the rail as you scroll. The header keeps its own positioning and only takes a
+   z-index; everything else gets lifted above the ::before/::after layers. */
+.pitch-surface > *:not(header) {
+  position: relative;
+  z-index: 1;
+}
+
+.pitch-surface > header {
+  z-index: 40;
+}
+
+/* Sticky-nav offset for scroll-spy anchors: a section scrolled to must not
+   hide under the rail. */
+.pitch-surface [id] {
+  scroll-margin-top: 5.5rem;
+}
+
 /* ── Design-lab keyframes (shared by the three variants) ────────────── */
 
 @keyframes shimmer {

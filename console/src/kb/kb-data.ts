@@ -51,7 +51,7 @@ export const STATUS_LABEL: Record<Status, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const THESIS =
-  "A page is a projection over canonical memories, not a second source of truth. When the memory changes, the page recompiles. That is the whole anti-rot mechanism.";
+  "A page is a projection over canonical memories: a compiled read, never a place knowledge lives. When the memory changes, the page recompiles. That is the whole anti-rot mechanism.";
 
 export const THESIS_BODY =
   "Every wiki rots for one structural reason: the page is where the knowledge lives, so it drifts and nothing notices. Brainiac compiles the page from governed memories instead — the drift has nowhere to live.";
@@ -88,7 +88,7 @@ export const ASYMMETRY: Flow[] = [
     label: "re-extract",
     gate: "the same review gate",
     allowed: true,
-    note: "Your edit becomes proposed knowledge and faces the same human review gate as any agent proposal — then the page says it on its own.",
+    note: "Your edit becomes proposed knowledge and faces the same human review gate as any agent proposal. Only then does the page say it.",
   },
   {
     from: "composed page",
@@ -133,14 +133,14 @@ export const PROPERTIES: Property[] = [
     key: "lifecycle",
     title: "Shipped and intended are different colours",
     status: "shipped",
-    body: "Printing intent in the same typeface as reality is how wikis lie — so a page renders what is real and what is planned as visibly different things.",
+    body: "Printing intent in the same typeface as reality is how wikis lie, so a page renders what is real and what is planned as visibly different things.",
     evidence: "on every memory since the substrate release — visible on every composed page",
   },
   {
     key: "structure",
     title: "The config survives the summary",
     status: "shipped",
-    body: "A retry policy is a table, not a clause. The memory keeps the artifact beside the sentence, and the page shows the real thing.",
+    body: "A retry policy is a table. Flatten it into a sentence and the numbers are gone. The memory keeps the artifact beside the sentence, and the page shows the real thing.",
     evidence: "artifacts are copied character-for-character onto the page — a model never retypes them",
   },
   {
@@ -152,10 +152,10 @@ export const PROPERTIES: Property[] = [
   },
   {
     key: "round-trip",
-    title: "Your edit is captured, not saved",
+    title: "Captured, never saved",
     status: "shipped",
     body: "Your text is never written into the page — the next rebuild would silently revert it. It becomes proposed knowledge, faces the same review as any agent, and the section then says it on its own.",
-    evidence: "the button says captured, never saved — and a test fails the build if that ever changes",
+    evidence: "the button says captured, never saved. A test fails the build if that ever changes",
   },
 ];
 
@@ -218,12 +218,12 @@ export const DIRTY_LOOP =
 
 export const CONFLUENCE = {
   status: "built_off" as Status,
-  headline: "You do not have to abandon your wiki. We keep it honest.",
-  body: "Compiled pages are pushed into the spaces your company already reads — a banner on top, a source link behind every claim. Confluence stops competing for truth and becomes a display.",
+  headline: "You will not have to abandon your wiki. We will keep it honest.",
+  body: "Switch publishing on and compiled pages push into the spaces your company already reads, with a banner on top and a source link behind every claim. Confluence stops competing for truth and becomes a display. This is merged and tested. It is not switched on.",
   invariants: [
     {
       title: "One-way, always",
-      body: "Pages are pushed, never pulled. Edits made in the wiki are overwritten on the next rebuild — the banner says so before you type.",
+      body: "When enabled, pages push and never pull. Edits made in the wiki are overwritten on the next rebuild, and the banner says so before you type.",
     },
     {
       title: "Org-visible only",
@@ -231,7 +231,7 @@ export const CONFLUENCE = {
     },
     {
       title: "Health-gated",
-      body: "A degraded corpus pauses the sync instead of broadcasting itself at machine speed.",
+      body: "A degraded corpus will pause the sync rather than broadcast itself at machine speed.",
     },
   ],
 };
@@ -250,7 +250,7 @@ export const SCOPES = {
     },
     {
       scope: "kb:publish",
-      body: "Sign a revision into the org's mouth — and, with a target configured, into its wiki. The hardest scope to get.",
+      body: "Sign a revision into the org's mouth and, with a target configured, into its wiki. The hardest scope to get.",
     },
   ],
 };
@@ -262,7 +262,7 @@ export const SCOPES = {
 export const NEVER = [
   {
     title: "No bidirectional sync.",
-    body: "Not as a setting, not as an enterprise tier. A page that can write to truth without review is a second source of truth, and the rot is back.",
+    body: "No setting unlocks it. No enterprise tier either. A page that can write to truth without review is a second source of truth, and the rot is back.",
   },
   {
     title: "No agent writing a page directly.",
@@ -299,7 +299,7 @@ export const LADDER: Phase[] = [
     name: "Substrate",
     status: "shipped",
     body: "Every memory learned its lifecycle and kept its artifact — plus the Knowledge Health report everything later gates on.",
-    gate: "Extraction quality re-measured on a live model after the change — inside the guardrail, no detectable regression.",
+    gate: "Extraction quality re-measured on a live model after the change: inside the guardrail, no detectable regression.",
     stats: ["recall 0.38 vs 0.42 baseline", "precision 0.73 vs 0.81", "inside the ±0.15 noise band"],
   },
   {
@@ -320,7 +320,7 @@ export const LADDER: Phase[] = [
     id: "KB2",
     name: "Read surfaces",
     status: "shipped",
-    body: "The reader — every sentence opens the memory behind it. Agents read pages through the same tools they read memories, and pages scaffold themselves where knowledge crosses teams.",
+    body: "The reader: every sentence opens the memory behind it. Agents read pages through the same tools they read memories, and pages scaffold themselves where knowledge crosses teams.",
   },
   {
     id: "KB3",
@@ -332,7 +332,7 @@ export const LADDER: Phase[] = [
     id: "KB4",
     name: "Round-trip",
     status: "shipped",
-    body: "An edit becomes proposed knowledge, faces review, recomposes — and propagation is measured, so a wiki that stops self-healing goes red in front of a leader.",
+    body: "An edit becomes proposed knowledge, faces review, and recomposes. Propagation itself is measured, so a wiki that stops self-healing goes red in front of a leader.",
   },
   {
     id: "KB5",

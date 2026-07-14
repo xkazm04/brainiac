@@ -31,7 +31,7 @@ function Row({ d, pendingReview }: { d: DocSummary; pendingReview: boolean }) {
   return (
     <li>
       <Link
-        href={`/docs/${d.slug}`}
+        href={`/console/docs/${d.slug}`}
         className="flex flex-wrap items-center justify-between gap-3 rounded-lg p-4 transition hover:bg-white/[0.04]"
         style={{ background: PANEL, border: `1px solid ${pendingReview ? `${accent}55` : BORDER}` }}
       >

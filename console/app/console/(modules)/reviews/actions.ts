@@ -30,8 +30,8 @@ export async function reviewPromotionAction(
 ): Promise<ActionResult> {
   try {
     const out = await reviewPromotion(configFromEnv(), id, action);
-    revalidatePath("/reviews");
-    revalidatePath("/analytics");
+    revalidatePath("/console/reviews");
+    revalidatePath("/console/analytics");
     return { ok: true, message: `Memory is now ${out.memory_status}.` };
   } catch (e) {
     return { ok: false, message: describe(e) };
@@ -45,8 +45,8 @@ export async function resolveContradictionAction(
 ): Promise<ActionResult> {
   try {
     const out = await resolveContradiction(configFromEnv(), id, resolution, winnerMemoryId);
-    revalidatePath("/reviews");
-    revalidatePath("/analytics");
+    revalidatePath("/console/reviews");
+    revalidatePath("/console/analytics");
     return { ok: true, message: `Contradiction ${out.status}.` };
   } catch (e) {
     return { ok: false, message: describe(e) };

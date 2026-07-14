@@ -33,8 +33,8 @@ export async function resolveDisputeAction(
 ): Promise<DecisionResult> {
   try {
     const out = await resolveDispute(configFromEnv(), memoryId, resolution);
-    revalidatePath("/disputes");
-    revalidatePath("/analytics");
+    revalidatePath("/console/disputes");
+    revalidatePath("/console/analytics");
     return {
       ok: true,
       message: `${SAID[resolution]} · ${out.claims_closed} claim${

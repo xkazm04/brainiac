@@ -30,8 +30,8 @@ export async function approveRevisionAction(
 ): Promise<ActionResult> {
   try {
     await approveDocRevision(configFromEnv(), revisionId);
-    revalidatePath(`/docs/${slug}`);
-    revalidatePath("/docs");
+    revalidatePath(`/console/docs/${slug}`);
+    revalidatePath("/console/docs");
     return { ok: true, message: "Revision published — this page now serves it." };
   } catch (e) {
     return { ok: false, message: describe(e) };
@@ -59,8 +59,8 @@ export async function editSectionAction(
       content,
       note: note.length > 0 ? note : null,
     });
-    revalidatePath(`/docs/${slug}`);
-    revalidatePath("/docs");
+    revalidatePath(`/console/docs/${slug}`);
+    revalidatePath("/console/docs");
     return { ok: true, outcome: res.outcome, message: res.message };
   } catch (e) {
     return { ok: false, message: describe(e) };

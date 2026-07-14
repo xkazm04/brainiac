@@ -1,0 +1,467 @@
+{
+  "$schema": "https://vibeman.dev/schemas/context-map.json",
+  "projectId": "36a8a77d-87b2-491c-8f9a-117ce7bcdbcf",
+  "projectName": "Brainiac",
+  "projectPath": "C:/Users/mkdol/dolla/brainiac",
+  "version": "2.0.0",
+  "groups": [
+    {
+      "name": "Server: Agent & API Surface",
+      "domain": "feature",
+      "type": null,
+      "color": "#3B82F6",
+      "icon": null,
+      "contexts": [
+        {
+          "name": "Governance Console API",
+          "description": "Maintainers approve/reject knowledge promotions, resolve contradictions, and read the entity graph and governance-health analytics that power the Next.js console.",
+          "businessFeature": "Governance Console API",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/console.rs",
+            "crates/brainiac-server/tests/console_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": [
+            "/v1/graph",
+            "/v1/analytics",
+            "/v1/reviews/promotions/:id/approve",
+            "/v1/reviews/promotions/:id/reject",
+            "/v1/contradictions/:id/resolve"
+          ]
+        },
+        {
+          "name": "MCP Agent Surface",
+          "description": "Coding agents connect over MCP stdio (memory_search, memory_context, memory_add, entity_lookup) authenticated as the developer's personal token so RLS applies to every tool call.",
+          "businessFeature": "MCP Agent Surface",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/mcp.rs",
+            "crates/brainiac-server/tests/mcp_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "REST Memory API & Auth",
+          "description": "Agents and users add memories and run permission-aware hybrid search over the org knowledge base via REST on :8600; every request resolves a bearer token to a principal before touching data.",
+          "businessFeature": "REST Memory API & Auth",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/http.rs",
+            "crates/brainiac-server/src/auth.rs",
+            "crates/brainiac-server/src/lib.rs",
+            "crates/brainiac-server/src/main.rs",
+            "crates/brainiac-server/tests/http_smoke.rs"
+          ],
+          "target": null,
+          "apiRoutes": [
+            "/health",
+            "/v1/memories/search",
+            "/v1/memories",
+            "/v1/reviews/promotions"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Server: Knowledge Pipeline & Model Gateway",
+      "domain": "feature",
+      "type": null,
+      "color": "#8B5CF6",
+      "icon": null,
+      "contexts": [
+        {
+          "name": "BYOM Model Gateway",
+          "description": "Bring-your-own-model provider trait with Qwen/DashScope (OpenAI-compatible) and a deterministic mock provider; records per-call token usage so orgs pay with their own keys.",
+          "businessFeature": "BYOM Model Gateway",
+          "category": "lib",
+          "filePaths": [
+            "crates/brainiac-gateway/src/lib.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Pipeline Worker & Ingest Queue",
+          "description": "Background worker that drains the ingest queue: picks up enqueued sources, runs the extraction pipeline, and writes memories with provenance under governance rules.",
+          "businessFeature": "Pipeline Worker & Ingest Queue",
+          "category": "lib",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/worker.rs",
+            "crates/brainiac-pipeline/src/lib.rs",
+            "crates/brainiac-pipeline/tests/pipeline_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Knowledge Extraction & Resolution",
+          "description": "Turns raw LLM session transcripts into structured memories: extracts candidate knowledge, resolves entities, detects contradictions with existing memories, and applies promotion policy.",
+          "businessFeature": "Knowledge Extraction & Resolution",
+          "category": "lib",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/extract.rs",
+            "crates/brainiac-pipeline/src/resolve.rs",
+            "crates/brainiac-pipeline/src/contradict.rs",
+            "crates/brainiac-pipeline/src/policy.rs",
+            "crates/brainiac-pipeline/src/reembed.rs",
+            "crates/brainiac-pipeline/tests/reembed_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
+    },
+    {
+      "name": "Server: Storage & Retrieval",
+      "domain": "data",
+      "type": null,
+      "color": "#F97316",
+      "icon": null,
+      "contexts": [
+        {
+          "name": "Core Domain Types & Embeddings",
+          "description": "Shared domain vocabulary (memories, principals, statuses), embedding abstraction, retrieval score fusion, temporal as-of logic, and quality metrics used by every crate.",
+          "businessFeature": "Core Domain Types & Embeddings",
+          "category": "lib",
+          "filePaths": [
+            "crates/brainiac-core/src/lib.rs",
+            "crates/brainiac-core/src/types.rs",
+            "crates/brainiac-core/src/embed.rs",
+            "crates/brainiac-core/src/fusion.rs",
+            "crates/brainiac-core/src/temporal.rs",
+            "crates/brainiac-core/src/metrics.rs",
+            "crates/brainiac-core/src/scoring.rs",
+            "crates/brainiac-core/src/rerank.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Database Schema & Migrations",
+          "description": "Postgres 16 + pgvector schema with row-level security policies, migration files, and the docker-compose stack that provisions the database.",
+          "businessFeature": "Database Schema & Migrations",
+          "category": "data",
+          "filePaths": [
+            "migrations/0001_init.sql",
+            "migrations/0002_worker_read.sql",
+            "docker-compose.yml"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Org, Entity & Governance Store",
+          "description": "Repository layer for orgs/teams/members, canonical entities with merges, and governance records (promotions, contradictions) — all executed under the caller's RLS transaction.",
+          "businessFeature": "Org, Entity & Governance Store",
+          "category": "data",
+          "filePaths": [
+            "crates/brainiac-store/src/orgs.rs",
+            "crates/brainiac-store/src/entities.rs",
+            "crates/brainiac-store/src/governance.rs",
+            "crates/brainiac-store/src/lib.rs",
+            "crates/brainiac-store/tests/store_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Memory Store & Hybrid Retrieval",
+          "description": "Persists memories and serves hybrid (vector + lexical) permission-aware retrieval with pgvector, plus the ingest queue store operations.",
+          "businessFeature": "Memory Store & Hybrid Retrieval",
+          "category": "data",
+          "filePaths": [
+            "crates/brainiac-store/src/memories.rs",
+            "crates/brainiac-store/src/retrieval.rs",
+            "crates/brainiac-store/src/queue.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
+    },
+    {
+      "name": "Server: Eval Harness & Meridian Fixtures",
+      "domain": "feature",
+      "type": null,
+      "color": "#10B981",
+      "icon": null,
+      "contexts": [
+        {
+          "name": "Architecture Docs & Workspace Config",
+          "description": "Product and system documentation (architecture, eval methodology, plan, embeddings research) plus the Cargo workspace manifest — the source of truth for how Brainiac is built and measured.",
+          "businessFeature": "Architecture Docs & Workspace Config",
+          "category": "config",
+          "filePaths": [
+            "docs/ARCHITECTURE.md",
+            "docs/EVAL.md",
+            "docs/PLAN.md",
+            "docs/KB-PLAN.md",
+            "docs/research/embeddings.md",
+            "Cargo.toml",
+            "README.md"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Meridian Fixture Corpus",
+          "description": "The synthetic 'Meridian' organization golden dataset: org/team layout, gold memories, entities and merges, contradiction cases, temporal as-of cases, retrieval Q&A + permission-leak probes, and raw session transcripts.",
+          "businessFeature": "Meridian Fixture Corpus",
+          "category": "data",
+          "filePaths": [
+            "fixtures/v1/org.yaml",
+            "fixtures/v1/memories/gold.yaml",
+            "fixtures/v1/entities/entities.yaml",
+            "fixtures/v1/entities/merges.yaml",
+            "fixtures/v1/contradictions/cases.yaml",
+            "fixtures/v1/temporal/asof.yaml",
+            "fixtures/v1/retrieval/qa.yaml",
+            "fixtures/v1/retrieval/leak.yaml",
+            "fixtures/v1/transcripts/plat-design-001.yaml",
+            "fixtures/v1/transcripts/plat-incident-004.yaml",
+            "fixtures/v1/transcripts/pay-incident-007.yaml",
+            "fixtures/v1/transcripts/plat-policy-009.yaml",
+            "fixtures/v1/transcripts/pay-incident-011.yaml",
+            "fixtures/v1/transcripts/data-checkout-012.yaml",
+            "fixtures/v1/transcripts/pay-retro-015.yaml",
+            "fixtures/v1/transcripts/data-fraud-017.yaml",
+            "fixtures/v1/transcripts/data-backfill-021.yaml"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Golden Fixture Loader",
+          "description": "Loads, validates, and assigns deterministic IDs to the versioned Meridian fixture corpus so evals and tests run against a known-good synthetic org.",
+          "businessFeature": "Golden Fixture Loader",
+          "category": "lib",
+          "filePaths": [
+            "crates/brainiac-fixtures/src/lib.rs",
+            "crates/brainiac-fixtures/src/loader.rs",
+            "crates/brainiac-fixtures/src/schema.rs",
+            "crates/brainiac-fixtures/src/validate.rs",
+            "crates/brainiac-fixtures/src/ids.rs",
+            "crates/brainiac-fixtures/tests/load_v1.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Meridian Eval Harness",
+          "description": "CI quality gate: seeds the synthetic Meridian org, runs retrieval-quality profiles against gold Q&A and leak cases, and emits comparable JSON reports.",
+          "businessFeature": "Meridian Eval Harness",
+          "category": "test",
+          "filePaths": [
+            "crates/brainiac-eval/src/lib.rs",
+            "crates/brainiac-eval/src/report.rs",
+            "crates/brainiac-eval/src/retrieval_profile.rs",
+            "crates/brainiac-eval/src/seed.rs",
+            "crates/brainiac-eval/tests/retrieval_pg.rs",
+            "crates/brainiac-eval/src/resolution_profile.rs",
+            "crates/brainiac-eval/tests/resolution_pg.rs",
+            "crates/brainiac-eval/src/pipeline_profile.rs",
+            "crates/brainiac-eval/src/contradiction_profile.rs",
+            "crates/brainiac-eval/src/grid.rs",
+            "crates/brainiac-eval/tests/pipeline_pg.rs",
+            "crates/brainiac-eval/tests/contradiction_pg.rs",
+            "crates/brainiac-eval/tests/grid_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
+    },
+    {
+      "name": "Console: Governance Workbench",
+      "domain": "feature",
+      "type": null,
+      "color": "#EC4899",
+      "icon": null,
+      "contexts": [
+        {
+          "name": "Analytics Observatory & Knowledge Graph",
+          "description": "Governance-health analytics dashboards (Mission Control and Transmission variants) and the entity knowledge-graph explorer with canonical hubs and evidence pointers.",
+          "businessFeature": "Analytics Observatory & Knowledge Graph",
+          "category": "ui",
+          "filePaths": [
+            "console/app/analytics/page.tsx",
+            "console/app/analytics/observatory-data.ts",
+            "console/app/analytics/variants/MissionControlVariant.tsx",
+            "console/app/analytics/variants/TransmissionVariant.tsx",
+            "console/app/graph/page.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Promotion Review Queue",
+          "description": "Maintainers review pending knowledge promotions and approve or reject them via server actions, closing the human-in-the-loop governance gate.",
+          "businessFeature": "Promotion Review Queue",
+          "category": "ui",
+          "filePaths": [
+            "console/app/reviews/page.tsx",
+            "console/app/reviews/actions.ts",
+            "console/app/reviews/review-buttons.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Pitch & Public Landing",
+          "description": "The public root (\"/\"): the review-gate hero field, the empty-quadrant competitor map, the benchmark-theater critique, the measured eval/UAT evidence, and the published list of cases where Brainiac loses. Example data only — it never calls the API.",
+          "businessFeature": "Pitch & Public Landing",
+          "category": "ui",
+          "filePaths": [
+            "console/app/page.tsx",
+            "console/app/pitch/page.tsx",
+            "console/src/pitch/Pitch.tsx",
+            "console/src/pitch/GateField.tsx",
+            "console/src/pitch/pitch-data.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console Shell, Home & Access Gate",
+          "description": "The two-row operator chrome (display-only mini-dashboard on top, A-Z navigation below), the console home (wave field) which doubles as the PUBLIC landing at \"/\" in its example-data variant, and the passcode gate keeping every real-data surface off the public internet.",
+          "businessFeature": "Console Shell, Home & Access Gate",
+          "category": "ui",
+          "filePaths": [
+            "console/app/layout.tsx",
+            "console/app/console/page.tsx",
+            "console/app/chrome.tsx",
+            "console/middleware.ts",
+            "console/app/login/page.tsx",
+            "console/app/login/actions.ts",
+            "console/src/lib/auth.ts",
+            "console/src/home/Home.tsx",
+            "console/src/components/ApiOffline.tsx",
+            "console/src/design/theme.ts",
+            "console/src/design/demo-data.ts",
+            "console/src/design/routes.ts",
+            "console/src/lib/demo-fallback.ts",
+            "console/src/lib/demo-fallback.test.ts",
+            "console/src/components/Skeleton.tsx",
+            "console/src/components/RouteError.tsx",
+            "console/app/page.tsx",
+            "console/app/pitch/page.tsx",
+            "console/src/components/NavDashboard.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Public Demo Showcase",
+          "description": "The /demo subtree: a public, sign-in-free walk through the console surfaces (overview, the review gate, disputes, graph, archive, health) rendered by the REAL operator components on DEMO_* fixtures. Every fixture carries live:false, which is what makes it safe — components synthesize drill-in detail locally and disable write controls, and no API token is ever used.",
+          "businessFeature": "Public Demo Showcase",
+          "category": "ui",
+          "filePaths": [
+            "console/app/demo/layout.tsx",
+            "console/app/demo/demo-shell.tsx",
+            "console/app/demo/page.tsx",
+            "console/app/demo/reviews/page.tsx",
+            "console/app/demo/reviews/demo-reviews-data.ts",
+            "console/app/demo/disputes/page.tsx",
+            "console/app/demo/graph/page.tsx",
+            "console/app/demo/memories/page.tsx",
+            "console/app/demo/health/page.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
+    },
+    {
+      "name": "Console: API Client & Platform",
+      "domain": "infrastructure",
+      "type": null,
+      "color": "#6366F1",
+      "icon": null,
+      "contexts": [
+        {
+          "name": "Console Build & Test Config",
+          "description": "Next.js, TypeScript, PostCSS, and Vitest configuration plus package manifest that build and test the console.",
+          "businessFeature": "Console Build & Test Config",
+          "category": "config",
+          "filePaths": [
+            "console/next.config.ts",
+            "console/tsconfig.json",
+            "console/vitest.config.ts",
+            "console/postcss.config.mjs",
+            "console/package.json",
+            "console/next-env.d.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Brainiac API Client & Types",
+          "description": "Typed client the console uses to call the Brainiac REST server (:8600) with shared response types, unit tests, and the server-only test stub.",
+          "businessFeature": "Brainiac API Client & Types",
+          "category": "lib",
+          "filePaths": [
+            "console/src/lib/api.ts",
+            "console/src/lib/types.ts",
+            "console/src/lib/api.test.ts",
+            "console/src/test/server-only-stub.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
+    }
+  ],
+  "ungrouped": [],
+  "relationships": [],
+  "index": [
+    "Server: Agent & API Surface › Governance Console API [api] — 2 files",
+    "Server: Agent & API Surface › MCP Agent Surface [api] — 2 files",
+    "Server: Agent & API Surface › REST Memory API & Auth [api] — 5 files",
+    "Server: Knowledge Pipeline & Model Gateway › BYOM Model Gateway [lib] — 1 files",
+    "Server: Knowledge Pipeline & Model Gateway › Pipeline Worker & Ingest Queue [lib] — 3 files",
+    "Server: Knowledge Pipeline & Model Gateway › Knowledge Extraction & Resolution [lib] — 6 files",
+    "Server: Storage & Retrieval › Core Domain Types & Embeddings [lib] — 8 files",
+    "Server: Storage & Retrieval › Database Schema & Migrations [data] — 3 files",
+    "Server: Storage & Retrieval › Org, Entity & Governance Store [data] — 5 files",
+    "Server: Storage & Retrieval › Memory Store & Hybrid Retrieval [data] — 3 files",
+    "Server: Eval Harness & Meridian Fixtures › Architecture Docs & Workspace Config [config] — 7 files",
+    "Server: Eval Harness & Meridian Fixtures › Meridian Fixture Corpus [data] — 17 files",
+    "Server: Eval Harness & Meridian Fixtures › Golden Fixture Loader [lib] — 6 files",
+    "Server: Eval Harness & Meridian Fixtures › Meridian Eval Harness [test] — 13 files",
+    "Console: Governance Workbench › Analytics Observatory & Knowledge Graph [ui] — 5 files",
+    "Console: Governance Workbench › Promotion Review Queue [ui] — 3 files",
+    "Console: Governance Workbench › Pitch & Public Landing [ui] — 5 files",
+    "Console: Governance Workbench › Console Shell, Home & Access Gate [ui] — 19 files",
+    "Console: Governance Workbench › Public Demo Showcase [ui] — 9 files",
+    "Console: API Client & Platform › Console Build & Test Config [config] — 6 files",
+    "Console: API Client & Platform › Brainiac API Client & Types [lib] — 4 files"
+  ],
+  "summary": {
+    "totalGroups": 6,
+    "totalContexts": 21,
+    "totalFiles": 132,
+    "categories": {
+      "api": 3,
+      "lib": 6,
+      "data": 4,
+      "config": 2,
+      "test": 1,
+      "ui": 4
+    },
+    "domains": {
+      "feature": 4,
+      "data": 1,
+      "infrastructure": 1
+    }
+  },
+  "audit": {
+    "ok": true,
+    "tier": "medium",
+    "warnings": 0
+  },
+  "instructions": "Context map for Brainiac. Each group is a business domain (domain field); each context is a feature with its files (filePaths) + a technical category. Read this to learn which files belong to which feature BEFORE editing. When you change a context's files, update them here (or run Vibeman's refresh) to keep this fresh.",
+  "generatedAt": "2026-07-10T19:34:48.643Z",
+  "revision": "8a56c62e6351"
+}

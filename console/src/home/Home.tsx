@@ -9,13 +9,14 @@
  * magenta as the contradiction color). See src/design/theme.ts.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion, useScroll, useSpring } from "framer-motion";
 
 import { CANONICAL_DEMO, CONTRADICTION, QUEUE } from "../design/demo-data";
 import { PRODUCT_ROUTES } from "../design/routes";
 import {
+  band,
   BG,
   FONT_DISPLAY,
   FONT_MONO,
@@ -36,6 +37,12 @@ export interface LiveStats {
   topCanonical: { name: string; teams: number } | null;
   /** Org-wide memory total (sum over team lobes). */
   totalMemories: number;
+  /** Knowledge Health composite — null when that endpoint is unreachable. */
+  health: { score: number; grade: string; crossTeamContradictions: number } | null;
+  /** The standardization board: count + the highest-impact divergence. */
+  divergence: { count: number; top: { practice: string; impact: string } | null } | null;
+  /** Pages composed from the canonical graph — null when the docs API is off. */
+  docsPages: number | null;
 }
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -53,7 +60,31 @@ const SPACING = 17;
 const WAVELEN = 96;
 const OMEGA = 2.4;
 
-export default function Home({ live }: { live: LiveStats | null }) {
+/**
+ * "operator" — inside the gate: the nav is the product nav, and the stats strip
+ *   tells the truth about the real org.
+ * "public"  — the landing page: the same wave field, but every link points at a
+ *   surface an anonymous visitor can actually reach (the deck, the showcase, the
+ *   wiki, the sign-in). Pointing the operator nav at a visitor gives them a wall
+ *   of links that all bounce to the passcode screen.
+ */
+export type HomeVariant = "operator" | "public";
+
+const PUBLIC_NAV = [
+  { path: "/pitch", label: "the pitch" },
+  { path: "/demo", label: "live demo" },
+  { path: "/kb", label: "knowledge base" },
+  { path: "/console", label: "console →" },
+];
+
+export default function Home({
+  live,
+  variant = "operator",
+}: {
+  live: LiveStats | null;
+  variant?: HomeVariant;
+}) {
+  const isPublic = variant === "public";
   const reduce = !!useReducedMotion();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const emittersRef = useRef<Emitter[]>([
@@ -242,8 +273,8 @@ export default function Home({ live }: { live: LiveStats | null }) {
             : QUEUE[0].content,
       tone: GOLD,
       wave: "in" as const,
-      href: "/reviews",
-      cta: "open the review queue",
+      href: isPublic ? "/demo/reviews" : "/console/reviews",
+      cta: isPublic ? "see the review queue" : "open the review queue",
     },
     {
       n: "02",
@@ -256,8 +287,8 @@ export default function Home({ live }: { live: LiveStats | null }) {
         : `− ${CONTRADICTION.a}   + ${CONTRADICTION.b}`,
       tone: MAGENTA,
       wave: "anti" as const,
-      href: "/reviews",
-      cta: "resolve contradictions",
+      href: isPublic ? "/demo/disputes" : "/console/reviews",
+      cta: isPublic ? "see a contradiction" : "resolve contradictions",
     },
     {
       n: "03",
@@ -272,8 +303,54 @@ export default function Home({ live }: { live: LiveStats | null }) {
         : `${CANONICAL_DEMO.name} ⇐ ${CANONICAL_DEMO.aliases.map((a) => a.team).join(" + ")} · constructive`,
       tone: "#f6ecd0",
       wave: "locked" as const,
-      href: "/graph",
+      href: isPublic ? "/demo/graph" : "/console/graph",
       cta: "explore the graph",
+    },
+    // ── the second movement: what the field computes that no session can ──
+    {
+      n: "04",
+      title: "Same practice, out of tune.",
+      body: "This is not a contradiction. It is a detune. Two teams solve the same problem at slightly different frequencies, each locally reasonable, and the beat is only audible org-wide. A scheduled sweep listens across the field, names the practice, and proposes one standard.",
+      artifact:
+        live && live.divergence
+          ? live.divergence.top
+            ? `${live.divergence.top.practice} · ${live.divergence.top.impact} impact → one recommended standard`
+            : "0 divergences — every shared practice in tune"
+          : "service retry policy · platform 2 s / 3 attempts vs payments 30 s + jitter → one recommended standard",
+      tone: band("theta", 74),
+      wave: "beat" as const,
+      href: isPublic ? "/demo/divergence" : "/console/divergence",
+      cta: isPublic ? "see the standards board" : "open the standards board",
+    },
+    {
+      n: "05",
+      title: "Pages that cannot rot.",
+      body: "Canonical memories compose into living pages — a wiki recompiled from the governed graph, not written beside it. Supersede a memory and its page follows on the next compose; a stale sentence has nowhere to hide.",
+      artifact:
+        live && live.docsPages !== null
+          ? `${plural(live.docsPages, "page")} composed from the canonical graph · recompiled on change`
+          : "std-retry ⇐ composed from the canonical graph · recompiled on change",
+      tone: band("delta", 74),
+      wave: "composed" as const,
+      href: isPublic ? "/kb" : "/console/docs",
+      cta: isPublic ? "browse the knowledge base" : "read the pages",
+    },
+    {
+      n: "06",
+      title: "The org has a vital sign.",
+      body: "Consistency, currency, liquidity, governance — four pillars folded into one score a leader can hold the org to. One unresolved cross-team contradiction caps the grade: no volume of good memories can outvote it. Track the trend, and ignore any single reading.",
+      artifact:
+        live && live.health
+          ? `${live.health.score} · ${live.health.grade}${
+              live.health.crossTeamContradictions > 0
+                ? ` — capped by ${plural(live.health.crossTeamContradictions, "cross-team contradiction")}`
+                : " — no cross-team contradictions in the field"
+            }`
+          : "61 · Watch — capped by 1 cross-team contradiction",
+      tone: band("alpha"),
+      wave: "trace" as const,
+      href: isPublic ? "/demo/health" : "/console/health",
+      cta: "read the health report",
     },
   ];
 
@@ -288,7 +365,7 @@ export default function Home({ live }: { live: LiveStats | null }) {
           </span>
         </div>
         <nav className={`${FONT_MONO} flex flex-wrap items-center justify-end gap-x-5 gap-y-2 text-xs uppercase tracking-widest text-[#e9edff]/45`}>
-          {PRODUCT_ROUTES.map((r) => (
+          {(isPublic ? PUBLIC_NAV : PRODUCT_ROUTES).map((r) => (
             <Link key={r.path} href={r.path} className="transition hover:text-[#f3c74f]">
               {r.label}
             </Link>
@@ -345,7 +422,8 @@ export default function Home({ live }: { live: LiveStats | null }) {
               className={`${FONT_MONO} mt-4 text-sm leading-relaxed text-[#e9edff]/55`}
             >
               Where their knowledge agrees, it amplifies. Where it conflicts, it cancels —
-              and Brainiac makes the seam visible. Drag an emitter. Add your own wave.
+              and Brainiac makes the seam visible. Then it reads the whole field: the drift,
+              the health, the standard. Drag an emitter. Add your own wave.
             </motion.p>
           </div>
           <div className="absolute bottom-6 left-8 flex flex-wrap items-center gap-4">
@@ -372,13 +450,22 @@ export default function Home({ live }: { live: LiveStats | null }) {
             {live ? (
               <>
                 <span style={{ color: GOLD }}>{live.canonicalCount}</span> canonical ·{" "}
-                <Link href="/reviews" className="underline decoration-dotted underline-offset-4 hover:text-[#f3c74f]">
+                <Link href="/console/reviews" className="underline decoration-dotted underline-offset-4 hover:text-[#f3c74f]">
                   {live.pendingPromotions} pending review
                 </Link>{" "}
                 · {live.openContradictions} open contradictions · {live.embeddingModel}
               </>
             ) : (
-              <>demo field · connect BRAINIAC_API_URL for live numbers</>
+              isPublic ? (
+                <>
+                  example field ·{" "}
+                  <Link href="/demo" className="underline decoration-dotted underline-offset-4 hover:text-[#f3c74f]">
+                    walk the demo org
+                  </Link>
+                </>
+              ) : (
+                <>demo field · connect BRAINIAC_API_URL for live numbers</>
+              )
             )}
           </span>
         </div>
@@ -407,14 +494,38 @@ export default function Home({ live }: { live: LiveStats | null }) {
         </svg>
 
         {STATIONS.map((s, i) => (
-          <motion.section
-            key={s.n}
-            initial={{ opacity: 0.1, scale: 0.92 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: false, amount: 0.5 }}
-            transition={{ duration: 0.5 }}
-            className="relative grid min-h-[64vh] items-center gap-8 py-10 md:grid-cols-2"
-          >
+          <Fragment key={s.n}>
+            {/* The movement break: 01–03 are the mechanism, 04–06 are what the
+                whole field computes that no single session can. */}
+            {s.n === "04" && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                whileInView={{ opacity: 1 }}
+                viewport={{ once: false, amount: 0.6 }}
+                transition={{ duration: 0.6 }}
+                className="relative py-16 text-center"
+              >
+                <div className={LABEL} style={{ color: GOLD }}>
+                  · the second movement ·
+                </div>
+                <h2 className="mx-auto mt-4 max-w-2xl text-3xl font-semibold leading-tight tracking-tight text-white">
+                  Single sessions make memories.
+                  <br />
+                  The field makes intelligence.
+                </h2>
+                <p className={`${FONT_MONO} mx-auto mt-4 max-w-md text-sm leading-relaxed text-[#e9edff]/50`}>
+                  Past the mechanism, Brainiac reads the whole interference
+                  pattern — the reports no single team could write.
+                </p>
+              </motion.div>
+            )}
+            <motion.section
+              initial={{ opacity: 0.1, scale: 0.92 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: false, amount: 0.5 }}
+              transition={{ duration: 0.5 }}
+              className="relative grid min-h-[64vh] items-center gap-8 py-10 md:grid-cols-2"
+            >
             <div className={i % 2 ? "md:order-2" : ""}>
               <div className={LABEL} style={{ color: s.tone }}>
                 station {s.n}
@@ -439,11 +550,15 @@ export default function Home({ live }: { live: LiveStats | null }) {
             <div className={`flex justify-center ${i % 2 ? "md:order-1" : ""}`}>
               <StationWave kind={s.wave} tone={s.tone} />
             </div>
-          </motion.section>
+            </motion.section>
+          </Fragment>
         ))}
 
         <footer className={`${LABEL} flex flex-wrap items-center justify-between gap-3 border-t border-white/10 py-6 text-[#e9edff]/35`}>
           <span>brainiac · constructive by design</span>
+          <Link href="/pitch" className="transition hover:text-[#f3c74f]">
+            → why brainiac · the evidence
+          </Link>
           <Link href="/demo" className="transition hover:text-[#f3c74f]">
             → live demo · fixture org
           </Link>
@@ -461,17 +576,131 @@ export default function Home({ live }: { live: LiveStats | null }) {
   );
 }
 
-/** Station mini-figure: two waves in phase / anti-phase / locked, with their sum. */
-function StationWave({ kind, tone }: { kind: "in" | "anti" | "locked"; tone: string }) {
+type WaveKind = "in" | "anti" | "locked" | "beat" | "composed" | "trace";
+
+/**
+ * Station mini-figures, one physics idea each:
+ * - in / anti / locked — two waves adding, cancelling, phase-locked (01–03)
+ * - beat     — two detuned frequencies; the beat envelope IS the divergence (04)
+ * - composed — harmonics binding into one waveform; the page from the graph (05)
+ * - trace    — the org's EEG: the composite vital sign, capped by one event (06)
+ */
+function StationWave({ kind, tone }: { kind: WaveKind; tone: string }) {
   const w = 380;
-  const mk = (amp: number, phase: number, mid: number) => {
+  const mkFn = (fn: (x: number) => number) => {
     let d = "";
     for (let x = 0; x <= w; x += 4) {
-      const y = mid + Math.sin((x / w) * Math.PI * 4 + phase) * amp;
+      const y = fn(x);
       d += x === 0 ? `M${x} ${y}` : ` L${x} ${y}`;
     }
     return d;
   };
+  const sine =
+    (freq: number, amp: number, phase: number, mid: number) => (x: number) =>
+      mid + Math.sin((x / w) * Math.PI * freq + phase) * amp;
+  const mk = (amp: number, phase: number, mid: number) => mkFn(sine(4, amp, phase, mid));
+
+  const wave = { fill: "none" as const, strokeWidth: 1.5 };
+  const inView = {
+    initial: { pathLength: 0 },
+    whileInView: { pathLength: 1 },
+    viewport: { once: false, amount: 0.6 },
+  };
+  const sumView = {
+    initial: { pathLength: 0, opacity: 0 },
+    whileInView: { pathLength: 1, opacity: 1 },
+    viewport: { once: false, amount: 0.6 },
+  };
+  const labelStyle = { textTransform: "uppercase" as const, letterSpacing: "0.2em" };
+
+  if (kind === "beat") {
+    // Two detuned frequencies (not opposite phase — contradiction owns that);
+    // their sum is the classic beat envelope: drift you can only hear org-wide.
+    const beatSum = (x: number) =>
+      175 + Math.sin((x / w) * Math.PI * 10) * Math.cos((x / w) * Math.PI * 2) * 34;
+    return (
+      <svg viewBox={`0 0 ${w} 220`} className="w-full max-w-md" role="img" aria-label="Two slightly detuned waves producing a beat envelope">
+        <motion.path d={mkFn(sine(8, 18, 0, 50))} {...wave} stroke="hsla(224,90%,72%,0.5)" {...inView} transition={{ duration: 0.9 }} />
+        <motion.path d={mkFn(sine(12, 18, 0, 95))} {...wave} stroke="hsla(224,90%,72%,0.5)" {...inView} transition={{ duration: 0.9, delay: 0.15 }} />
+        <line x1="0" y1="132" x2={w} y2="132" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 5" />
+        <motion.path d={mkFn(beatSum)} fill="none" stroke={tone} strokeWidth="2.4" {...sumView} transition={{ duration: 1.1, delay: 0.5 }} />
+        <text x="4" y="20" fontSize="10" fill="rgba(255,255,255,0.4)" style={labelStyle}>
+          same practice · detuned
+        </text>
+        <text x="4" y="152" fontSize="10" fill={tone} style={labelStyle}>
+          beat — drift only audible org-wide
+        </text>
+      </svg>
+    );
+  }
+
+  if (kind === "composed") {
+    // Harmonics binding into one waveform — many teams' canonical memories
+    // composing a single page that recompiles when any harmonic changes.
+    const composedSum = (x: number) =>
+      175 +
+      (Math.sin((x / w) * Math.PI * 4) * 14 +
+        Math.sin((x / w) * Math.PI * 8) * 8 +
+        Math.sin((x / w) * Math.PI * 16) * 4) *
+        1.3;
+    return (
+      <svg viewBox={`0 0 ${w} 220`} className="w-full max-w-md" role="img" aria-label="Three harmonics composing into one waveform">
+        <motion.path d={mkFn(sine(4, 12, 0, 36))} {...wave} stroke="hsla(262,90%,72%,0.45)" {...inView} transition={{ duration: 0.9 }} />
+        <motion.path d={mkFn(sine(8, 8, 0, 68))} {...wave} stroke="hsla(262,90%,72%,0.45)" {...inView} transition={{ duration: 0.9, delay: 0.12 }} />
+        <motion.path d={mkFn(sine(16, 5, 0, 100))} {...wave} stroke="hsla(262,90%,72%,0.45)" {...inView} transition={{ duration: 0.9, delay: 0.24 }} />
+        <line x1="0" y1="132" x2={w} y2="132" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 5" />
+        <motion.path d={mkFn(composedSum)} fill="none" stroke={tone} strokeWidth="2.4" {...sumView} transition={{ duration: 1.1, delay: 0.5 }} />
+        <text x="4" y="20" fontSize="10" fill="rgba(255,255,255,0.4)" style={labelStyle}>
+          canonical memories · many teams
+        </text>
+        <text x="4" y="152" fontSize="10" fill={tone} style={labelStyle}>
+          one page — recompiled on change
+        </text>
+      </svg>
+    );
+  }
+
+  if (kind === "trace") {
+    // The org's EEG: a calm composite trace, one sharp magenta dip — the
+    // cross-team contradiction that caps the score — then recovery.
+    const dip = (x: number) => -46 * Math.exp(-(((x - w * 0.62) / 20) ** 2));
+    const eeg = (x: number) =>
+      118 +
+      Math.sin((x / w) * Math.PI * 14) * 5 +
+      Math.sin((x / w) * Math.PI * 3.6 + 1.3) * 9 +
+      Math.sin((x / w) * Math.PI * 23 + 0.5) * 2.5 -
+      dip(x);
+    return (
+      <svg viewBox={`0 0 ${w} 220`} className="w-full max-w-md" role="img" aria-label="A composite vital-sign trace with one sharp dip">
+        <line x1="0" y1="142" x2={w} y2="142" stroke="rgba(255,255,255,0.14)" strokeDasharray="3 5" />
+        <text x="4" y="156" fontSize="10" fill="rgba(255,255,255,0.35)" style={labelStyle}>
+          healthy above this line
+        </text>
+        <motion.path d={mkFn(eeg)} fill="none" stroke={tone} strokeWidth="2.2" {...sumView} transition={{ duration: 1.4 }} />
+        <motion.circle
+          cx={w * 0.62}
+          cy={118 + 46}
+          r={3.5}
+          fill={MAGENTA}
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: false, amount: 0.6 }}
+          transition={{ delay: 1.1 }}
+        />
+        <text x={Math.min(w * 0.62 + 10, w - 120)} y={118 + 50} fontSize="10" fill={MAGENTA} style={labelStyle}>
+          the cap
+        </text>
+        <text x="4" y="20" fontSize="10" fill="rgba(255,255,255,0.4)" style={labelStyle}>
+          four pillars · one composite
+        </text>
+        <text x="4" y="210" fontSize="10" fill={tone} style={labelStyle}>
+          trend over any single reading
+        </text>
+      </svg>
+    );
+  }
+
+  // 01–03: the original figures, unchanged.
   const phaseB = kind === "anti" ? Math.PI : 0;
   const sumAmp = kind === "anti" ? 2 : 36;
   return (
@@ -512,10 +741,10 @@ function StationWave({ kind, tone }: { kind: "in" | "anti" | "locked"; tone: str
         viewport={{ once: false, amount: 0.6 }}
         transition={{ duration: 1.1, delay: 0.5 }}
       />
-      <text x="4" y="20" fontSize="10" fill="rgba(255,255,255,0.4)" style={{ textTransform: "uppercase", letterSpacing: "0.2em" }}>
+      <text x="4" y="20" fontSize="10" fill="rgba(255,255,255,0.4)" style={labelStyle}>
         {kind === "anti" ? "claims out of phase" : "claims in phase"}
       </text>
-      <text x="4" y="152" fontSize="10" fill={tone} style={{ textTransform: "uppercase", letterSpacing: "0.2em" }}>
+      <text x="4" y="152" fontSize="10" fill={tone} style={labelStyle}>
         {kind === "anti" ? "sum ≈ 0 — contradiction" : "sum amplified — canonical"}
       </text>
     </svg>

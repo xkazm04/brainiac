@@ -10,3 +10,7 @@ node_modules/
 
 # deployment secrets
 .env.deploy
+
+# stray worktree build output + local claude session logs
+target-wt-r/
+.claude/logs/

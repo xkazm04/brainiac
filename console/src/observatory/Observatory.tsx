@@ -83,8 +83,8 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
         {[
           { label: "canonical", value: data.totals.canonical ?? 0, tone: MINT },
           { label: "total memories", value: totalMemories, tone: "#fff" },
-          { label: "pending review", value: data.review.pending, tone: data.review.pending > 5 ? MAGENTA : "#fff", href: "/reviews#promotions-h" },
-          { label: "oldest pending", value: age(data.review.oldestSecs), tone: "#fff", href: "/reviews#promotions-h" },
+          { label: "pending review", value: data.review.pending, tone: data.review.pending > 5 ? MAGENTA : "#fff", href: "/console/reviews#promotions-h" },
+          { label: "oldest pending", value: age(data.review.oldestSecs), tone: "#fff", href: "/console/reviews#promotions-h" },
           { label: "queue depth", value: data.queueDepth, tone: data.queueDepth > 0 ? MAGENTA : MINT },
         ].map((g) => {
           const body = (
@@ -157,7 +157,7 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
               <dt className="text-white/45">contradictions open</dt>
               <dd style={{ color: (data.contradictions.open ?? 0) > 0 ? MAGENTA : MINT }}>
                 {data.live ? (
-                  <Link href="/reviews?cstatus=open#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
+                  <Link href="/console/reviews?cstatus=open#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
                     {data.contradictions.open ?? 0}
                   </Link>
                 ) : (
@@ -169,7 +169,7 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
               <dt className="text-white/45">superseded</dt>
               <dd className="text-white/85">
                 {data.live ? (
-                  <Link href="/reviews?cstatus=resolved_supersede#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
+                  <Link href="/console/reviews?cstatus=resolved_supersede#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
                     {data.contradictions.resolved_supersede ?? 0}
                   </Link>
                 ) : (
@@ -181,7 +181,7 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
               <dt className="text-white/45">coexist / dismissed</dt>
               <dd className="text-white/85">
                 {data.live ? (
-                  <Link href="/reviews?cstatus=all#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
+                  <Link href="/console/reviews?cstatus=all#contradictions-h" className="underline decoration-white/20 underline-offset-4 transition hover:decoration-white/60">
                     {(data.contradictions.resolved_coexist ?? 0) + (data.contradictions.dismissed ?? 0)}
                   </Link>
                 ) : (
@@ -206,7 +206,7 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
               {data.live && (
                 <>
                   {" · "}
-                  <Link href="/graph" className="transition hover:text-white" style={{ color: MINT }}>
+                  <Link href="/console/graph" className="transition hover:text-white" style={{ color: MINT }}>
                     explore graph →
                   </Link>
                 </>

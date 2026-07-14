@@ -1,50 +1,20 @@
-import Home, { type LiveStats } from "@/home/Home";
-import {
-  configFromEnv,
-  getAnalytics,
-  getGraphOverview,
-  pendingPromotions,
-} from "@/lib/api";
+import type { Metadata } from "next";
 
-export const dynamic = "force-dynamic";
+import Home from "@/home/Home";
 
-export const metadata = {
-  title: "Brainiac — Console",
+// The public landing page: the console home (the wave field), rendered in its
+// PUBLIC variant on example data.
+//
+// It passes `live={null}` deliberately and makes no API call at all — so it
+// holds no token and cannot leak the org's real canonical counts, pending-review
+// backlog or team names to an anonymous visitor. The identical home, on LIVE
+// data, is /console behind the passcode gate (middleware.ts).
+export const metadata: Metadata = {
+  title: "Brainiac — governed memory for coding agents",
+  description:
+    "Three teams, one wave. Capture knowhow from real LLM sessions, govern it through review, serve it to agents under permission-aware retrieval — and read the org-level picture no single session can see: health, drift, standards, pages that cannot rot.",
 };
 
-// The home hero runs on demo physics regardless; the stats strip goes live
-// when the brainiac server is reachable, and degrades silently when not.
-async function liveStats(): Promise<LiveStats | null> {
-  try {
-    const cfg = configFromEnv();
-    const [analytics, pending, overview] = await Promise.all([
-      getAnalytics(cfg),
-      pendingPromotions(cfg),
-      getGraphOverview(cfg),
-    ]);
-    const teams = overview.teams
-      .map((t) => ({ name: t.name, memories: t.memories }))
-      .sort((a, b) => b.memories - a.memories);
-    // Most-bound canonical (widest team span, then largest) — the strongest
-    // real example of "constructive" binding for the third story station.
-    const top = [...overview.canonicals].sort(
-      (a, b) => b.teams - a.teams || b.memories - a.memories,
-    )[0];
-    return {
-      pendingPromotions: pending.length,
-      openContradictions: analytics.reviews.open_contradictions,
-      canonicalCount:
-        analytics.memories_by_status.find((r) => r.status === "canonical")?.count ?? 0,
-      embeddingModel: analytics.embedding_model,
-      teams,
-      topCanonical: top ? { name: top.name, teams: top.teams } : null,
-      totalMemories: teams.reduce((sum, t) => sum + t.memories, 0),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export default async function Page() {
-  return <Home live={await liveStats()} />;
+export default function LandingPage() {
+  return <Home live={null} variant="public" />;
 }

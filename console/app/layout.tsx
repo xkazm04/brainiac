@@ -2,8 +2,6 @@ import type { Metadata } from "next";
 import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import type { ReactNode } from "react";
 
-import Chrome from "./chrome";
-
 import "./globals.css";
 
 // The fused identity's type pair (see console/src/design/theme.ts):
@@ -22,11 +20,13 @@ export const metadata: Metadata = {
   description: "Governance console for organizational AI knowledge",
 };
 
+// No global chrome here: the operator header lives in the console-module
+// layout (app/console/(modules)/layout.tsx) and the public shells own theirs —
+// route structure now draws the boundary that used to be path-matching.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body className={`${spaceGrotesk.variable} ${jetbrains.variable}`}>
-        <Chrome />
         <main>{children}</main>
       </body>
     </html>

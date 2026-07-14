@@ -264,7 +264,7 @@ export default function KnowledgeBase() {
         <H2>A page that cannot rot, part by part.</H2>
         <Lede>
           Five mechanisms, drawn. Four run today; the breaker is built, tested, and switched
-          off — and its stamp says so.
+          off. Its stamp says so.
         </Lede>
 
         <div className="mt-14 space-y-6">

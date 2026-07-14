@@ -76,7 +76,7 @@ export default function DocPage({ detail, revisions, approve, edit }: DocPagePro
   return (
     <main className="mx-auto max-w-7xl px-6 py-10">
       <Link
-        href="/docs"
+        href="/console/docs"
         className={`${FONT_MONO} text-[11px] uppercase tracking-[0.18em]`}
         style={{ color: INK_FAINT }}
       >

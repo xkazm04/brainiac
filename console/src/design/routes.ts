@@ -15,35 +15,38 @@ import { band, GROUND, type BandKey } from "./theme";
 export type RouteBand = BandKey | "ground";
 
 export interface ProductRoute {
-  /** Route path, e.g. "/reviews". */
+  /** Route path, e.g. "/console/reviews". */
   path: string;
-  /** First URL segment (the module key), e.g. "reviews". */
+  /** The module key (the segment after /console/), e.g. "reviews". */
   segment: string;
-  /** Nav label — may differ from the segment (e.g. /memories → "archive"). */
+  /** Nav label — may differ from the segment (e.g. …/memories → "archive"). */
   label: string;
   /** EEG band accent, or "ground" for surfaces outside the band spectrum. */
   band: RouteBand;
 }
 
 // In nav order. Bands mirror theme.ts MODULE_BAND; keys sits on ground (0 Hz),
-// deliberately outside the spectrum (see GROUND in theme.ts).
+// deliberately outside the spectrum (see GROUND in theme.ts). Every module
+// lives under /console — one parent whose layout owns the operator chrome
+// (app/console/(modules)/layout.tsx), so navigation between modules is a
+// content-pane swap under a persistent header.
 export const PRODUCT_ROUTES: ProductRoute[] = [
-  { path: "/reviews", segment: "reviews", label: "reviews", band: "alpha" },
-  { path: "/disputes", segment: "disputes", label: "disputes", band: "theta" },
-  { path: "/graph", segment: "graph", label: "graph", band: "gamma" },
-  { path: "/memories", segment: "memories", label: "archive", band: "delta" },
-  { path: "/ingest", segment: "ingest", label: "ingest", band: "theta" },
-  { path: "/analytics", segment: "analytics", label: "analytics", band: "beta" },
+  { path: "/console/reviews", segment: "reviews", label: "reviews", band: "alpha" },
+  { path: "/console/disputes", segment: "disputes", label: "disputes", band: "theta" },
+  { path: "/console/graph", segment: "graph", label: "graph", band: "gamma" },
+  { path: "/console/memories", segment: "memories", label: "archive", band: "delta" },
+  { path: "/console/ingest", segment: "ingest", label: "ingest", band: "theta" },
+  { path: "/console/analytics", segment: "analytics", label: "analytics", band: "beta" },
   // The leadership read: one composite the org can be held to (KB-PLAN KB0).
-  { path: "/health", segment: "health", label: "health", band: "alpha" },
+  { path: "/console/health", segment: "health", label: "health", band: "alpha" },
   // The document layer (KB-PLAN KB2): pages compiled from canonical memories.
   // Gamma — the binding band — because a composed page is exactly that: many
   // teams' governed memories bound into one percept.
-  { path: "/docs", segment: "docs", label: "pages", band: "gamma" },
+  { path: "/console/docs", segment: "docs", label: "pages", band: "gamma" },
   // Standardization: where teams solved the same problem different ways (theta,
   // the divergence band — same family as disputes/contradiction work).
-  { path: "/divergence", segment: "divergence", label: "standards", band: "theta" },
-  { path: "/keys", segment: "keys", label: "keys", band: "ground" },
+  { path: "/console/divergence", segment: "divergence", label: "standards", band: "theta" },
+  { path: "/console/keys", segment: "keys", label: "keys", band: "ground" },
 ];
 
 /** Resolve a route's accent color from its band. */
@@ -54,8 +57,27 @@ export const routeAccent = (b: RouteBand): string =>
 export const routeBandLabel = (b: RouteBand): string =>
   b === "ground" ? "ground · 0 Hz" : `${b} band`;
 
-/** The product route owning a URL path (matched on its first segment). */
-export const routeForPath = (pathname: string): ProductRoute | undefined => {
-  const seg = pathname.split("/")[1] ?? "";
-  return PRODUCT_ROUTES.find((r) => r.segment === seg);
-};
+/** The product route owning a URL path (exact or a subpage of it). */
+export const routeForPath = (pathname: string): ProductRoute | undefined =>
+  PRODUCT_ROUTES.find((r) => pathname === r.path || pathname.startsWith(`${r.path}/`));
+
+// ── surface gating (the single source of truth) ─────────────────────────
+//
+// The middleware's allow-list lives here (the operator chrome no longer needs
+// one: it is mounted by the console-module layout, so route structure decides
+// where it renders). Kept in this pure module so anything else that needs the
+// boundary imports the same predicate instead of growing its own copy — two
+// copies drifted twice before (/kb unreachable, chrome stacked on /demo).
+
+/** Exact-match public paths: the landing wave field and the gate itself. */
+const PUBLIC_PATHS = new Set<string>(["/", "/login"]);
+
+/** Public subtrees — each renders its own shell (pitch, demo tour, wiki). */
+const PUBLIC_SUBTREES = ["/pitch", "/demo", "/kb"];
+
+const inSubtree = (pathname: string, root: string): boolean =>
+  pathname === root || pathname.startsWith(`${root}/`);
+
+/** Every surface an anonymous visitor may reach. The middleware's allow-list. */
+export const isPublicSurface = (pathname: string): boolean =>
+  PUBLIC_PATHS.has(pathname) || PUBLIC_SUBTREES.some((p) => inSubtree(pathname, p));

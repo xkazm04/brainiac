@@ -67,7 +67,7 @@ export const CONTRADICTION = {
 // Canonical entity + its team-scoped surface forms (the collision-tolerance
 // demo that sells the graph).
 export const CANONICAL_DEMO = {
-  name: "kafka",
+  name: "Kafka",
   aliases: [
     { team: "payments", name: "Kafka" },
     { team: "platform", name: "MSK cluster" },
