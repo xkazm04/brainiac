@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -33,6 +33,12 @@ pub struct AppState {
     pub reranker: Option<Arc<dyn Reranker>>,
     pub embedding_version: i32,
     pub tokens: TokenMap,
+    /// RLS-bypassing owner pool, used ONLY to compute org-level analytics
+    /// (Knowledge Health) at their TRUE org totals — a leadership metric must not
+    /// depend on which team the viewer happens to belong to. Never route
+    /// request-scoped reads/writes of tenant content through it; those stay on
+    /// `store.scoped_tx`.
+    pub admin_pool: sqlx::PgPool,
 }
 
 pub async fn router(
@@ -59,12 +65,20 @@ pub async fn router(
         tx.commit().await?;
         v
     };
+    // Owner (RLS-bypassing) pool for org-true analytics only. Built from the same
+    // DATABASE_URL the runtime pool connects to; `admin_pool` differs only in that
+    // it does NOT `SET ROLE brainiac_app`, so it sees every tenant's rows.
+    let admin_pool = brainiac_store::admin_pool(
+        &std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?,
+    )
+    .await?;
     let state = Arc::new(AppState {
         store,
         embedder,
         reranker,
         embedding_version,
         tokens,
+        admin_pool,
     });
     Ok(Router::new()
         .route("/health", get(health))

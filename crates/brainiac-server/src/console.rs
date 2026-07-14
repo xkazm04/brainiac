@@ -1774,6 +1774,13 @@ pub(crate) async fn knowledge_health(
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
+    // Org-TRUE pillar signals: the composite score is a leadership metric, so it
+    // must be the org's real totals, not the caller's team-limited RLS slice (an
+    // INNER JOIN on `memories` there silently drops a cross-team contradiction
+    // whose other side the member can't read, inflating the consistency pillar).
+    // Compute on the RLS-bypassing admin pool scoped to this org. The detail lists
+    // below stay on the viewer's `tx`, so only the aggregate NUMBERS become
+    // org-true — no team-private claim CONTENT leaks.
     let HealthCore {
         total,
         stale,
@@ -1791,7 +1798,10 @@ pub(crate) async fn knowledge_health(
         liquidity,
         governance,
         score,
-    } = compute_health_core(&mut tx, None).await?;
+    } = {
+        let mut atx = state.admin_pool.begin().await.map_err(internal)?;
+        compute_health_core(&mut atx, Some(principal.org_id)).await?
+    };
     let grade = grade_of(score).to_string();
 
     // ── attention list (ranked; the score made actionable) ──────────────
@@ -2005,8 +2015,13 @@ pub(crate) async fn knowledge_health_snapshot(
     headers: HeaderMap,
 ) -> Result<Json<SnapshotResponse>, HttpError> {
     let principal = auth_of(&state, &headers, "write").await?.principal;
-    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    let c = compute_health_core(&mut tx, None).await?;
+    // Compute AND persist the snapshot at org-TRUE totals on the admin pool, so a
+    // narrower-visibility member can no longer write a viewer-scoped number into
+    // the shared org trend that the scheduled sweep (`snapshot_all_orgs`, also
+    // org-true) feeds — mixing the two made the tracked trend line viewer-
+    // dependent. Mirrors the sweep's insert, once, for the caller's org.
+    let mut atx = state.admin_pool.begin().await.map_err(internal)?;
+    let c = compute_health_core(&mut atx, Some(principal.org_id)).await?;
     let captured_at: DateTime<Utc> = sqlx::query(
         "INSERT INTO knowledge_health_snapshots
            (org_id, score, consistency, currency, liquidity, governance,
@@ -2023,11 +2038,11 @@ pub(crate) async fn knowledge_health_snapshot(
     .bind(c.cross_contra as i32)
     .bind(c.stale as i32)
     .bind(c.total as i32)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *atx)
     .await
     .map_err(internal)?
     .get("captured_at");
-    tx.commit().await.map_err(internal)?;
+    atx.commit().await.map_err(internal)?;
     Ok(Json(SnapshotResponse {
         captured_at,
         score: c.score,
