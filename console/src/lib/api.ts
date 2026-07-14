@@ -61,6 +61,9 @@ export function configFromEnv(): ApiConfig {
   };
 }
 
+/** Per-request timeout (ms). A hung backend must never wedge a server component. */
+const API_TIMEOUT_MS = Number(process.env.BRAINIAC_API_TIMEOUT_MS ?? "15000") || 15000;
+
 async function call<T>(
   cfg: ApiConfig,
   method: "GET" | "POST" | "PUT",
@@ -68,15 +71,28 @@ async function call<T>(
   body?: unknown,
 ): Promise<T> {
   const doFetch = cfg.fetchImpl ?? fetch;
-  const res = await doFetch(`${cfg.baseUrl}${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${cfg.token}`,
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await doFetch(`${cfg.baseUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${cfg.token}`,
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+      // Bound every call: a backend that accepts the socket but never responds
+      // would otherwise hang the awaiting server component indefinitely (fetch has
+      // no default timeout), and a hang is neither an error nor a status — it
+      // slips past every retry and every demo-fallback net. Surface it as an error.
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new ApiError(504, `request to ${path} timed out after ${API_TIMEOUT_MS}ms`);
+    }
+    throw new ApiError(0, e instanceof Error ? e.message : String(e));
+  }
   if (!res.ok) {
     // Errors are a JSON envelope `{error, code}` (see the server's HttpError).
     // Parse it for the message; fall back to the raw text (older servers
