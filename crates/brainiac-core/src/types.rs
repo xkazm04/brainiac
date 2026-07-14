@@ -408,6 +408,198 @@ pub struct Memory {
 }
 
 // ---------------------------------------------------------------------------
+// Documents (ARCHITECTURE.md §8 — the knowledge base layer)
+//
+// A document holds NO knowledge. It is a compiled view over canonical memories,
+// regenerated when they change. Every type here exists to keep that true: a
+// section is either bound to a memory query (composed) or owned prose (pinned);
+// a revision records the exact memory ids it was built from, so a claim with no
+// backing memory is detectable — and therefore gateable — as a hallucination.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocKind {
+    /// Auto-scaffolded around one canonical entity (KB2).
+    EntityPage,
+    #[default]
+    TopicPage,
+    Runbook,
+    Onboarding,
+}
+
+impl DocKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::EntityPage => "entity_page",
+            Self::TopicPage => "topic_page",
+            Self::Runbook => "runbook",
+            Self::Onboarding => "onboarding",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "entity_page" => Some(Self::EntityPage),
+            "topic_page" => Some(Self::TopicPage),
+            "runbook" => Some(Self::Runbook),
+            "onboarding" => Some(Self::Onboarding),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocStatus {
+    #[default]
+    Draft,
+    Published,
+    Archived,
+}
+
+impl DocStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Published => "published",
+            Self::Archived => "archived",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "draft" => Some(Self::Draft),
+            "published" => Some(Self::Published),
+            "archived" => Some(Self::Archived),
+            _ => None,
+        }
+    }
+}
+
+/// Composed = machine-owned (regenerates); Pinned = human-owned (never touched).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionMode {
+    Composed,
+    Pinned,
+}
+
+impl SectionMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Composed => "composed",
+            Self::Pinned => "pinned",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "composed" => Some(Self::Composed),
+            "pinned" => Some(Self::Pinned),
+            _ => None,
+        }
+    }
+}
+
+/// What a composed section pulls in. This is a *query*, not a list of memories:
+/// the page's content is whatever currently satisfies it, which is precisely why
+/// the page cannot go stale while the corpus moves on.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SectionBinding {
+    /// Canonical entity ids the section is anchored to.
+    #[serde(default)]
+    pub entities: Vec<Uuid>,
+    /// Memory kinds to admit; empty = all.
+    #[serde(default)]
+    pub kinds: Vec<MemoryKind>,
+    /// Lifecycle facets to admit; empty = all. The reason a page can carry a
+    /// "shipped" section and a separate "on its way" section without the reader
+    /// ever having to guess which is which (KB-PLAN D2).
+    #[serde(default)]
+    pub lifecycle: Vec<Lifecycle>,
+    /// Free-text retrieval query; empty = pure entity/kind binding.
+    #[serde(default)]
+    pub query: String,
+    #[serde(default = "default_max_items")]
+    pub max_items: usize,
+}
+
+fn default_max_items() -> usize {
+    12
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Document {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub team_id: Option<Uuid>,
+    pub slug: String,
+    pub title: String,
+    pub visibility: Visibility,
+    pub doc_kind: DocKind,
+    pub status: DocStatus,
+    pub current_revision: Option<Uuid>,
+    /// Set when a memory this page depends on changed; cleared on recompose.
+    pub dirty_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSection {
+    pub id: Uuid,
+    pub document_id: Uuid,
+    pub position: i32,
+    pub heading: String,
+    pub mode: SectionMode,
+    /// `Some` iff composed.
+    pub binding: Option<SectionBinding>,
+    /// `Some` iff pinned. Byte-preserved across regeneration — the eval gates it.
+    pub pinned_content: Option<String>,
+}
+
+/// What the policy engine decided about a freshly composed revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionPolicy {
+    /// Every claim traced, no previously published claim dropped → ship it.
+    AutoPublished,
+    /// A human must look: claims disappeared, or the page is structurally new.
+    NeedsReview,
+    Rejected,
+}
+
+impl RevisionPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AutoPublished => "auto_published",
+            Self::NeedsReview => "needs_review",
+            Self::Rejected => "rejected",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "auto_published" => Some(Self::AutoPublished),
+            "needs_review" => Some(Self::NeedsReview),
+            "rejected" => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRevision {
+    pub id: Uuid,
+    pub document_id: Uuid,
+    pub content_md: String,
+    /// The provenance closure: exactly the memories this markdown was built
+    /// from. A claim in `content_md` not backed by one of these is a
+    /// hallucination by definition.
+    pub composed_from: Vec<Uuid>,
+    pub trigger: String,
+    pub policy_decision: RevisionPolicy,
+    pub reviewed_by: Option<Uuid>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // Graph: entities, canonical entities, links, edges
 // ---------------------------------------------------------------------------
 

@@ -159,8 +159,15 @@ pub async fn set_memory_status(
     sqlx::query("UPDATE memories SET status = $2::memory_status, updated_at = now() WHERE id = $1")
         .bind(memory_id)
         .bind(status.as_str())
-        .execute(conn)
+        .execute(&mut *conn)
         .await?;
+    // §8: any page built on this memory is now suspect — a promotion added a
+    // claim, a deprecation removed one. Marking here (rather than in each
+    // caller) is what makes the guarantee unconditional: there is no way to
+    // change a memory's standing through the governance path and forget the
+    // wiki. Cheap when the org has no pages: an indexed lookup that matches
+    // nothing.
+    crate::documents::mark_dirty_for_memory(conn, memory_id).await?;
     Ok(())
 }
 
@@ -229,6 +236,14 @@ pub async fn apply_supersession(
     .bind(applied_by)
     .execute(&mut *conn)
     .await?;
+
+    // §8, the propagation that makes the wiki self-healing: a maintainer
+    // resolved a contradiction, so every page citing the LOSER now states
+    // something the org no longer believes — and every page citing the WINNER
+    // may now be able to say more. Both recompose. This is the single call that
+    // separates "a wiki with a review queue" from "a wiki that cannot rot".
+    crate::documents::mark_dirty_for_memory(&mut *conn, loser).await?;
+    crate::documents::mark_dirty_for_memory(&mut *conn, winner).await?;
     Ok(true)
 }
 

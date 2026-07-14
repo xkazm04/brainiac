@@ -6,6 +6,7 @@
 //! with the architecture's contracts, so splitting them across queues later
 //! is a worker-loop change, not a redesign.
 
+pub mod compose;
 pub mod contradict;
 pub mod divergence;
 pub mod extract;

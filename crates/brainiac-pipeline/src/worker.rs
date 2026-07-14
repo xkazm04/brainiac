@@ -12,7 +12,7 @@ use uuid::Uuid;
 use futures::stream::StreamExt;
 
 use crate::policy::PolicyEngine;
-use crate::{contradict, extract, pipeline_principal, resolve};
+use crate::{compose, contradict, extract, pipeline_principal, resolve};
 
 pub const INGEST_QUEUE: &str = "ingest";
 
@@ -193,6 +193,111 @@ pub async fn tick(
         stats.jobs += 1;
     }
     Ok(stats)
+}
+
+/// One pass of the compose loop (§8.2): recompose every page whose memories
+/// moved, and write each result as a revision.
+///
+/// Deliberately NOT on the job queue in KB1. Dirty pages are already a durable,
+/// idempotent work list in the database (`documents.dirty_at`) — enqueueing a
+/// job per dirty page would add a second, weaker source of truth about what
+/// needs composing, and a lost or duplicated message would either strand a
+/// stale page or burn tokens recomposing a clean one. The queue earns its keep
+/// when compose becomes multi-worker; today the invariant is worth more.
+///
+/// Each page composes in its own transaction: one page's bad binding or
+/// provider error must not roll back its neighbours' good revisions.
+pub async fn compose_tick(
+    store: &Store,
+    providers: &ProviderRouter,
+    embedder: &dyn Embedder,
+    embedding_version: i32,
+    org_id: Uuid,
+    limit: i64,
+) -> Result<ComposeStats> {
+    let mut stats = ComposeStats::default();
+
+    // Read the work list under worker authority (it must see team pages too).
+    let worker = pipeline_principal(org_id);
+    let dirty = {
+        let mut tx = store.worker_tx(&worker).await?;
+        let d = brainiac_store::documents::dirty_documents(&mut tx, limit).await?;
+        tx.commit().await?;
+        d
+    };
+
+    for doc in dirty {
+        // Visibility cap (§8.2): an ORG page composes as a principal with no
+        // team memberships, so RLS itself makes team-private memories
+        // unreachable — the leak invariant is enforced by the same code path a
+        // user query takes, not by a check we could forget. Team pages need the
+        // worker scope to see their own team's memories and are capped in code
+        // (compose::admits).
+        let principal = match doc.visibility {
+            brainiac_core::Visibility::Org => compose::compose_principal(org_id),
+            _ => worker.clone(),
+        };
+        let mut tx = match doc.visibility {
+            brainiac_core::Visibility::Org => store.scoped_tx(&principal).await?,
+            _ => store.worker_tx(&principal).await?,
+        };
+
+        let outcome = compose::compose_document(
+            &mut tx,
+            store.pool(),
+            providers.for_stage(Stage::Compose),
+            embedder,
+            embedding_version,
+            &doc,
+            "memory_change",
+        )
+        .await;
+
+        match outcome {
+            Ok(out) => {
+                brainiac_store::documents::insert_revision(
+                    &mut tx,
+                    &brainiac_store::documents::NewRevision {
+                        id: Uuid::new_v4(),
+                        document_id: doc.id,
+                        org_id,
+                        content_md: out.content_md,
+                        composed_from: out.composed_from,
+                        trigger: out.trigger,
+                        policy_decision: out.policy,
+                    },
+                )
+                .await?;
+                tx.commit().await?;
+                match out.policy {
+                    brainiac_core::RevisionPolicy::AutoPublished => stats.auto_published += 1,
+                    _ => stats.needs_review += 1,
+                }
+                stats.composed += 1;
+                tracing::info!(
+                    document = %doc.slug,
+                    policy = out.policy.as_str(),
+                    reason = %out.policy_reason,
+                    "page recomposed"
+                );
+            }
+            Err(e) => {
+                // The page stays dirty: a failed compose must retry, never
+                // silently leave a stale page looking fresh.
+                tracing::error!(document = %doc.slug, error = %e, "compose failed");
+                stats.failed += 1;
+            }
+        }
+    }
+    Ok(stats)
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ComposeStats {
+    pub composed: usize,
+    pub auto_published: usize,
+    pub needs_review: usize,
+    pub failed: usize,
 }
 
 /// Run one claimed job end-to-end and ack it. Returns the run's stats on

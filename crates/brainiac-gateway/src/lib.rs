@@ -304,6 +304,10 @@ pub enum Stage {
     Extract,
     Resolve,
     Contradict,
+    /// Document composition (§8): writes page prose from memories it must cite.
+    /// Wants a strong writer — a weak one paraphrases past the evidence, and
+    /// every unbacked sentence is a hallucination the eval will fail on.
+    Compose,
 }
 
 impl Stage {
@@ -312,6 +316,7 @@ impl Stage {
             Stage::Extract => "extract",
             Stage::Resolve => "resolve",
             Stage::Contradict => "contradict",
+            Stage::Compose => "compose",
         }
     }
 
@@ -320,6 +325,7 @@ impl Stage {
             Stage::Extract => "BRAINIAC_MODEL_EXTRACT",
             Stage::Resolve => "BRAINIAC_MODEL_RESOLVE",
             Stage::Contradict => "BRAINIAC_MODEL_CONTRADICT",
+            Stage::Compose => "BRAINIAC_MODEL_COMPOSE",
         }
     }
 }
@@ -351,13 +357,14 @@ pub fn provider_from_spec(spec: &str) -> Result<std::sync::Arc<dyn ChatProvider>
 }
 
 /// Routes each pipeline stage to a provider. Defaults to one provider for
-/// everything; `BRAINIAC_MODEL_EXTRACT` / `_RESOLVE` / `_CONTRADICT` override
-/// a stage with a spec accepted by [`provider_from_spec`].
+/// everything; `BRAINIAC_MODEL_EXTRACT` / `_RESOLVE` / `_CONTRADICT` /
+/// `_COMPOSE` override a stage with a spec accepted by [`provider_from_spec`].
 pub struct ProviderRouter {
     default: std::sync::Arc<dyn ChatProvider>,
     extract: Option<std::sync::Arc<dyn ChatProvider>>,
     resolve: Option<std::sync::Arc<dyn ChatProvider>>,
     contradict: Option<std::sync::Arc<dyn ChatProvider>>,
+    compose: Option<std::sync::Arc<dyn ChatProvider>>,
 }
 
 impl ProviderRouter {
@@ -368,13 +375,19 @@ impl ProviderRouter {
             extract: None,
             resolve: None,
             contradict: None,
+            compose: None,
         }
     }
 
     /// Apply per-stage env overrides on top of `default`.
     pub fn from_env(default: std::sync::Arc<dyn ChatProvider>) -> Result<Self> {
         let mut router = Self::single(default);
-        for stage in [Stage::Extract, Stage::Resolve, Stage::Contradict] {
+        for stage in [
+            Stage::Extract,
+            Stage::Resolve,
+            Stage::Contradict,
+            Stage::Compose,
+        ] {
             if let Ok(spec) = std::env::var(stage.env_key()) {
                 if spec.trim().is_empty() {
                     continue;
@@ -386,6 +399,7 @@ impl ProviderRouter {
                     Stage::Extract => router.extract = Some(provider),
                     Stage::Resolve => router.resolve = Some(provider),
                     Stage::Contradict => router.contradict = Some(provider),
+                    Stage::Compose => router.compose = Some(provider),
                 }
             }
         }
@@ -397,6 +411,7 @@ impl ProviderRouter {
             Stage::Extract => &self.extract,
             Stage::Resolve => &self.resolve,
             Stage::Contradict => &self.contradict,
+            Stage::Compose => &self.compose,
         };
         slot.as_deref().unwrap_or(self.default.as_ref())
     }

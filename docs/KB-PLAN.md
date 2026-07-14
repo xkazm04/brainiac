@@ -52,6 +52,7 @@ stays authoritative before code lands:
 | KB1 | Document layer core | Migration 0017 (0016 is taken by `practice_divergences`): `documents`, `document_sections`, `document_revisions`, `document_dependencies` + RLS; `compose` job kind on the existing SKIP-LOCKED queue; dirty-marking worker; composition (binding → canonical-only retrieval as synthetic visibility-capped principal → BYOM prose with `[m:uuid]` citations); diff + policy (typed rules behind `PolicyEngine`, `auto_published` vs `needs_review`); revision review via the promotions queue UI pattern | new `docs` eval profile (EVAL §2.6) with `fixtures/v1/documents/` gold: coverage, **hallucination = 0 for auto-published**, **leak = 0 (build failure)**, staleness-propagation, pin-preservation |
 | KB2 | Read surfaces | Console page reader: markdown renderer (sanitized), per-claim provenance popovers from `[m:uuid]`, revision history + diff view; page editor aware of pinned vs composed; MCP `doc_get(slug, as_of?)` + `doc_search(query)`; `entity_page` auto-scaffolding (≥ N canonical memories across ≥ 2 teams); optional: deterministic mermaid entity-neighborhood block (D9) | console vitest + `mcp_pg` tests incl. RLS leak check on `doc_get`; scaffolding validated on Meridian |
 | KB3 | Publishing | `Publisher` trait + Git target (semver, `docs/` in org repo) + Confluence adapter (PAT, markdown→ADF, one-way, generated banner + backlinks); KB token scopes + org capability flag; **health circuit breaker** wired (pillar thresholds → pause + "verification pending" stamp); publish path covered by the leak eval (org-only rule D5) | `docs` profile extended with publish-path leak cases = 0; circuit breaker integration test (degrade health on Meridian → sync pauses) |
+| KB5 | Tell the world (runs alongside KB1–KB2, not after) | The KB layer is the product's answer to a problem every org has, and it is currently invisible outside the repo: **(a)** a dedicated public page presenting the knowledge base (projection-not-peer, lifecycle split, health-gated publishing, one-way Confluence), **(b)** the landing/pitch page updated so the KB is a named capability rather than only a competitor teardown, **(c)** `README.md` — the KB layer in the feature list and quickstart, **(d)** feature documentation (`docs/` — how a team enables the KB, what a composed page is, what it will never do). Honesty rule inherited from `pitch-data.ts:1-19`: **nothing may be presented as shipped that is not shipped** — unbuilt phases are described as roadmap, in the same voice as the existing "where we lose" section | console vitest green; every claim on the public pages traceable to a merged phase in this plan (a reviewer can check each one against the status log) |
 | KB4 | Round-trip & hardening | Human edit flow: composed-section edit → extraction → candidate memories → "your change was captured as N proposed updates" → recompose on landing; contradiction-resolution → dirty → recompose SLA measured; Knowledge Health gains a docs pillar signal (dirty-page backlog, stale published revisions) | `full` profile run incl. docs; staleness-propagation latency recorded in results/history/ |
 
 Sequencing rule carried over from UAT: **KB3 external publishing does not ship
@@ -163,7 +164,48 @@ Ordered roughly by leverage; none block the phase ladder.
         the insert→read path under RLS.
       - Pre-existing and unrelated: `clippy -D warnings` fails on two
         `unwrap()`s in `store_pg.rs` on HEAD (present before this work).
-- [ ] KB1 document layer core + `docs` eval profile green
+- [~] **KB1 document layer core** (2026-07-14) — code complete, one gate open.
+      - `migrations/0017_document_layer.sql`: `documents` / `document_sections`
+        / `document_revisions` / `document_dependencies`, RLS + `brainiac_app`
+        grants. (NB: 0016 and 0018 belong to parallel workstreams —
+        `practice_divergences`, `sweep_schedules`. Next free number is 0019.)
+      - `brainiac-core`: `DocKind`, `DocStatus`, `SectionMode`,
+        `SectionBinding` (entities + kinds + **lifecycle** + query),
+        `RevisionPolicy`, `Document`, `DocumentSection`, `DocumentRevision`.
+      - `brainiac-store::documents`: repo + `mark_dirty_for_memory` — the
+        anti-rot call, hooked into `governance::set_memory_status` and
+        `apply_supersession` so NO governance path can change a memory's
+        standing and forget the pages built on it.
+      - `brainiac-pipeline::compose` + `worker::compose_tick`: dirty-page work
+        list → visibility-capped retrieval → cited prose → policy → revision.
+        Three firewalls: **visibility cap** (org pages compose as a principal
+        with no team memberships, so RLS itself makes team-private memories
+        unreachable), **citation firewall** (invented `[m:uuid]`s are stripped;
+        an unbacked paragraph blocks auto-publish), **deterministic evidence**
+        (`detail_md` is copied verbatim, never re-typed by the model).
+      - Policy: a page's FIRST revision always needs a human (nothing publishes
+        itself into existence); an additive recompose that keeps every
+        previously published claim auto-publishes; a dropped claim goes to
+        review (supersession working vs retrieval silently losing knowledge is
+        a human's call).
+      - `brainiac-gateway`: `Stage::Compose` + `BRAINIAC_MODEL_COMPOSE`.
+      - Tests: 8 unit (firewalls) + **6 Postgres integration** — org page
+        cannot see a team-private memory; a resolved contradiction propagates
+        to the page with nobody editing it; pinned prose survives regeneration;
+        first-revision-needs-a-human then additive auto-publish; `detail_md`
+        reaches the page verbatim; a fabricated citation cannot auto-publish.
+        Full workspace suite green.
+      - **OPEN GATE — the `docs` eval profile (EVAL §2.6) is NOT built.** The
+        integration tests pin the deterministic invariants (leak = 0, pin
+        preservation, staleness propagation, policy) against a mock model. What
+        is still unmeasured is REAL-model quality: LLM-judged claim coverage and
+        hallucination rate on `fixtures/v1/documents/` gold, which §2.6
+        specifies and which is the gate that would let auto-publish be trusted
+        with a real provider. KB2 must not ship a reader over pages whose prose
+        quality has never been measured.
+- [ ] KB5 public surfaces (KB page, pitch, README, docs/KNOWLEDGE-BASE.md) —
+      landed alongside KB1; honesty guard tests pin every public claim to this
+      status log.
 - [ ] KB2 read surfaces (console reader/editor, MCP doc tools, scaffolding)
 - [ ] KB3 publishing (publisher trait, Git + Confluence, scopes, breaker)
 - [ ] KB4 round-trip & hardening (edit reingestion, propagation SLA, docs
