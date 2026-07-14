@@ -811,7 +811,16 @@ fn parse_entity_names(args: &Value) -> Result<Vec<String>, ToolError> {
 fn build_source_text(content: &str, kind: Option<MemoryKind>, entities: &[String]) -> String {
     let mut hints: Vec<String> = Vec::new();
     if let Some(k) = kind {
-        hints.push(format!("The author is recording this as a {}.", k.as_str()));
+        // Phrased as a non-restrictive hint: the flywheel run showed
+        // "recording this as a pitfall" led the extractor to take ONLY the
+        // pitfall and drop a co-located howto/decision. Signal the primary kind
+        // without narrowing extraction to it (the prompt reinforces this).
+        hints.push(format!(
+            "The author considers this primarily a {}, but extract every distinct durable \
+             learning it contains, not only the {}.",
+            k.as_str(),
+            k.as_str()
+        ));
     }
     if !entities.is_empty() {
         hints.push(format!(

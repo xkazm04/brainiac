@@ -11,6 +11,14 @@ use uuid::Uuid;
 
 /// Versioned prompt — changes here must not drop eval scores past the gate
 /// (EVAL.md §3.2), which is why it lives in code, not config.
+///
+/// A V2 recall rewrite was attempted (UAT 2026-07-14) — exhaustiveness language,
+/// a worked few-shot example, per-kind definitions — and the `extraction` eval
+/// REJECTED it: recall fell 0.458 → 0.29 (minimal nudge) / 0.17 (full rewrite),
+/// with the model turning MORE conservative, not less. A large share of the
+/// run-to-run swing is stochastic parse failure (zero-extraction count moved
+/// 3/5/6 across single runs), so prompt wording is not the dominant lever here —
+/// extraction ROBUSTNESS/retry is. V1 stands; the eval guarded the regression.
 pub const EXTRACT_SYSTEM_PROMPT_V1: &str = "\
 You distill organizational knowledge from a work transcript into discrete memory units.
 

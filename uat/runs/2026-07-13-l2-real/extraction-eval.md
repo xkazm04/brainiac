@@ -71,11 +71,41 @@ these numbers so any future regression trips the gate.
   gold, not a parse failure — a `pipeline` vs `extraction` A/B on a prompt change now has an honest
   scorer to move.
 
+## The prompt-recall experiment — a negative result the eval caught
+
+The obvious next lever was the extraction *prompt*: make it demand exhaustiveness and give it a
+worked example. Tried it — and the eval **rejected it**, which is the whole reason the eval exists.
+
+| prompt | recall | precision | extracted | zero-extraction transcripts |
+|---|---|---|---|---|
+| **V1 (run A)** | 0.458 | 0.611 | 18 | 3 |
+| **V1 (run B)** | 0.417 | 0.714 | 14 | 4 |
+| V2 — minimal exhaustiveness nudge | 0.292 | 0.778 | 9 | 5 |
+| V2 — full rewrite (kinds + few-shot example) | 0.167 | 1.000 | 4 | 6 |
+
+Two V1 samples put the **run-to-run noise band at ~4 points** (0.417–0.458). Both prompt variants
+land **12–29 points below** it — decisively outside the noise, so the regression is real, not
+sampling. Counterintuitively, telling `qwen-max` to "extract EVERY distinct learning" made it
+**more** conservative, not less (precision rose to 1.0 as volume collapsed). **V1 stands; nothing
+shipped but a doc note recording the dead end** — exactly what a regression gate is for. The one
+change kept is unrelated to the eval: softening the `memory_add` kind-hint from "recording this as a
+pitfall" to a non-restrictive "primarily a pitfall, but extract every distinct learning" (the
+flywheel's co-located-drop finding; the eval can't measure it since transcripts carry no hint, so
+it ships as low-risk-and-justified, not eval-validated).
+
+**What this actually tells us:** prompt wording is *not* the dominant recall lever for this provider.
+The residual is stochastic — the zero-extraction count swings 3→6 across single runs on the SAME
+prompt, i.e. Qwen intermittently returns unparseable output even after the one repair. So the real
+next lever is **extraction robustness/retry** (a second repair attempt, a stricter re-ask, or a
+provider fallback), which the eval can measure directly — not more prompt tuning.
+
 ## Net
 
-The eval is exactly the instrument the trial said was missing: it converted a silent ~50% knowledge
-loss into a number, drove a fix that nearly doubled recall, and left a committed regression gate so it
-can't silently come back. It also reframes the roadmap — extraction *robustness and recall*, not just
-retrieval, is now the measurable front line, and it has a scorer. Recommended next: keep going on the
-prompt/kind-hint recall (the eval will score each change) and wire this as the nightly per-provider
-gate PLAN.md always intended.
+The eval is exactly the instrument the trial said was missing. It converted a silent ~50% knowledge
+loss into a number, drove a parse-hardening fix that nearly doubled recall (0.25 → 0.46), left a
+committed regression gate, and then **caught a well-intentioned prompt change as a −29pt regression
+before it shipped** — the guardrail doing its job on the first real attempt to use it. It also
+redirected the roadmap with evidence: recall on `qwen:qwen-max` is ~0.42–0.46 and prompt wording
+won't move it; the lever is robustness/retry against stochastic parse failure. Recommended next:
+a second bounded repair (or a stricter JSON re-ask) on parse failure, scored against this eval, then
+wire it as the nightly per-provider gate PLAN.md always intended.
