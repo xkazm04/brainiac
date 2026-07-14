@@ -29,7 +29,13 @@ export async function withDemoFallback<T>(
 ): Promise<DemoResult<T>> {
   try {
     return { data: await fetchLive(), live: true };
-  } catch {
+  } catch (e) {
+    // Log the underlying failure so a real error — a bad token (401), an RLS
+    // misconfig (403), or a server 500 — is diagnosable in the server logs instead
+    // of vanishing silently behind the demo banner. The page still degrades to
+    // fixtures + <DemoBanner>; distinguishing "offline" from "misconfigured" in the
+    // banner itself is a per-page follow-up.
+    console.error("[demo-fallback] live fetch failed, serving fixtures:", e);
     return { data: demo, live: false };
   }
 }

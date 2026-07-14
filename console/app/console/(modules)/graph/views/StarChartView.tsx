@@ -25,7 +25,7 @@ export default function StarChartView({ data }: { data: CortexData }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [hoverTeam, setHoverTeam] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const { detail, loading } = useCanonicalDetail(selected, data);
+  const { detail, loading, error } = useCanonicalDetail(selected, data);
   const { overview } = data;
 
   const teamIndex = (teamId: string) => overview.teams.findIndex((t) => t.id === teamId);
@@ -187,6 +187,7 @@ export default function StarChartView({ data }: { data: CortexData }) {
             style={{ borderColor: "hsla(46,90%,68%,0.3)", background: "hsla(46,90%,60%,0.04)" }}
           >
             {loading && <div className={`${FONT_MONO} text-sm text-[#e9edff]/40`}>focusing…</div>}
+            {error && <div className={`${FONT_MONO} text-sm text-[#f0b429]`}>{error}</div>}
             {detail && (
               <div className="grid gap-6 lg:grid-cols-3">
                 <div className="space-y-4">

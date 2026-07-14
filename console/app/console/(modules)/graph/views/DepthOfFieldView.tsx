@@ -22,7 +22,7 @@ const GOLD = band("gamma");
 
 export default function DepthOfFieldView({ data }: { data: CortexData }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const { detail, loading } = useCanonicalDetail(selected, data);
+  const { detail, loading, error } = useCanonicalDetail(selected, data);
   const { overview } = data;
   const teamIndex = (teamId: string) => overview.teams.findIndex((t) => t.id === teamId);
   const focused = selected != null;
@@ -125,6 +125,7 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
             >
               <div className="rounded-xl border bg-[#0a090f]/95 p-6 shadow-2xl backdrop-blur" style={{ borderColor: "hsla(46,90%,68%,0.35)" }}>
                 {loading && <div className={`${FONT_MONO} text-sm text-[#e9edff]/40`}>pulling into focus…</div>}
+                {error && <div className={`${FONT_MONO} text-sm text-[#f0b429]`}>{error}</div>}
                 {detail && (
                   <div className="space-y-6">
                     <div className="flex items-baseline justify-between">

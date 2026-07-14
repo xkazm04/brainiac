@@ -26,7 +26,7 @@ export default function Archive({ data }: { data: ArchiveData }) {
   const { min, max } = useMemo(() => timeBounds(data.rows), [data.rows]);
   const [frac, setFrac] = useState(1); // 1 = now
   const [selected, setSelected] = useState<string | null>(null);
-  const { detail, loading } = useMemoryDetail(selected, data.live);
+  const { detail, loading, error } = useMemoryDetail(selected, data.live);
 
   const at = useMemo(
     () => new Date(min.getTime() + (max.getTime() - min.getTime() + 86400000) * frac),
@@ -131,6 +131,7 @@ export default function Archive({ data }: { data: ArchiveData }) {
               </p>
             )}
             {selected && loading && <p className={`${FONT_MONO} text-sm text-[#e9edff]/40`}>opening the record…</p>}
+            {selected && error && <p className={`${FONT_MONO} text-sm text-[#f0b429]`}>{error}</p>}
             {selected && detail && <MemoryInspector detail={detail} onHop={setSelected} />}
           </div>
         </div>

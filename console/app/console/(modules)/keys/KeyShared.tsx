@@ -217,9 +217,17 @@ export function MintPanel({
               </div>
               <div className="mt-4 flex items-center gap-3">
                 <button
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(minted.token);
-                    setCopied(true);
+                  onClick={async () => {
+                    // Only claim "copied" when the write actually succeeds. This is
+                    // a one-time secret (not stored), so a false ✓ on a blocked or
+                    // unavailable clipboard would lose it silently. On failure the
+                    // secret stays visible in the select-all box above.
+                    try {
+                      await navigator.clipboard.writeText(minted.token);
+                      setCopied(true);
+                    } catch {
+                      setCopied(false);
+                    }
                   }}
                   className={`${FONT_MONO} rounded-full border px-4 py-1.5 text-sm transition`}
                   style={{ borderColor: GROUND, color: GROUND }}

@@ -18,13 +18,22 @@ import { FONT_DISPLAY, FONT_MONO, GROUND, LABEL, MAGENTA } from "@/design/theme"
 export default function Keys({ data }: { data: KeysData }) {
   const [tokens, setTokens] = useState(data.tokens);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const reload = () => {
     if (data.live) void refreshTokens().then(setTokens).catch(() => undefined);
   };
   const revoke = async (id: string) => {
     if (!data.live) return;
-    await revokeKey(id).catch(() => undefined);
+    setRevokeError(null);
+    try {
+      await revokeKey(id);
+    } catch {
+      // A swallowed revoke is dangerous: the operator believes a compromised key
+      // is dead when it is still active. Surface it and keep the confirm open.
+      setRevokeError("Revoke failed — the key may still be active. Try again.");
+      return;
+    }
     setConfirming(null);
     reload();
   };
@@ -93,6 +102,9 @@ export default function Keys({ data }: { data: KeysData }) {
               <p className={`${FONT_MONO} py-10 text-center text-sm text-[#e9edff]/35`}>no keys cut yet</p>
             )}
           </div>
+          {revokeError && (
+            <div className={`${FONT_MONO} mt-2 text-sm text-[#f0b429]`}>{revokeError}</div>
+          )}
           <div className={`${LABEL} mt-2`} style={{ color: "rgba(233,237,255,0.3)" }}>
             {active.length} active · {revoked.length} revoked · secrets never stored, only sha256
             {!data.live && " · demo data"}
