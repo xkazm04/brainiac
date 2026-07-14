@@ -444,9 +444,24 @@ pub(crate) async fn doc_edit(
         })?;
 
     if section.mode == brainiac_core::SectionMode::Pinned {
-        brainiac_store::documents::update_pinned(&mut tx, section.id, &content)
-            .await
-            .map_err(internal)?;
+        // Optimistic concurrency: only save if the stored prose still matches what
+        // we read, so a second editor of the same section is told (409) instead of
+        // silently overwriting the first's save.
+        let saved = brainiac_store::documents::update_pinned(
+            &mut tx,
+            section.id,
+            &content,
+            section.pinned_content.as_deref(),
+        )
+        .await
+        .map_err(internal)?;
+        if !saved {
+            return Err((
+                StatusCode::CONFLICT,
+                "this section changed since you loaded it — reload and reapply your edit".to_string(),
+            )
+                .into());
+        }
         // The page must recompose so the published markdown carries the new
         // prose — a pinned edit that never reaches a revision is invisible.
         brainiac_store::documents::mark_dirty(&mut tx, doc.id)

@@ -167,16 +167,28 @@ pub async fn sections(conn: &mut PgConnection, document_id: Uuid) -> Result<Vec<
 /// this way — a composed section's text is a projection, and overwriting it here
 /// would fork the truth. The API enforces that; this function is the honest
 /// primitive underneath it.
-pub async fn update_pinned(conn: &mut PgConnection, section_id: Uuid, content: &str) -> Result<()> {
-    sqlx::query(
+///
+/// Optimistic concurrency: the write lands only if the stored prose still equals
+/// `expected_current` (the content the caller read before editing). Under READ
+/// COMMITTED this catches a concurrent editor who committed in between — the WHERE
+/// then sees the new value and matches 0 rows. Returns `false` on such a conflict
+/// so the caller can 409 instead of silently clobbering the other save.
+pub async fn update_pinned(
+    conn: &mut PgConnection,
+    section_id: Uuid,
+    content: &str,
+    expected_current: Option<&str>,
+) -> Result<bool> {
+    let res = sqlx::query(
         "UPDATE document_sections SET pinned_content = $2
-         WHERE id = $1 AND mode = 'pinned'",
+         WHERE id = $1 AND mode = 'pinned' AND pinned_content IS NOT DISTINCT FROM $3",
     )
     .bind(section_id)
     .bind(content)
+    .bind(expected_current)
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(res.rows_affected() > 0)
 }
 
 /// THE anti-rot call. A canonical memory was inserted, superseded, deprecated,
