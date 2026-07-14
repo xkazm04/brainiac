@@ -39,11 +39,17 @@ impl ConfluencePublisher {
     pub fn from_config(config: &serde_json::Value, token: String) -> Result<Self> {
         let cfg: ConfluenceConfig =
             serde_json::from_value(config.clone()).context("confluence target config")?;
-        Ok(Self {
-            http: reqwest::Client::new(),
-            cfg,
-            token,
-        })
+        // reqwest has NO default timeout, so a hung Confluence (or an intercepting
+        // proxy/LB that accepts the socket but never answers) would make .send()
+        // never return — and publish_org holds a scoped DB transaction across the
+        // call, so one dead sink pins a connection open indefinitely. Bound every
+        // request with a connect + total timeout so a stall surfaces as an error.
+        let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .context("building confluence http client")?;
+        Ok(Self { http, cfg, token })
     }
 
     fn api(&self, path: &str) -> String {
