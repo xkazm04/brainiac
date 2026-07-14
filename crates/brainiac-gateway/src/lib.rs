@@ -161,14 +161,26 @@ impl ChatProvider for QwenProvider {
             .json(&body);
         let text = self.resilience.send(req, "dashscope").await?;
         let parsed: OpenAiResponse = serde_json::from_str(&text).context("dashscope parse")?;
+        // Empty `choices` (content-filter stub, or an error shaped as 200) is "no
+        // answer", not "empty answer" — returning it as Ok would have the pipeline
+        // extract from "" (0 memories) and nothing goes red. Fail so it retries /
+        // surfaces instead of manufacturing a hollow success.
         let content = parsed
             .choices
             .first()
             .map(|c| c.message.content.clone())
-            .unwrap_or_default();
-        let usage = parsed.usage.unwrap_or(OpenAiUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
+            .ok_or_else(|| anyhow::anyhow!("dashscope returned 200 with no choices"))?;
+        // A missing `usage` means "cost unknown", not "cost zero" — never silently
+        // meter a real billed call at 0. Log it so accounting can flag the drift.
+        let usage = parsed.usage.unwrap_or_else(|| {
+            tracing::warn!(
+                model = %self.model,
+                "dashscope response omitted usage — recording 0 tokens for a billed call"
+            );
+            OpenAiUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+            }
         });
         Ok(ChatResponse {
             text: content,
