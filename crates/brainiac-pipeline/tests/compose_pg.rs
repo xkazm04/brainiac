@@ -656,6 +656,7 @@ async fn an_inventing_model_cannot_auto_publish() {
             composed_from: vec![m],
             trigger: "manual".into(),
             policy_decision: RevisionPolicy::AutoPublished,
+            claimed_updated_at: None,
         },
     )
     .await

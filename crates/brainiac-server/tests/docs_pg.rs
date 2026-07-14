@@ -154,6 +154,7 @@ async fn team_page(ctx: &Ctx) -> Uuid {
             composed_from: vec![],
             trigger: "manual".into(),
             policy_decision: brainiac_core::RevisionPolicy::AutoPublished,
+            claimed_updated_at: None,
         },
     )
     .await
@@ -246,6 +247,7 @@ async fn mcp_doc_get_serves_published_pages_and_refuses_unsigned_drafts() {
             composed_from: vec![],
             trigger: "memory_change".into(),
             policy_decision: brainiac_core::RevisionPolicy::NeedsReview,
+            claimed_updated_at: None,
         },
     )
     .await

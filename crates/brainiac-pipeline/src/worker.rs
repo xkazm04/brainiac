@@ -265,6 +265,9 @@ pub async fn compose_tick(
                         composed_from: out.composed_from,
                         trigger: out.trigger,
                         policy_decision: out.policy,
+                        // CAS token: only clear dirty_at if the page wasn't
+                        // re-dirtied during this compose (see insert_revision).
+                        claimed_updated_at: Some(doc.updated_at),
                     },
                 )
                 .await?;

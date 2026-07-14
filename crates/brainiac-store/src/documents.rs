@@ -214,6 +214,15 @@ pub struct NewRevision {
     pub composed_from: Vec<Uuid>,
     pub trigger: String,
     pub policy_decision: RevisionPolicy,
+    /// The document's `updated_at` as the compose worker observed it when it
+    /// claimed this page from the dirty list. Used as a compare-and-swap token:
+    /// `dirty_at` is cleared ONLY if `updated_at` is unchanged since the claim, so
+    /// a dependency-memory change that landed mid-compose (which bumps
+    /// `updated_at` via `mark_dirty*`) leaves the page dirty for the next tick
+    /// instead of being silently marked clean. `None` clears unconditionally (the
+    /// pre-CAS behavior) for callers with no compose-window race — e.g. tests and
+    /// direct one-shot writes.
+    pub claimed_updated_at: Option<DateTime<Utc>>,
 }
 
 /// Write a revision and, when it auto-publishes, make it current.
@@ -259,13 +268,21 @@ pub async fn insert_revision(conn: &mut PgConnection, r: &NewRevision) -> Result
         .await?;
     }
 
-    // The page is clean again either way: a needs_review revision has been
-    // *produced*, so re-composing it on the next tick would just burn tokens
-    // reproducing the same pending revision. Publication is the human's call;
-    // freshness of the attempt is ours.
+    // The page is clean again — UNLESS a dependency memory changed during the
+    // (multi-second, LLM-bound) compose window. `mark_dirty*` bumps `updated_at`
+    // on every call, so if it no longer matches the value the worker claimed, a
+    // change landed mid-compose and this freshly written revision is already
+    // stale: keep the page dirty so the next tick recomposes it. Otherwise a
+    // needs_review revision has been *produced*, so clearing avoids burning tokens
+    // reproducing the same pending revision. current_revision/status still update
+    // unconditionally — the revision was written and (if auto) published.
     sqlx::query(
         "UPDATE documents
-         SET dirty_at = NULL,
+         SET dirty_at = CASE
+                 WHEN $4::timestamptz IS NULL THEN NULL
+                 WHEN updated_at IS NOT DISTINCT FROM $4 THEN NULL
+                 ELSE dirty_at
+             END,
              updated_at = now(),
              current_revision = CASE WHEN $2 THEN $3 ELSE current_revision END,
              status = CASE WHEN $2 THEN 'published' ELSE status END
@@ -274,6 +291,7 @@ pub async fn insert_revision(conn: &mut PgConnection, r: &NewRevision) -> Result
     .bind(r.document_id)
     .bind(published)
     .bind(r.id)
+    .bind(r.claimed_updated_at)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -359,19 +377,48 @@ pub async fn approve_revision(
     reviewer: Uuid,
     at: DateTime<Utc>,
 ) -> Result<bool> {
-    let row = sqlx::query(
+    // Read the target revision (existence + not-yet-reviewed gate) alongside the
+    // page's CURRENT revision timestamp, and lock the document so a concurrent
+    // auto-publish can't slip a newer revision in between this check and the
+    // promotion below.
+    let Some(row) = sqlx::query(
+        "SELECT r.document_id, r.created_at AS rev_created, cur.created_at AS cur_created
+         FROM document_revisions r
+         JOIN documents d ON d.id = r.document_id
+         LEFT JOIN document_revisions cur ON cur.id = d.current_revision
+         WHERE r.id = $1 AND r.reviewed_by IS NULL
+         FOR UPDATE OF d",
+    )
+    .bind(revision_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(false); // gone, or already reviewed
+    };
+    let doc_id: Uuid = row.get("document_id");
+    let rev_created: DateTime<Utc> = row.get("rev_created");
+    let cur_created: Option<DateTime<Utc>> = row.get("cur_created");
+    // Reject a backwards move: while this revision sat in review, a memory change
+    // may have auto-published a NEWER revision as current. Approving the older one
+    // would republish content built from since-superseded memories — a confident
+    // republish of known-stale belief. Leave it pending so the UI can prompt a
+    // recompose. (dirty_at is intentionally NOT cleared here: if the page is dirty
+    // it must still recompose — clearing it would drop those pending changes.)
+    if let Some(cur) = cur_created {
+        if rev_created < cur {
+            return Ok(false);
+        }
+    }
+    sqlx::query(
         "UPDATE document_revisions
          SET reviewed_by = $2, published_at = $3, policy_decision = 'auto_published'
-         WHERE id = $1 AND reviewed_by IS NULL
-         RETURNING document_id",
+         WHERE id = $1 AND reviewed_by IS NULL",
     )
     .bind(revision_id)
     .bind(reviewer)
     .bind(at)
-    .fetch_optional(&mut *conn)
+    .execute(&mut *conn)
     .await?;
-    let Some(row) = row else { return Ok(false) };
-    let doc_id: Uuid = row.get("document_id");
     sqlx::query(
         "UPDATE documents SET current_revision = $2, status = 'published', updated_at = now()
          WHERE id = $1",

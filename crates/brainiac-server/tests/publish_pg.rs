@@ -167,6 +167,7 @@ async fn published_page(ctx: &Ctx, slug: &str, visibility: Visibility) -> Uuid {
             composed_from: vec![],
             trigger: "manual".into(),
             policy_decision: RevisionPolicy::AutoPublished,
+            claimed_updated_at: None,
         },
     )
     .await
@@ -291,6 +292,7 @@ async fn a_rotting_corpus_trips_the_breaker_and_pages_hold() {
                 composed_from: vec![],
                 trigger: "memory_change".into(),
                 policy_decision: RevisionPolicy::AutoPublished,
+                claimed_updated_at: None,
             },
         )
         .await
