@@ -18,6 +18,7 @@
 //! exploratory decision-table artifact (no gates).
 
 pub mod contradiction_profile;
+pub mod docs_profile;
 pub mod extraction_profile;
 pub mod gates;
 pub mod grid;

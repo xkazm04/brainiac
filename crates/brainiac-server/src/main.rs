@@ -573,6 +573,89 @@ async fn worker_loop(
     Ok(())
 }
 
+/// The `docs` profile (EVAL.md §2.6): compose the gold pages with a REAL
+/// provider and score the result. Like `extraction`, it measures what an actual
+/// model does, so it REQUIRES a real provider rather than silently scoring a
+/// mock — a mock composer cites perfectly by construction and would report a
+/// safety that was never tested.
+///
+/// Three of its findings are absolute build failures, not scores: a leaked
+/// forbidden memory, an altered pinned section, a page that failed to pick up a
+/// superseding belief. Those are the promises the wiki is sold on.
+async fn eval_docs(
+    store: &Store,
+    fx: &brainiac_fixtures::Fixtures,
+    embedder: &dyn Embedder,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::docs_profile::{regression_failures, run, DocsBaseline};
+
+    let default: Arc<dyn brainiac_gateway::ChatProvider> =
+        brainiac_gateway::QwenProvider::from_env()
+            .map(|p| Arc::new(p) as Arc<dyn brainiac_gateway::ChatProvider>)
+            .context(
+                "the `docs` profile measures REAL composition quality and needs a real provider — \
+             set QWEN_API_KEY (or DASHSCOPE_API_KEY). A mock composer cites perfectly by \
+             construction, so scoring one would report a safety it never tested.",
+            )?;
+    let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
+
+    let report = run(store, fx, embedder, &providers).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "docs report written");
+        }
+        None => println!("{json}"),
+    }
+    tracing::info!(
+        provider = %report.provider,
+        coverage = report.coverage,
+        hallucination_rate = report.hallucination_rate,
+        leaks = report.leaks.len(),
+        pin_violations = report.pin_violations.len(),
+        staleness_failures = report.staleness_failures.len(),
+        auto_published_hallucinations = report.auto_published_hallucinations,
+        "composition quality"
+    );
+
+    if let Some(path) = write_baseline_path {
+        let baseline = DocsBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "docs baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: DocsBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "DOCS GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "docs regression gates passed");
+    }
+    Ok(())
+}
+
 /// The `extraction` profile: score a REAL provider's extraction against gold with
 /// semantic matching. Unlike `pipeline` (gold MockProvider), this measures actual
 /// LLM extraction quality, so it REQUIRES a real provider — it errors clearly
@@ -665,9 +748,9 @@ async fn eval(
     anyhow::ensure!(
         matches!(
             profile,
-            "retrieval" | "resolution" | "pipeline" | "contradiction" | "extraction"
+            "retrieval" | "resolution" | "pipeline" | "contradiction" | "extraction" | "docs"
         ),
-        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|extraction"
+        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|extraction|docs"
     );
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
@@ -713,6 +796,18 @@ async fn eval(
         return eval_pipeline(
             &store,
             &admin,
+            &fx,
+            embedder.as_ref(),
+            out,
+            baseline_path,
+            write_baseline_path,
+        )
+        .await;
+    }
+
+    if profile == "docs" {
+        return eval_docs(
+            &store,
             &fx,
             embedder.as_ref(),
             out,

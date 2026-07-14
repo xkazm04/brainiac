@@ -1,0 +1,35 @@
+{
+  "fixture_version": "v1",
+  "embedding_model": "qwen:text-embedding-v4",
+  "provider": "qwen:qwen-max",
+  "match_threshold": 0.7,
+  "leaks": [],
+  "pin_violations": [],
+  "staleness_failures": [],
+  "auto_published_hallucinations": 0,
+  "claims_required": 3,
+  "claims_covered": 3,
+  "coverage": 1.0,
+  "hallucination_rate": 0.0625,
+  "unshipped_marked": 1,
+  "unshipped_required": 1,
+  "per_document": [
+    {
+      "document": "doc-psp-gateway",
+      "policy": "needs_review",
+      "claims_required": 2,
+      "claims_covered": 2,
+      "prose_sentences": 10,
+      "uncited_sentences": 0
+    },
+    {
+      "document": "doc-chargeback-settlement",
+      "policy": "needs_review",
+      "claims_required": 1,
+      "claims_covered": 1,
+      "prose_sentences": 6,
+      "uncited_sentences": 1
+    }
+  ],
+  "misses": []
+}

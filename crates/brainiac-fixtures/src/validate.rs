@@ -81,6 +81,7 @@ const F_CONTRADICTIONS: &str = "contradictions/cases.yaml";
 const F_TEMPORAL: &str = "temporal/asof.yaml";
 const F_QA: &str = "retrieval/qa.yaml";
 const F_LEAK: &str = "retrieval/leak.yaml";
+const F_DOCUMENTS: &str = "documents/pages.yaml";
 
 /// Flat-string view of [`lint`] — the loader's bail-on-invalid contract.
 pub fn validate(fx: &Fixtures) -> Vec<String> {
@@ -162,6 +163,96 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
         F_TRANSCRIPTS,
         &mut e,
     );
+    check_unique(
+        fx.documents.documents.iter().map(|d| d.id.as_str()),
+        "document",
+        F_DOCUMENTS,
+        &mut e,
+    );
+
+    // ── composition gold (EVAL §2.6) ─────────────────────────────────────
+    // The leak list is the highest-stakes reference in the whole tree: a typo'd
+    // memory id there would make the zero-tolerance leak gate PASS VACUOUSLY —
+    // the eval would be checking that a memory which does not exist never
+    // appears. That is worse than having no gate at all, because it reports
+    // safety it never verified.
+    for d in &fx.documents.documents {
+        if !team_ids.contains(d.team.as_str()) {
+            e.err(
+                "doc-team-unknown",
+                F_DOCUMENTS,
+                d.id.clone(),
+                format!("unknown team `{}`", d.team),
+            );
+        }
+        for fm in &d.forbidden_memories {
+            if !memories.contains_key(fm.as_str()) {
+                e.err(
+                    "doc-forbidden-unknown",
+                    F_DOCUMENTS,
+                    d.id.clone(),
+                    format!(
+                        "forbidden_memories references unknown memory `{fm}` — the leak gate \
+                         would pass vacuously"
+                    ),
+                );
+            }
+        }
+        if let Some(sc) = &d.staleness_case {
+            for m in [&sc.supersede.old, &sc.supersede.new] {
+                if !memories.contains_key(m.as_str()) {
+                    e.err(
+                        "doc-staleness-unknown",
+                        F_DOCUMENTS,
+                        d.id.clone(),
+                        format!("staleness_case references unknown memory `{m}`"),
+                    );
+                }
+            }
+        }
+        for s in &d.sections {
+            match s.mode.as_str() {
+                "composed" => {
+                    if s.bindings.is_none() {
+                        e.err(
+                            "doc-section-shape",
+                            F_DOCUMENTS,
+                            d.id.clone(),
+                            format!("composed section `{}` has no bindings", s.heading),
+                        );
+                    }
+                    if let Some(b) = &s.bindings {
+                        for ent in &b.entities {
+                            if !entities.contains_key(ent.as_str()) {
+                                e.err(
+                                    "doc-binding-entity-unknown",
+                                    F_DOCUMENTS,
+                                    d.id.clone(),
+                                    format!("binding references unknown entity `{ent}`"),
+                                );
+                            }
+                        }
+                    }
+                }
+                "pinned" => {
+                    if s.pinned_content.is_none() {
+                        e.err(
+                            "doc-section-shape",
+                            F_DOCUMENTS,
+                            d.id.clone(),
+                            format!("pinned section `{}` has no content", s.heading),
+                        );
+                    }
+                }
+                other => e.err(
+                    "doc-section-mode",
+                    F_DOCUMENTS,
+                    d.id.clone(),
+                    format!("unknown section mode `{other}`"),
+                ),
+            }
+        }
+    }
 
     // Stable-uuid collision check across every id namespace we persist.
     {

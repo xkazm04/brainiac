@@ -21,6 +21,9 @@ pub struct Fixtures {
     pub temporal: TemporalFile,
     pub qa: QaFile,
     pub leak: LeakFile,
+    /// Composition gold (EVAL §2.6). Absent in older fixture trees — an empty
+    /// list simply means the `docs` profile has nothing to score.
+    pub documents: DocumentsFile,
 }
 
 fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -71,6 +74,14 @@ pub fn load_unvalidated(root: impl AsRef<Path>) -> Result<Fixtures> {
         temporal: read_yaml(&root.join("temporal/asof.yaml"))?,
         qa: read_yaml(&root.join("retrieval/qa.yaml"))?,
         leak: read_yaml(&root.join("retrieval/leak.yaml"))?,
+        documents: {
+            let p = root.join("documents/pages.yaml");
+            if p.exists() {
+                read_yaml(&p)?
+            } else {
+                DocumentsFile { documents: vec![] }
+            }
+        },
         root,
     };
     Ok(fixtures)

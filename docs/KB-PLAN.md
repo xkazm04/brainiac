@@ -195,14 +195,47 @@ Ordered roughly by leverage; none block the phase ladder.
         first-revision-needs-a-human then additive auto-publish; `detail_md`
         reaches the page verbatim; a fabricated citation cannot auto-publish.
         Full workspace suite green.
-      - **OPEN GATE — the `docs` eval profile (EVAL §2.6) is NOT built.** The
-        integration tests pin the deterministic invariants (leak = 0, pin
-        preservation, staleness propagation, policy) against a mock model. What
-        is still unmeasured is REAL-model quality: LLM-judged claim coverage and
-        hallucination rate on `fixtures/v1/documents/` gold, which §2.6
-        specifies and which is the gate that would let auto-publish be trusted
-        with a real provider. KB2 must not ship a reader over pages whose prose
-        quality has never been measured.
+- [x] **KB1 gate CLOSED — the `docs` eval profile** (2026-07-14)
+      - `fixtures/v1/documents/pages.yaml`: composition gold per EVAL §2.6. Two
+        pages over the Meridian corpus — an org `entity_page` for psp-gateway
+        whose corpus deliberately contains team-private and personal-private
+        landmines, and a topic page whose only claim is `in_flight` (so the
+        page must MARK it unshipped, not state it as architecture).
+      - `brainiac-fixtures`: doc gold schema + referential validation. The leak
+        list gets its own rule: a typo'd memory id there would make the
+        zero-tolerance gate pass VACUOUSLY — checking that a memory which does
+        not exist never appears — which is worse than having no gate, because it
+        reports a safety it never verified.
+      - `brainiac-eval::docs_profile` + `brainiac eval --profile docs`
+        (real provider required — a mock composer cites perfectly by
+        construction). Three findings are absolute build failures, not scores:
+        a leaked forbidden memory, an altered pinned section, a page that
+        failed to pick up a superseding belief. Coverage and hallucination rate
+        are soft-gated at RATE_DELTA 0.15 against `results/docs-baseline.json`.
+      - Leak detection is belt-and-braces: a forbidden memory fails the run if
+        its id is in the provenance closure OR if its content appears in the
+        prose semantically — a model can leak a fact by paraphrasing it without
+        ever citing it, and id-checking alone would call that page clean.
+      - **RESULT on real qwen-max** (`results/kb1-docs.json`): coverage 1.0
+        (3/3 claims), hallucination 0.0, unshipped correctly marked 1/1,
+        **leaks 0, pin violations 0, staleness failures 0, auto-published
+        hallucinations 0**. Gate run against the committed baseline exits 0.
+        Across two runs hallucination varied 0.0–0.06 (one uncited sentence) —
+        and in both, `auto_published_hallucinations` stayed 0, i.e. the citation
+        firewall held the revision in review rather than publishing it. That is
+        the design working, not luck.
+      - Two real bugs the profile found, both now fixed:
+        1. `documents` had no RLS DELETE policy (migration 0019) — every delete
+           silently affected zero rows, the classic RLS failure mode.
+        2. The profile's first version counted a human's PINNED prose as
+           uncited model output, reporting a 0.133 hallucination rate for a page
+           whose model output was fully cited. A metric that blames the wrong
+           author is worse than no metric — it sends someone hunting a
+           hallucination that never happened. Regression test added.
+      - Known flakiness (pre-existing, not introduced here): the Postgres test
+        binaries share one database and each truncates, so `cargo test
+        --workspace` can race across binaries. `-- --test-threads=1` is green
+        (29/29). Worth fixing properly — per-binary schemas or a shared lock.
 - [ ] KB5 public surfaces (KB page, pitch, README, docs/KNOWLEDGE-BASE.md) —
       landed alongside KB1; honesty guard tests pin every public claim to this
       status log.

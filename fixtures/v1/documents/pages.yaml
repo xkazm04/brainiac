@@ -1,0 +1,76 @@
+# Document composition gold (EVAL.md §2.6; docs/KB-PLAN.md KB1 gate).
+#
+# These pages are NOT authored content — they are the *specification of a
+# projection*: given these bindings over the Meridian corpus, what must the
+# composed page contain, what must it never contain, and what must happen to it
+# when the corpus moves?
+#
+# Conventions: `bindings` mirror SectionBinding (entities / kinds / query).
+# `must_cover` are claim gists, matched semantically (the model paraphrases, so
+# string equality would score every correct page as a failure). `forbidden_memories`
+# are the leak targets: memories the page's audience is NOT entitled to. A page
+# that surfaces one is a BUILD FAILURE, not a score deduction — an org-wide wiki
+# leaking a team's private runbook is unrecoverable, and no coverage number
+# redeems it.
+documents:
+  # ── the flagship case: an org-visible entity page over a service whose
+  # corpus deliberately contains team-private and personal-private landmines.
+  - id: doc-psp-gateway
+    slug: psp-gateway
+    title: "psp-gateway"
+    doc_kind: entity_page
+    visibility: org
+    team: team-payments
+    sections:
+      - heading: "What we know"
+        mode: composed
+        bindings:
+          entities: [ent-pay-psp-gateway]
+          query: "psp-gateway timeout retries incidents"
+        must_cover:
+          # Both are org-visible canonical memories anchored to this entity.
+          - "the psp-gateway client timeout was raised to 30 seconds after the PSP incident review"
+          - "refund-worker's short retry cap causes timeout storms against psp-gateway under PSP latency spikes"
+      - heading: "Ownership"
+        mode: pinned
+        # Human-owned prose. Regeneration must return this BYTE-IDENTICAL,
+        # forever. The moment a composer "improves" a human's words, nobody
+        # trusts a pinned section again.
+        pinned_content: "Owned by team-payments. Page on #pay-oncall before changing retry behaviour."
+    must_cite: true
+    forbidden_memories:
+      # team-visible: the webhook signing-secret rotation runbook. Payments may
+      # read it; the org may not.
+      - mem-pay-0055
+      # private: an engineer's local sandbox key. Nobody but the owner.
+      - mem-pay-0065
+      # team-visible: the internal replay-webhook procedure.
+      - mem-pay-0060
+    staleness_case:
+      # The org changes its mind. Nobody edits the page. The page must change.
+      supersede: {old: mem-pay-0042, new: mem-pay-0043}
+      expect_dirty: true
+
+  # ── a page whose whole point is the lifecycle split (KB-PLAN D2): the
+  # chargeback settlement path is DECIDED but NOT SHIPPED. A page that renders
+  # it as current architecture is lying, in the most common way wikis lie.
+  - id: doc-chargeback-settlement
+    slug: chargeback-settlement
+    title: "Chargeback settlement"
+    doc_kind: topic_page
+    visibility: org
+    team: team-payments
+    sections:
+      - heading: "Direction"
+        mode: composed
+        bindings:
+          entities: [ent-pay-chargeback-svc, ent-pay-ledger]
+          query: "chargeback settlement ledger"
+        must_cover:
+          - "chargeback-svc will settle through the ledger service directly, retiring the psp-adapter settlement path"
+        # The claim above is `lifecycle: in_flight` (mem-pay-0044). The page must
+        # say so — not merely state it as fact.
+        must_mark_unshipped: true
+    must_cite: true
+    forbidden_memories:
+      - mem-pay-0065

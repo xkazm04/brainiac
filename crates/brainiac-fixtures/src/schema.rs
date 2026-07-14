@@ -127,6 +127,86 @@ pub struct RelationFx {
     pub dst: String,
 }
 
+// ── documents/pages.yaml (EVAL.md §2.6 — composition gold) ──────────────
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DocumentsFile {
+    pub documents: Vec<DocumentFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DocumentFx {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    #[serde(default = "default_doc_kind")]
+    pub doc_kind: String,
+    #[serde(default = "default_doc_visibility")]
+    pub visibility: String,
+    /// Owning team (a team page's audience; recorded for org pages too).
+    pub team: String,
+    pub sections: Vec<DocSectionFx>,
+    #[serde(default)]
+    pub must_cite: bool,
+    /// Memories the page's audience is NOT entitled to. Surfacing one is a
+    /// build failure — see the zero-tolerance gate in EVAL §2.6.
+    #[serde(default)]
+    pub forbidden_memories: Vec<String>,
+    #[serde(default)]
+    pub staleness_case: Option<StalenessCaseFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DocSectionFx {
+    pub heading: String,
+    /// composed | pinned
+    pub mode: String,
+    #[serde(default)]
+    pub bindings: Option<BindingFx>,
+    #[serde(default)]
+    pub pinned_content: Option<String>,
+    /// Claim gists the composed section must contain (semantically matched).
+    #[serde(default)]
+    pub must_cover: Vec<String>,
+    /// The section's knowledge is not-yet-shipped, so the prose must SAY so
+    /// (KB-PLAN D2) — a page that renders intent as current architecture is
+    /// lying in the most common way a wiki lies.
+    #[serde(default)]
+    pub must_mark_unshipped: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct BindingFx {
+    #[serde(default)]
+    pub entities: Vec<String>,
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    #[serde(default)]
+    pub lifecycle: Vec<String>,
+    #[serde(default)]
+    pub query: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct StalenessCaseFx {
+    pub supersede: SupersedeFx,
+    #[serde(default)]
+    pub expect_dirty: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SupersedeFx {
+    pub old: String,
+    pub new: String,
+}
+
+fn default_doc_kind() -> String {
+    "topic_page".into()
+}
+fn default_doc_visibility() -> String {
+    "org".into()
+}
+
 // ── transcripts/*.yaml ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

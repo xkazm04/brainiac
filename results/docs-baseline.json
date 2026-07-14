@@ -1,0 +1,7 @@
+{
+  "embedding_model": "qwen:text-embedding-v4",
+  "provider": "qwen:qwen-max",
+  "fixture_version": "v1",
+  "coverage": 1.0,
+  "hallucination_rate": 0.0
+}
