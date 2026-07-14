@@ -56,6 +56,12 @@ enum Command {
         #[arg(long)]
         mock: bool,
     },
+    /// Scan every org for PRACTICE DIVERGENCES — the standardization sweep. An
+    /// LLM adjudicates cross-team clusters (anchored on shared canonical
+    /// entities) into named practices with a recommended standard, stored for
+    /// the /v1/analytics/practice-divergence surface. Operator/scheduled sweep;
+    /// needs a real provider (QWEN_API_KEY). Point it at the production DB.
+    ScanDivergence,
     /// Run an eval profile against a fixture tree. DESTRUCTIVE to the
     /// connected database (re-seeds the tenant) — point it at a dev/eval DB.
     Eval {
@@ -190,6 +196,7 @@ async fn main() -> Result<()> {
         Command::Mcp => mcp().await,
         Command::Reembed { embedder } => reembed(embedder.as_deref()).await,
         Command::Worker { mock } => worker(mock).await,
+        Command::ScanDivergence => scan_divergence().await,
         Command::Eval {
             fixtures,
             profile,
@@ -371,6 +378,23 @@ async fn mcp() -> Result<()> {
 /// Reembed backfill (ARCHITECTURE.md §3 stage 8). Runs on the admin
 /// (RLS-bypassing) pool because it is a cross-org operator sweep; it writes only
 /// derived embeddings. Resumable + idempotent.
+async fn scan_divergence() -> Result<()> {
+    let url = database_url()?;
+    brainiac_store::migrate(&url).await?;
+    let pool = brainiac_store::admin_pool(&url).await?;
+    let provider = brainiac_gateway::QwenProvider::from_env().context(
+        "scan-divergence adjudicates with a real provider — set QWEN_API_KEY (or DASHSCOPE_API_KEY)",
+    )?;
+    let stats = brainiac_pipeline::divergence::scan_all(&pool, &provider).await?;
+    pool.close().await;
+    tracing::info!(
+        clusters = stats.clusters,
+        divergences = stats.divergences,
+        "practice-divergence scan finished"
+    );
+    Ok(())
+}
+
 async fn reembed(embedder_name: Option<&str>) -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;

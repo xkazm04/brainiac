@@ -136,6 +136,27 @@
         }
       }
     },
+    "/v1/analytics/practice-divergence": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "description": "Practice divergences the org should standardize — cross-team clusters an LLM sweep judged to be the SAME practice solved DIFFERENTLY, each with a recommended standard. RLS-scoped. Populated by the `scan-divergence` sweep.",
+        "operationId": "practice_divergence",
+        "responses": {
+          "200": {
+            "description": "Detected practice divergences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeDivergenceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/audit": {
       "get": {
         "tags": [
@@ -3534,6 +3555,64 @@
             "type": "integer",
             "format": "int64",
             "description": "Total pipeline runs visible to the caller — the full trail length,\nindependent of the page window."
+          }
+        }
+      },
+      "PracticeDivergence": {
+        "type": "object",
+        "required": [
+          "practice",
+          "summary",
+          "recommended_standard",
+          "impact",
+          "approaches",
+          "detected_at"
+        ],
+        "properties": {
+          "approaches": {
+            "description": "Each team's approach: [{team, approach}]."
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "impact": {
+            "type": "string",
+            "description": "high | medium | low."
+          },
+          "model_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which model adjudicated it — provenance for a decision-shaping report."
+          },
+          "practice": {
+            "type": "string",
+            "description": "The named practice, e.g. \"service retry policy\"."
+          },
+          "recommended_standard": {
+            "type": "string",
+            "description": "The adjudicator's recommended single standard."
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line: what actually differs between the teams."
+          }
+        }
+      },
+      "PracticeDivergenceResponse": {
+        "type": "object",
+        "required": [
+          "divergences"
+        ],
+        "properties": {
+          "divergences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeDivergence"
+            },
+            "description": "Detected divergences, highest-impact first. Empty until the first scan."
           }
         }
       },

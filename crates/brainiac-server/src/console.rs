@@ -49,6 +49,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/analytics/observatory", get(observatory))
         .route("/v1/analytics/knowledge-health", get(knowledge_health))
         .route(
+            "/v1/analytics/practice-divergence",
+            get(practice_divergence),
+        )
+        .route(
             "/v1/analytics/knowledge-health/snapshot",
             post(knowledge_health_snapshot),
         )
@@ -1929,6 +1933,67 @@ pub(crate) async fn knowledge_health_snapshot(
         score: c.score,
         grade: grade_of(c.score).to_string(),
     }))
+}
+
+// ── Practice divergence (the standardization surface) ───────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PracticeDivergence {
+    /// The named practice, e.g. "service retry policy".
+    pub practice: String,
+    /// One line: what actually differs between the teams.
+    pub summary: String,
+    /// The adjudicator's recommended single standard.
+    pub recommended_standard: String,
+    /// high | medium | low.
+    pub impact: String,
+    /// Each team's approach: [{team, approach}].
+    pub approaches: serde_json::Value,
+    /// Which model adjudicated it — provenance for a decision-shaping report.
+    pub model_ref: Option<String>,
+    pub detected_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PracticeDivergenceResponse {
+    /// Detected divergences, highest-impact first. Empty until the first scan.
+    pub divergences: Vec<PracticeDivergence>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/analytics/practice-divergence",
+    tag = "analytics",
+    description = "Practice divergences the org should standardize — cross-team clusters an LLM sweep judged to be the SAME practice solved DIFFERENTLY, each with a recommended standard. RLS-scoped. Populated by the `scan-divergence` sweep.",
+    responses((status = 200, description = "Detected practice divergences", body = PracticeDivergenceResponse))
+)]
+pub(crate) async fn practice_divergence(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<PracticeDivergenceResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let rows = sqlx::query(
+        "SELECT practice, summary, recommended_standard, impact, positions, model_ref, detected_at
+         FROM practice_divergences
+         ORDER BY CASE impact WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, detected_at DESC",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let divergences = rows
+        .iter()
+        .map(|r| PracticeDivergence {
+            practice: r.get("practice"),
+            summary: r.get("summary"),
+            recommended_standard: r.get("recommended_standard"),
+            impact: r.get("impact"),
+            approaches: r.get("positions"),
+            model_ref: r.get("model_ref"),
+            detected_at: r.get("detected_at"),
+        })
+        .collect();
+    Ok(Json(PracticeDivergenceResponse { divergences }))
 }
 
 /// Trim a claim to a legible length for the attention list, on a char boundary.

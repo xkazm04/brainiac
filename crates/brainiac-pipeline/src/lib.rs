@@ -7,6 +7,7 @@
 //! is a worker-loop change, not a redesign.
 
 pub mod contradict;
+pub mod divergence;
 pub mod extract;
 pub mod policy;
 pub mod reembed;

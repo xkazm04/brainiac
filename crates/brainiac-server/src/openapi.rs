@@ -94,6 +94,7 @@ impl Modify for BearerAuth {
         console::observatory,
         console::knowledge_health,
         console::knowledge_health_snapshot,
+        console::practice_divergence,
         // ingest
         console::sources_list,
         console::pipeline_runs,
@@ -197,6 +198,8 @@ impl Modify for BearerAuth {
         console::TrendPoint,
         console::KnowledgeHealthResponse,
         console::SnapshotResponse,
+        console::PracticeDivergence,
+        console::PracticeDivergenceResponse,
         // ingest
         console::SourceRow,
         console::SourceFeedResponse,
