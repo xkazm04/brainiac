@@ -57,13 +57,37 @@ pub struct QwenProvider {
     resilience: Resilience,
 }
 
+/// The HTTP client every provider call uses. reqwest applies NO default timeout,
+/// so a stalled-but-connected upstream (slow-loris, LB half-close, model overload)
+/// would hang the awaiting future forever — producing neither an error nor a
+/// status, so the retry loop never fires and the circuit breaker never opens. A
+/// connect + total-request timeout turns a stall into a retryable/breaker-
+/// recordable error. reqwest's `.timeout()` is per `send()`, so it bounds each
+/// resilience attempt while the retry loop still governs total attempts. Tunable
+/// via BRAINIAC_GATEWAY_CONNECT_TIMEOUT_SECS / BRAINIAC_GATEWAY_REQUEST_TIMEOUT_SECS.
+fn build_http_client() -> reqwest::Client {
+    fn secs(key: &str, default: u64) -> std::time::Duration {
+        let n = std::env::var(key)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(default);
+        std::time::Duration::from_secs(n)
+    }
+    reqwest::Client::builder()
+        .connect_timeout(secs("BRAINIAC_GATEWAY_CONNECT_TIMEOUT_SECS", 10))
+        .timeout(secs("BRAINIAC_GATEWAY_REQUEST_TIMEOUT_SECS", 60))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 impl QwenProvider {
     pub const DEFAULT_BASE: &'static str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
     pub const DEFAULT_MODEL: &'static str = "qwen-max";
 
     pub fn new(api_key: String, model: Option<String>, base_url: Option<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             base_url: base_url.unwrap_or_else(|| Self::DEFAULT_BASE.to_string()),
             api_key,
             model: model.unwrap_or_else(|| Self::DEFAULT_MODEL.to_string()),
@@ -179,7 +203,7 @@ impl QwenEmbedder {
 
     pub fn new(api_key: String, base_url: Option<String>, dim: Option<usize>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             base_url: base_url.unwrap_or_else(|| QwenProvider::DEFAULT_BASE.to_string()),
             api_key,
             model: Self::DEFAULT_MODEL.to_string(),
