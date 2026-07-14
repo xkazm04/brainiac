@@ -1,0 +1,8 @@
+{
+  "embedding_model": "qwen:text-embedding-v4",
+  "provider": "qwen:qwen-max",
+  "fixture_version": "v1",
+  "recall": 0.4583,
+  "precision": 0.6111,
+  "micro_f1": 0.5238
+}

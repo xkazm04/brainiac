@@ -526,6 +526,83 @@ async fn worker_loop(
     Ok(())
 }
 
+/// The `extraction` profile: score a REAL provider's extraction against gold with
+/// semantic matching. Unlike `pipeline` (gold MockProvider), this measures actual
+/// LLM extraction quality, so it REQUIRES a real provider — it errors clearly
+/// without one rather than silently scoring a mock. Runs the extract stage on
+/// Qwen (per-stage overrides honoured), tags the report with the extract model.
+async fn eval_extraction(
+    store: &Store,
+    admin: &sqlx::PgPool,
+    fx: &brainiac_fixtures::Fixtures,
+    embedder: &dyn Embedder,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::extraction_profile::{regression_failures, run, ExtractionBaseline};
+
+    let default: Arc<dyn brainiac_gateway::ChatProvider> = brainiac_gateway::QwenProvider::from_env()
+        .map(|p| Arc::new(p) as Arc<dyn brainiac_gateway::ChatProvider>)
+        .context(
+            "the `extraction` profile measures REAL extraction quality and needs a real provider — \
+             set QWEN_API_KEY (or DASHSCOPE_API_KEY). It is a nightly/on-demand per-provider run, \
+             not a per-commit gate; use the `pipeline` profile for the deterministic plumbing check.",
+        )?;
+    let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
+
+    let report = run(store, admin, fx, embedder, &providers).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "extraction report written");
+        }
+        None => println!("{json}"),
+    }
+    tracing::info!(
+        provider = %report.provider,
+        recall = report.recall,
+        precision = report.precision,
+        micro_f1 = report.micro_f1,
+        misses = report.misses.len(),
+        "extraction quality"
+    );
+
+    if let Some(path) = write_baseline_path {
+        let baseline = ExtractionBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "extraction baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: ExtractionBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "REGRESSION GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "extraction regression gates passed");
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn eval(
     fixtures_dir: &str,
@@ -541,9 +618,9 @@ async fn eval(
     anyhow::ensure!(
         matches!(
             profile,
-            "retrieval" | "resolution" | "pipeline" | "contradiction"
+            "retrieval" | "resolution" | "pipeline" | "contradiction" | "extraction"
         ),
-        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction"
+        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|extraction"
     );
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
@@ -587,6 +664,19 @@ async fn eval(
 
     if profile == "pipeline" {
         return eval_pipeline(
+            &store,
+            &admin,
+            &fx,
+            embedder.as_ref(),
+            out,
+            baseline_path,
+            write_baseline_path,
+        )
+        .await;
+    }
+
+    if profile == "extraction" {
+        return eval_extraction(
             &store,
             &admin,
             &fx,

@@ -88,7 +88,7 @@ struct ExtractedEntity {
     name: String,
     #[serde(default = "default_entity_kind")]
     kind: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_lenient_vec")]
     aliases: Vec<String>,
 }
 
@@ -241,9 +241,69 @@ fn ttl_days(kind: MemoryKind) -> Option<i64> {
     (days > 0).then_some(days)
 }
 
+/// Extract the outermost JSON array from provider output (string/escape aware).
+/// Real BYOM extractors (Qwen in JSON mode) intermittently DROP the `{memories:…}`
+/// wrapper and return a bare array of memories; this recovers it.
+pub fn extract_json_array(s: &str) -> Option<&str> {
+    let start = s.find('[')?;
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Parse an extractor response into the typed output, or return the failure
-/// reason (used verbatim in the repair re-prompt).
+/// reason (used verbatim in the repair re-prompt). Tolerant of the shapes real
+/// BYOM providers emit even in JSON mode (found via the `extraction` eval on
+/// Qwen, which failed ~half the transcripts before this): the canonical
+/// `{"memories":[…]}` object, a bare `[…]` array with the wrapper dropped, and —
+/// critically — the case where the outermost `{` is actually the FIRST memory
+/// (so an object-only parse would silently yield zero). We try both shapes and
+/// keep whichever recovered more memories, so a dropped wrapper can never
+/// masquerade as an empty extraction.
 fn parse_extraction(text: &str) -> std::result::Result<ExtractionOutput, String> {
+    let obj_out =
+        extract_json_object(text).and_then(|s| serde_json::from_str::<ExtractionOutput>(s).ok());
+    let arr_out = extract_json_array(text)
+        .and_then(|s| serde_json::from_str::<Vec<ExtractedMemory>>(s).ok())
+        .map(|memories| ExtractionOutput { memories });
+    if let Some(best) = match (obj_out, arr_out) {
+        (Some(o), Some(a)) => Some(if a.memories.len() > o.memories.len() {
+            a
+        } else {
+            o
+        }),
+        (Some(o), None) => Some(o),
+        (None, Some(a)) => Some(a),
+        (None, None) => None,
+    } {
+        return Ok(best);
+    }
+    // Nothing parsed either way — report the sharpest reason to drive the repair.
     let json_str =
         extract_json_object(text).ok_or_else(|| "no JSON object in response".to_string())?;
     serde_json::from_str(json_str).map_err(|e| e.to_string())
@@ -556,6 +616,29 @@ mod tests {
         assert_eq!(b.memories.len(), 1);
         assert_eq!(b.memories[0].entities.len(), 1);
         assert_eq!(b.memories[0].entities[0].name, "ledger-service");
+    }
+
+    #[test]
+    fn recovers_bare_array_and_null_aliases() {
+        // Real Qwen (JSON mode) intermittently drops the {memories:…} wrapper and
+        // returns a bare array — and the FIRST element's `{` would otherwise be
+        // grabbed as an empty ExtractionOutput (silent zero). Both memories must
+        // survive, and a null `aliases` must not fail the whole parse.
+        let bare = r#"[
+            {"kind":"pitfall","content":"a","entities":[{"name":"x","aliases":null}]},
+            {"kind":"decision","content":"b"}
+        ]"#;
+        let out = parse_extraction(bare).expect("bare array recovered");
+        assert_eq!(
+            out.memories.len(),
+            2,
+            "dropped-wrapper array must not read as empty"
+        );
+        assert_eq!(out.memories[0].entities[0].aliases.len(), 0);
+
+        // Prose-wrapped bare array (the model chatting around the JSON).
+        let noisy = "Here you go:\n[{\"kind\":\"fact\",\"content\":\"c\"}]\nHope that helps!";
+        assert_eq!(parse_extraction(noisy).expect("noisy").memories.len(), 1);
     }
 
     #[test]

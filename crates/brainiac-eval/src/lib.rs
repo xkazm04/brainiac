@@ -18,6 +18,7 @@
 //! exploratory decision-table artifact (no gates).
 
 pub mod contradiction_profile;
+pub mod extraction_profile;
 pub mod gates;
 pub mod grid;
 pub mod pipeline_profile;
@@ -27,6 +28,7 @@ pub mod retrieval_profile;
 pub mod seed;
 
 pub use contradiction_profile::ContradictionReport;
+pub use extraction_profile::ExtractionReport;
 pub use pipeline_profile::PipelineReport;
 pub use report::RetrievalReport;
 pub use resolution_profile::ResolutionReport;
