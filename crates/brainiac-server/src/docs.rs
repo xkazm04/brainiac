@@ -395,7 +395,13 @@ pub(crate) async fn doc_edit(
     Path(slug): Path<String>,
     Json(body): Json<EditSectionBody>,
 ) -> Result<Json<EditSectionResponse>, HttpError> {
-    let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
+    // Editing a page mutates org-visible state: a pinned edit auto-publishes into
+    // the live markdown on the next compose (no review), and a composed edit is
+    // injected into the extraction pipeline framed as a maintainer's belief. That
+    // is a write, and must not be reachable with a read-only token — the same bar
+    // doc_approve sets ("a token minted to READ the KB must not be able to sign
+    // one"). RLS visibility (can-see) is not authorization (can-mutate).
+    let principal = auth_of(&state, &headers, SCOPE_KB_PUBLISH).await?.principal;
     let content = body.content.trim().to_string();
     if content.is_empty() {
         return Err((
@@ -412,6 +418,21 @@ pub(crate) async fn doc_edit(
         .ok_or_else(|| -> HttpError {
             (StatusCode::NOT_FOUND, "document not found".to_string()).into()
         })?;
+    // Same maintainer gate as doc_approve: only a maintainer of the owning team
+    // (or any org maintainer for an org-wide page) may edit a section. Without
+    // this, a read-scoped agent token could rewrite published pinned prose and
+    // inject "a maintainer edited …"-framed text into extraction.
+    let allowed = match doc.team_id {
+        Some(team) => crate::console::is_maintainer(&mut tx, &principal, team).await?,
+        None => is_any_maintainer(&mut tx, &principal).await?,
+    };
+    if !allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "only a maintainer of the owning team may edit a page section".to_string(),
+        )
+            .into());
+    }
     let sections = brainiac_store::documents::sections(&mut tx, doc.id)
         .await
         .map_err(internal)?;
