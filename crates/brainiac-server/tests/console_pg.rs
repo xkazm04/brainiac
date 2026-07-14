@@ -294,6 +294,39 @@ async fn console_reviews_graph_analytics() {
         .iter()
         .any(|c| c["status"] == "resolved_supersede"));
 
+    // ── knowledge health: the leadership report ───────────────────────────
+    let r = http
+        .get(format!("{base}/v1/analytics/knowledge-health"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("knowledge-health");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    let score = body["score"].as_i64().expect("score");
+    assert!((0..=100).contains(&score), "score in range: {score}");
+    assert!(matches!(
+        body["grade"].as_str().expect("grade"),
+        "Healthy" | "Watch" | "At risk" | "Critical"
+    ));
+    // Four pillars, all present and in range.
+    for k in ["consistency", "currency", "liquidity", "governance"] {
+        let v = body["pillars"][k].as_i64().unwrap_or(-1);
+        assert!((0..=100).contains(&v), "pillar {k} in range: {v}");
+    }
+    // The signals expose the flagship org-level number.
+    assert!(
+        body["signals"]["canonical_entities"]
+            .as_i64()
+            .expect("canon")
+            > 0
+    );
+    // The attention list is the score made actionable — at least present.
+    assert!(
+        body["attention"].is_array(),
+        "attention list present: {body}"
+    );
+
     // ── cortex map: overview ──────────────────────────────────────────────
     let r = http
         .get(format!("{base}/v1/graph/overview"))

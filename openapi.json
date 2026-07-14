@@ -72,6 +72,27 @@
         }
       }
     },
+    "/v1/analytics/knowledge-health": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "description": "The leadership Knowledge Health report: a tracked composite score over four pillars (consistency, currency, liquidity, governance), the org-level signals behind it, and a ranked attention list. RLS-scoped — a leader sees their org's view.",
+        "operationId": "knowledge_health",
+        "responses": {
+          "200": {
+            "description": "Knowledge Health report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/analytics/observatory": {
       "get": {
         "tags": [
@@ -2630,6 +2651,133 @@
           }
         }
       },
+      "KhAttention": {
+        "type": "object",
+        "required": [
+          "severity",
+          "kind",
+          "headline",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "contradiction | staleness | silo | governance"
+          },
+          "severity": {
+            "type": "string",
+            "description": "critical | warning | info — encodes urgency in form, not just number."
+          }
+        }
+      },
+      "KhPillars": {
+        "type": "object",
+        "required": [
+          "consistency",
+          "currency",
+          "liquidity",
+          "governance"
+        ],
+        "properties": {
+          "consistency": {
+            "type": "integer",
+            "format": "int64",
+            "description": "100 − penalty for the org contradicting itself (cross-team conflicts hurt most)."
+          },
+          "currency": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Share of the corpus that is still current (not superseded/expired)."
+          },
+          "governance": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Is the review queue actually being worked (backlog age vs the 48h SLO)."
+          },
+          "liquidity": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How much knowledge crosses team lines — the \"together-picture\" density."
+          }
+        }
+      },
+      "KhSignals": {
+        "type": "object",
+        "required": [
+          "total_memories",
+          "canonical_entities",
+          "cross_team_entities",
+          "open_contradictions",
+          "cross_team_contradictions",
+          "stale_beliefs",
+          "org_wide",
+          "team_only",
+          "siloed_private",
+          "liquidity_pct",
+          "review_backlog",
+          "oldest_review_secs"
+        ],
+        "properties": {
+          "canonical_entities": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cross_team_contradictions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open contradictions where the two sides belong to DIFFERENT teams — the ones\nno individual team can see. The flagship signal."
+          },
+          "cross_team_entities": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Canonical entities carrying knowledge from ≥2 teams — the graph doing its job."
+          },
+          "liquidity_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "org_wide / total, as a percentage — knowledge liquidity."
+          },
+          "oldest_review_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "open_contradictions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "org_wide": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "review_backlog": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "siloed_private": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stale_beliefs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Superseded/expired beliefs still sitting in the corpus (landmines)."
+          },
+          "team_only": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_memories": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "KindTeamCount": {
         "type": "object",
         "required": [
@@ -2647,6 +2795,44 @@
           },
           "team": {
             "type": "string"
+          }
+        }
+      },
+      "KnowledgeHealthResponse": {
+        "type": "object",
+        "required": [
+          "score",
+          "grade",
+          "pillars",
+          "signals",
+          "attention",
+          "embedding_model"
+        ],
+        "properties": {
+          "attention": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KhAttention"
+            },
+            "description": "Ranked, most-urgent-first — the whole point: turn the score into action."
+          },
+          "embedding_model": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "description": "Healthy | Watch | At risk | Critical."
+          },
+          "pillars": {
+            "$ref": "#/components/schemas/KhPillars"
+          },
+          "score": {
+            "type": "integer",
+            "format": "int64",
+            "description": "0–100 composite the org tracks week over week."
+          },
+          "signals": {
+            "$ref": "#/components/schemas/KhSignals"
           }
         }
       },

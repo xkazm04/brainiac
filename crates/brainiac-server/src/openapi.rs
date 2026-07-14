@@ -92,6 +92,7 @@ impl Modify for BearerAuth {
         // analytics
         console::analytics,
         console::observatory,
+        console::knowledge_health,
         // ingest
         console::sources_list,
         console::pipeline_runs,
@@ -189,6 +190,10 @@ impl Modify for BearerAuth {
         console::TopEntity,
         console::ObservatoryReview,
         console::ObservatoryResponse,
+        console::KhPillars,
+        console::KhSignals,
+        console::KhAttention,
+        console::KnowledgeHealthResponse,
         // ingest
         console::SourceRow,
         console::SourceFeedResponse,

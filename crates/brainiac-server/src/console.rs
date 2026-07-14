@@ -47,6 +47,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/graph", get(graph))
         .route("/v1/analytics", get(analytics))
         .route("/v1/analytics/observatory", get(observatory))
+        .route("/v1/analytics/knowledge-health", get(knowledge_health))
         .route("/v1/graph/overview", get(graph_overview))
         .route("/v1/graph/canonical/{id}", get(graph_canonical))
         .route("/v1/memories", get(memories_list))
@@ -1464,6 +1465,316 @@ pub(crate) async fn observatory(
         },
         embedding_model: state.embedder.model_name().to_string(),
     }))
+}
+
+// ── Knowledge Health (the leadership product surface) ───────────────────
+//
+// One call, one page a VP Eng gets weekly. Where `observatory` is an operator's
+// dashboard of the pipeline, this answers the *organizational* question the whole
+// architecture exists for: is the org's collective knowledge consistent, current,
+// liquid, and governed — the four things no individual can see. It rolls the
+// org-level signals into a single tracked score plus a ranked "what needs your
+// attention" list, so the value is legible to a buyer who never opens the graph.
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KhPillars {
+    /// 100 − penalty for the org contradicting itself (cross-team conflicts hurt most).
+    pub consistency: i64,
+    /// Share of the corpus that is still current (not superseded/expired).
+    pub currency: i64,
+    /// How much knowledge crosses team lines — the "together-picture" density.
+    pub liquidity: i64,
+    /// Is the review queue actually being worked (backlog age vs the 48h SLO).
+    pub governance: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KhSignals {
+    pub total_memories: i64,
+    pub canonical_entities: i64,
+    /// Canonical entities carrying knowledge from ≥2 teams — the graph doing its job.
+    pub cross_team_entities: i64,
+    pub open_contradictions: i64,
+    /// Open contradictions where the two sides belong to DIFFERENT teams — the ones
+    /// no individual team can see. The flagship signal.
+    pub cross_team_contradictions: i64,
+    /// Superseded/expired beliefs still sitting in the corpus (landmines).
+    pub stale_beliefs: i64,
+    pub org_wide: i64,
+    pub team_only: i64,
+    pub siloed_private: i64,
+    /// org_wide / total, as a percentage — knowledge liquidity.
+    pub liquidity_pct: i64,
+    pub review_backlog: i64,
+    pub oldest_review_secs: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KhAttention {
+    /// critical | warning | info — encodes urgency in form, not just number.
+    pub severity: String,
+    /// contradiction | staleness | silo | governance
+    pub kind: String,
+    pub headline: String,
+    pub detail: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KnowledgeHealthResponse {
+    /// 0–100 composite the org tracks week over week.
+    pub score: i64,
+    /// Healthy | Watch | At risk | Critical.
+    pub grade: String,
+    pub pillars: KhPillars,
+    pub signals: KhSignals,
+    /// Ranked, most-urgent-first — the whole point: turn the score into action.
+    pub attention: Vec<KhAttention>,
+    pub embedding_model: String,
+}
+
+fn clamp100(v: i64) -> i64 {
+    v.clamp(0, 100)
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/analytics/knowledge-health",
+    tag = "analytics",
+    description = "The leadership Knowledge Health report: a tracked composite score over four pillars (consistency, currency, liquidity, governance), the org-level signals behind it, and a ranked attention list. RLS-scoped — a leader sees their org's view.",
+    responses((status = 200, description = "Knowledge Health report", body = KnowledgeHealthResponse))
+)]
+pub(crate) async fn knowledge_health(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<KnowledgeHealthResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    // Corpus size + currency (deprecated or past valid_to = stale).
+    let corpus = sqlx::query(
+        "SELECT
+           count(*) AS total,
+           count(*) FILTER (WHERE status = 'deprecated'
+                              OR (valid_to IS NOT NULL AND valid_to < now())) AS stale,
+           count(*) FILTER (WHERE visibility = 'org')     AS org_wide,
+           count(*) FILTER (WHERE visibility = 'team')    AS team_only,
+           count(*) FILTER (WHERE visibility = 'private') AS private_siloed
+         FROM memories WHERE status <> 'rejected'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let total: i64 = corpus.get("total");
+    let stale: i64 = corpus.get("stale");
+    let org_wide: i64 = corpus.get("org_wide");
+    let team_only: i64 = corpus.get("team_only");
+    let siloed: i64 = corpus.get("private_siloed");
+
+    // Contradictions — total open, and the cross-team subset (the flagship).
+    let contra = sqlx::query(
+        "SELECT
+           count(*) AS open,
+           count(*) FILTER (WHERE ma.team_id IS DISTINCT FROM mb.team_id) AS cross_team
+         FROM contradictions c
+         JOIN memories ma ON ma.id = c.memory_a
+         JOIN memories mb ON mb.id = c.memory_b
+         WHERE c.status = 'open'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let open_contra: i64 = contra.get("open");
+    let cross_contra: i64 = contra.get("cross_team");
+
+    // Graph coverage: canonical entities, and how many span ≥2 teams.
+    let graph = sqlx::query(
+        "WITH spans AS (
+           SELECT ce.id, count(DISTINCT e.team_id) AS teams
+           FROM canonical_entities ce
+           JOIN entity_links el ON el.canonical_id = ce.id
+           JOIN entities e ON e.id = el.entity_id
+           GROUP BY ce.id)
+         SELECT count(*) AS canon, count(*) FILTER (WHERE teams >= 2) AS cross_team
+         FROM spans",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let canon: i64 = graph.get("canon");
+    let cross_entities: i64 = graph.get("cross_team");
+
+    // Governance: review backlog + oldest pending age (the SLO clock).
+    let gov = sqlx::query(
+        "SELECT count(*) AS pending,
+                COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::bigint AS oldest
+         FROM promotions WHERE policy_decision = 'needs_review' AND reviewed_at IS NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let backlog: i64 = gov.get("pending");
+    let oldest: i64 = gov.get("oldest");
+
+    // ── pillar scores ──────────────────────────────────────────────────
+    // Consistency: an org contradicting itself is the cardinal sin; a cross-team
+    // conflict costs far more than an intra-team one (no one can see it).
+    let intra = (open_contra - cross_contra).max(0);
+    let consistency = clamp100(100 - (cross_contra * 30 + intra * 10));
+    // Currency: fraction of the corpus that is still true.
+    let currency = if total > 0 {
+        clamp100(((total - stale) as f64 / total as f64 * 100.0).round() as i64)
+    } else {
+        100
+    };
+    // Liquidity: how much of the together-picture the graph actually assembles —
+    // the share of canonical entities that carry ≥2 teams' knowledge.
+    let liquidity = if canon > 0 {
+        clamp100((cross_entities as f64 / canon as f64 * 100.0).round() as i64)
+    } else {
+        0
+    };
+    // Governance: full marks for an empty queue; degrade as the oldest item ages
+    // past the org's own 48h review SLO, and for sheer depth.
+    let slo_secs = 48 * 3600;
+    let age_penalty = ((oldest as f64 / slo_secs as f64) * 40.0).round() as i64;
+    let depth_penalty = (backlog * 3).min(40);
+    let governance = clamp100(100 - age_penalty - depth_penalty);
+
+    // Composite — consistency carries the most weight; it's the flagship claim.
+    let composite = (consistency as f64 * 0.35)
+        + (currency as f64 * 0.25)
+        + (governance as f64 * 0.20)
+        + (liquidity as f64 * 0.20);
+    // Cardinal-sin cap: a weighted average would let a strong corpus dilute an
+    // unreconciled cross-team conflict down to a ~10-point ding, so a report could
+    // read "Healthy" while the org silently contradicts itself. Cap the headline
+    // so ONE cross-team contradiction drops it out of Healthy and each additional
+    // one bites hard — the flagship signal must move the number a leader watches.
+    let cross_cap = 100 - cross_contra * 22;
+    let score = clamp100((composite.round() as i64).min(cross_cap));
+    let grade = match score {
+        85..=100 => "Healthy",
+        70..=84 => "Watch",
+        55..=69 => "At risk",
+        _ => "Critical",
+    }
+    .to_string();
+
+    // ── attention list (ranked; the score made actionable) ──────────────
+    let mut attention: Vec<KhAttention> = Vec::new();
+
+    // Every open cross-team contradiction, with the actual competing claims.
+    let cross_rows = sqlx::query(
+        "SELECT ta.name AS team_a, ma.content AS claim_a,
+                tb.name AS team_b, mb.content AS claim_b
+         FROM contradictions c
+         JOIN memories ma ON ma.id = c.memory_a JOIN teams ta ON ta.id = ma.team_id
+         JOIN memories mb ON mb.id = c.memory_b JOIN teams tb ON tb.id = mb.team_id
+         WHERE c.status = 'open' AND ma.team_id IS DISTINCT FROM mb.team_id
+         ORDER BY c.created_at LIMIT 5",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    for r in &cross_rows {
+        let (ta, tb): (String, String) = (r.get("team_a"), r.get("team_b"));
+        let (ca, cb): (String, String) = (r.get("claim_a"), r.get("claim_b"));
+        attention.push(KhAttention {
+            severity: "critical".into(),
+            kind: "contradiction".into(),
+            headline: format!("{ta} and {tb} disagree — and neither can see it"),
+            detail: format!(
+                "{ta}: \"{}\"  vs  {tb}: \"{}\"",
+                clip(&ca, 90),
+                clip(&cb, 90)
+            ),
+        });
+    }
+
+    // Stale org-visible beliefs still being served (the widest-blast landmines).
+    let stale_rows = sqlx::query(
+        "SELECT t.name AS team, m.content, m.valid_to::date AS expired
+         FROM memories m JOIN teams t ON t.id = m.team_id
+         WHERE m.status <> 'rejected' AND m.visibility = 'org'
+           AND (m.status = 'deprecated' OR (m.valid_to IS NOT NULL AND m.valid_to < now()))
+         ORDER BY m.valid_to LIMIT 5",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+    for r in &stale_rows {
+        let team: String = r.get("team");
+        let content: String = r.get("content");
+        let expired: Option<chrono::NaiveDate> = r.get("expired");
+        attention.push(KhAttention {
+            severity: "warning".into(),
+            kind: "staleness".into(),
+            headline: format!("Org-wide belief expired but still served ({team})"),
+            detail: format!(
+                "\"{}\"{}",
+                clip(&content, 100),
+                expired
+                    .map(|d| format!(" — superseded {d}"))
+                    .unwrap_or_default()
+            ),
+        });
+    }
+
+    // Governance: SLO breach on the review queue.
+    if oldest > slo_secs {
+        attention.push(KhAttention {
+            severity: "warning".into(),
+            kind: "governance".into(),
+            headline: "Review queue is past the 48h SLO".into(),
+            detail: format!(
+                "{backlog} item(s) pending; oldest waiting {} days. Unreviewed knowledge is served as if governed.",
+                oldest / 86400
+            ),
+        });
+    }
+
+    let liquidity_pct = if total > 0 {
+        (org_wide as f64 / total as f64 * 100.0).round() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(KnowledgeHealthResponse {
+        score,
+        grade,
+        pillars: KhPillars {
+            consistency,
+            currency,
+            liquidity,
+            governance,
+        },
+        signals: KhSignals {
+            total_memories: total,
+            canonical_entities: canon,
+            cross_team_entities: cross_entities,
+            open_contradictions: open_contra,
+            cross_team_contradictions: cross_contra,
+            stale_beliefs: stale,
+            org_wide,
+            team_only,
+            siloed_private: siloed,
+            liquidity_pct,
+            review_backlog: backlog,
+            oldest_review_secs: oldest,
+        },
+        attention,
+        embedding_model: state.embedder.model_name().to_string(),
+    }))
+}
+
+/// Trim a claim to a legible length for the attention list, on a char boundary.
+fn clip(s: &str, n: usize) -> String {
+    let t = s.trim();
+    if t.chars().count() > n {
+        format!("{}…", t.chars().take(n).collect::<String>())
+    } else {
+        t.to_string()
+    }
 }
 
 // ── cortex map (multi-level graph; never ships the whole graph at once) ──
