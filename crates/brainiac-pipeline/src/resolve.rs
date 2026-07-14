@@ -74,17 +74,23 @@ pub async fn resolve_entity(
     entity_aliases: &[String],
 ) -> Result<ResolveOutcome> {
     // Alias-aware lexical fast-path: an exact hit on a canonical name or a
-    // previously-captured alias is unambiguous — link with neither an embedding
-    // round-trip nor a model call. This is what makes cross-team acronyms
-    // ("PSP" ↔ "psp-gateway") resolve without hand-seeded aliases.
+    // previously-captured alias — OF THE SAME KIND — is unambiguous, so link with
+    // neither an embedding round-trip nor a model call. This is what makes
+    // cross-team acronyms ("PSP" ↔ "psp-gateway") resolve without hand-seeded
+    // aliases. The kind guard stops a surface-form collision across kinds (a
+    // person "Mercury" merging into a service "Mercury") from auto-linking at 1.0.
     let surface_forms: Vec<String> = std::iter::once(entity_name.to_string())
         .chain(entity_aliases.iter().cloned())
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
-    if let Some((canonical_id, _kind)) =
-        brainiac_store::entities::find_canonical_by_name_or_alias(conn, org_id, &surface_forms)
-            .await?
+    if let Some((canonical_id, _kind)) = brainiac_store::entities::find_canonical_by_name_or_alias(
+        conn,
+        org_id,
+        entity_kind,
+        &surface_forms,
+    )
+    .await?
     {
         brainiac_store::entities::link(conn, entity_id, canonical_id, 1.0, "alias_lexical", None)
             .await?;

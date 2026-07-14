@@ -276,9 +276,15 @@ pub async fn list_canonicals(
 /// name for the thing, so an exact hit is unambiguous — cheaper and more
 /// precise than embedding similarity, and independent of hand-seeded fixtures.
 /// RLS-scoped to the org via canonical_entities.
+/// Find a canonical entity of the SAME `kind` whose name or an accumulated alias
+/// exactly matches one of `surface_forms` (all lowercased by the caller). Kind
+/// agreement is required: an exact surface-form match is only unambiguous when the
+/// two entities are the same *kind* — otherwise a "person" named "Mercury" would
+/// lexically merge into a "service" called "Mercury".
 pub async fn find_canonical_by_name_or_alias(
     conn: &mut PgConnection,
     org_id: Uuid,
+    kind: &str,
     surface_forms: &[String],
 ) -> Result<Option<(Uuid, String)>> {
     if surface_forms.is_empty() {
@@ -287,15 +293,17 @@ pub async fn find_canonical_by_name_or_alias(
     let row = sqlx::query(
         "SELECT id, kind FROM canonical_entities
          WHERE org_id = $1
+           AND lower(kind) = lower($2)
            AND (
-               lower(name) = ANY($2::text[])
+               lower(name) = ANY($3::text[])
                OR EXISTS (
-                   SELECT 1 FROM unnest(aliases) al WHERE lower(al) = ANY($2::text[])
+                   SELECT 1 FROM unnest(aliases) al WHERE lower(al) = ANY($3::text[])
                )
            )
          LIMIT 1",
     )
     .bind(org_id)
+    .bind(kind)
     .bind(surface_forms)
     .fetch_optional(conn)
     .await?;
