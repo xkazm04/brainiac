@@ -28,6 +28,17 @@
 
 export type Status = "shipped" | "built_off" | "in_progress" | "roadmap";
 
+/** The nav rail's sections, in reading order — drives the shared SectionRail. */
+export const KB_SECTIONS = [
+  { id: "rot", nav: "The rot" },
+  { id: "asymmetry", nav: "Asymmetry" },
+  { id: "anatomy", nav: "Anatomy" },
+  { id: "pipeline", nav: "Rebuild" },
+  { id: "publishing", nav: "Publishing" },
+  { id: "never", nav: "Never" },
+  { id: "status", nav: "Status" },
+];
+
 export const STATUS_LABEL: Record<Status, string> = {
   shipped: "shipped",
   built_off: "built · not enabled",
@@ -43,7 +54,7 @@ export const THESIS =
   "A page is a projection over canonical memories, not a second source of truth. When the memory changes, the page recompiles. That is the whole anti-rot mechanism.";
 
 export const THESIS_BODY =
-  "Every wiki rots for one structural reason: the page is where the knowledge lives, so it drifts from reality and nothing in the system notices. Brainiac inverts that. The page is compiled from governed memories — and the moment a memory is superseded, every page that cited it rebuilds itself.";
+  "Every wiki rots for one structural reason: the page is where the knowledge lives, so it drifts and nothing notices. Brainiac compiles the page from governed memories instead — the drift has nowhere to live.";
 
 export const ROT_CAPTION =
   "Both pages take the same four hits. Only one of them is still telling the truth in December.";
@@ -103,7 +114,7 @@ export interface Property {
   key: string;
   title: string;
   status: Status;
-  claim: string;
+  /** ONE sentence. The figure carries the mechanism; this carries the why. */
   body: string;
   /** What was verified, in visitor language — never a file path. */
   evidence: string;
@@ -114,8 +125,7 @@ export const PROPERTIES: Property[] = [
     key: "projection",
     title: "Pages are projections",
     status: "shipped",
-    claim: "regenerated from memories, never edited into truth",
-    body: "Resolve a contradiction and every page that cited the losing claim rebuilds onto the winner — nobody edits anything, nobody is asked to go check. The dependency index between memories and pages is what makes forgetting impossible.",
+    body: "Resolve a contradiction and every page that cited the losing claim rebuilds onto the winner — nobody edits anything, nobody is asked to go check.",
     evidence:
       "measured on a live model: 100% claim coverage, zero unbacked claims, zero permission leaks",
   },
@@ -123,32 +133,28 @@ export const PROPERTIES: Property[] = [
     key: "lifecycle",
     title: "Shipped and intended are different colours",
     status: "shipped",
-    claim: "in production / on its way / proposed — on every memory",
-    body: "The most common way a wiki lies is printing intent in the same typeface as reality. Every memory carries a lifecycle facet, and pages render the split instead of blending it.",
+    body: "Printing intent in the same typeface as reality is how wikis lie — so a page renders what is real and what is planned as visibly different things.",
     evidence: "on every memory since the substrate release — visible on every composed page",
   },
   {
     key: "structure",
     title: "The config survives the summary",
     status: "shipped",
-    claim: "the artifact is kept beside the sentence that summarizes it",
-    body: "A retry policy is a table, not a clause. Beside the distilled sentence, a memory keeps the artifact itself — the config block, the snippet — and pages show the real thing.",
+    body: "A retry policy is a table, not a clause. The memory keeps the artifact beside the sentence, and the page shows the real thing.",
     evidence: "artifacts are copied character-for-character onto the page — a model never retypes them",
   },
   {
     key: "health-gate",
     title: "A degraded corpus stops publishing",
     status: "built_off",
-    claim: "the health score is a circuit breaker, not a report",
-    body: "When the corpus's currency or governance score drops below its floor, external publishing pauses and pages hold the last human-approved version. Silence beats confident staleness.",
+    body: "Below the floor, external publishing pauses and pages hold the last human-approved version. Silence beats confident staleness.",
     evidence: "verified: degrade the corpus in a test, and the live page keeps its last good revision",
   },
   {
     key: "round-trip",
     title: "Your edit is captured, not saved",
     status: "shipped",
-    claim: "a human editing a page is just another ingestion source",
-    body: "Edit a compiled section and your text is not written into the page — the next rebuild would silently revert it. It becomes proposed knowledge, faces review, and the section then says it on its own.",
+    body: "Your text is never written into the page — the next rebuild would silently revert it. It becomes proposed knowledge, faces the same review as any agent, and the section then says it on its own.",
     evidence: "the button says captured, never saved — and a test fails the build if that ever changes",
   },
 ];
@@ -213,7 +219,7 @@ export const DIRTY_LOOP =
 export const CONFLUENCE = {
   status: "built_off" as Status,
   headline: "You do not have to abandon your wiki. We keep it honest.",
-  body: "Brainiac pushes compiled pages into the spaces your company already reads — each with a generated-content banner and a source link behind every claim. Confluence stops competing for truth and becomes a display. Built and tested; switched on deliberately, per organization, never by an upgrade.",
+  body: "Compiled pages are pushed into the spaces your company already reads — a banner on top, a source link behind every claim. Confluence stops competing for truth and becomes a display.",
   invariants: [
     {
       title: "One-way, always",
@@ -236,7 +242,7 @@ export const CONFLUENCE = {
 
 export const SCOPES = {
   status: "built_off" as Status,
-  body: "The layer is an org-level switch, off by default — a layer you don't need is a layer you don't pay for. Publishing credentials are never stored in the database: a target names an environment variable, so no database dump can ever write to your wiki.",
+  body: "An org-level switch, off by default — a layer you don't need is a layer you don't pay for. Publishing credentials are never stored: no database dump can ever write to your wiki.",
   rows: [
     {
       scope: "kb:read",
@@ -292,7 +298,7 @@ export const LADDER: Phase[] = [
     id: "KB0",
     name: "Substrate",
     status: "shipped",
-    body: "Every memory learned two new facets: its lifecycle (in production / on its way / proposed) and its artifact — the config or code the sentence summarizes. Plus the Knowledge Health report that everything later gates on.",
+    body: "Every memory learned its lifecycle and kept its artifact — plus the Knowledge Health report everything later gates on.",
     gate: "Extraction quality re-measured on a live model after the change — inside the guardrail, no detectable regression.",
     stats: ["recall 0.38 vs 0.42 baseline", "precision 0.73 vs 0.81", "inside the ±0.15 noise band"],
   },
@@ -320,13 +326,13 @@ export const LADDER: Phase[] = [
     id: "KB3",
     name: "Publishing",
     status: "built_off",
-    body: "Git and Confluence targets, token scopes, the org switch, the health breaker — merged, tested, and off. Publishing amplifies the substrate, so it waits for the substrate's own quality gate.",
+    body: "Git and Confluence targets, token scopes, the org switch, the health breaker — merged, tested, off. Publishing amplifies the substrate, so it waits for the substrate's own quality gate.",
   },
   {
     id: "KB4",
     name: "Round-trip",
     status: "shipped",
-    body: "The human edit closes the loop: captured as proposed knowledge, reviewed, recomposed. Propagation is measured and reported on the health page — a wiki that stops self-healing goes red in front of a leader.",
+    body: "An edit becomes proposed knowledge, faces review, recomposes — and propagation is measured, so a wiki that stops self-healing goes red in front of a leader.",
   },
   {
     id: "KB5",

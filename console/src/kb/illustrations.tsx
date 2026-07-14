@@ -20,6 +20,7 @@
 import { useReducedMotion } from "framer-motion";
 
 import { GOLD, MAGENTA, band } from "../design/theme";
+import type { Stage } from "./kb-data";
 
 const MINT = band("beta");
 const ALPHA = band("alpha");
@@ -292,6 +293,166 @@ export function RoundTripLoop() {
       <text x={170} y={126} fontSize={8} textAnchor="middle" fill={dim(0.35)} fontFamily={MONO}>
         your reason travels with the edit — the part a diff can never recover
       </text>
+    </Frame>
+  );
+}
+
+/* ── The compose rail: the whole rebuild, one drawing ─────────────────────────
+ *
+ * Six stations on one line, driven by the same COMPOSE_STAGES data the honesty
+ * tests pin, so the figure cannot drift from the stamps. The two external
+ * stations sit on the far side of a physical gap in the rail — the breaker —
+ * inside a tinted zone labelled with their true state. Station details ride as
+ * native tooltips (<title>), so depth exists without weight.
+ */
+
+export function PipelineFigure({ stages }: { stages: Stage[] }) {
+  const reduce = !!useReducedMotion();
+  const Y = 108;
+  const XS = [120, 216, 312, 408, 560, 668]; // six stations; the gap is the breaker
+  const running = stages.slice(0, 4);
+
+  return (
+    <Frame
+      viewBox="0 0 760 220"
+      label="A memory change flows through bind, cap, compose, and diff — then stops at the breaker; the gate and publish stations exist but are switched off."
+      minWidth={640}
+    >
+      {/* the change that starts everything */}
+      <circle cx={44} cy={Y} r={10} fill="hsla(46,90%,60%,0.12)" stroke={GOLD} strokeWidth={1.3} />
+      <circle cx={44} cy={Y} r={3} fill={GOLD} />
+      {!reduce && (
+        <circle cx={44} cy={Y} r={10} fill="none" stroke={GOLD} strokeWidth={1}>
+          <animate attributeName="r" values="10;22" dur="2.6s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0.6;0" dur="2.6s" repeatCount="indefinite" />
+        </circle>
+      )}
+      <text x={44} y={Y + 34} fontSize={8.5} textAnchor="middle" fill={dim(0.5)} fontFamily={MONO}>
+        a memory
+      </text>
+      <text x={44} y={Y + 45} fontSize={8.5} textAnchor="middle" fill={dim(0.5)} fontFamily={MONO}>
+        changes
+      </text>
+
+      {/* the running rail */}
+      <line x1={56} y1={Y} x2={XS[3]} y2={Y} stroke={dim(0.18)} strokeWidth={1.2} />
+      {!reduce && (
+        <circle r={3} fill={GOLD}>
+          <animateMotion dur="4s" repeatCount="indefinite" path={`M56,${Y} L ${XS[3] - 20},${Y}`} />
+        </circle>
+      )}
+
+      {running.map((s, i) => (
+        <g key={s.n}>
+          <title>{s.body}</title>
+          <circle cx={XS[i]} cy={Y} r={17} fill="#08070c" stroke={MINT} strokeWidth={1.3} />
+          <text x={XS[i]} y={Y + 3.5} fontSize={9} textAnchor="middle" fill={MINT} fontFamily={MONO}>
+            {s.n}
+          </text>
+          <text x={XS[i]} y={Y - 28} fontSize={9.5} textAnchor="middle" fill="#ffffff" fontFamily={MONO}>
+            {s.name.toLowerCase()}
+          </text>
+        </g>
+      ))}
+
+      {/* the fork at diff: additive self-publishes, a dropped claim gets a human */}
+      <path d={`M${XS[3]},${Y - 17} C ${XS[3]},70 ${XS[3] + 36},64 ${XS[3] + 58},64`} fill="none" stroke={MINT} strokeWidth={1} />
+      <text x={XS[3] + 64} y={60} fontSize={8} fill={MINT} fontFamily={MONO}>
+        additive → publishes itself
+      </text>
+      <text x={XS[3] + 64} y={71} fontSize={8} fill={dim(0.35)} fontFamily={MONO}>
+        every claim cited, none dropped
+      </text>
+      <path d={`M${XS[3]},${Y + 17} C ${XS[3]},156 ${XS[3] + 36},162 ${XS[3] + 58},162`} fill="none" stroke={GOLD} strokeWidth={1} strokeDasharray="3 3" />
+      <text x={XS[3] + 64} y={158} fontSize={8} fill={GOLD} fontFamily={MONO}>
+        drops a claim → a human decides
+      </text>
+      <text x={XS[3] + 64} y={169} fontSize={8} fill={dim(0.35)} fontFamily={MONO}>
+        the same queue as every promotion
+      </text>
+
+      {/* the breaker: a literal gap in the rail */}
+      <line x1={488} y1={Y - 26} x2={488} y2={Y + 26} stroke={GOLD} strokeWidth={1.3} strokeDasharray="4 3" />
+      <text x={488} y={Y - 34} fontSize={8.5} textAnchor="middle" fill={GOLD} fontFamily={MONO}>
+        the breaker
+      </text>
+
+      {/* the dark side: built, and off */}
+      <rect x={508} y={44} width={236} height={132} rx={10} fill="hsla(46,90%,60%,0.03)" stroke="hsla(46,90%,68%,0.25)" strokeDasharray="5 4" />
+      <text x={626} y={34} fontSize={8.5} textAnchor="middle" fill={GOLD} fontFamily={MONO}>
+        ◍ built · not enabled
+      </text>
+      <line x1={508} y1={Y} x2={XS[4] - 17} y2={Y} stroke={dim(0.14)} strokeWidth={1.2} strokeDasharray="3 4" />
+      <line x1={XS[4] + 17} y1={Y} x2={XS[5] - 17} y2={Y} stroke={dim(0.14)} strokeWidth={1.2} strokeDasharray="3 4" />
+      <line x1={XS[5] + 17} y1={Y} x2={744} y2={Y} stroke={dim(0.14)} strokeWidth={1.2} strokeDasharray="3 4" />
+
+      {stages.slice(4).map((s, i) => (
+        <g key={s.n} opacity={0.9}>
+          <title>{s.body}</title>
+          <circle cx={XS[4 + i]} cy={Y} r={17} fill="#08070c" stroke={GOLD} strokeWidth={1} />
+          <circle cx={XS[4 + i]} cy={Y} r={13} fill="none" stroke={GOLD} strokeWidth={0.8} />
+          <text x={XS[4 + i]} y={Y + 3.5} fontSize={9} textAnchor="middle" fill={GOLD} fontFamily={MONO}>
+            {s.n}
+          </text>
+          <text x={XS[4 + i]} y={Y - 28} fontSize={9.5} textAnchor="middle" fill="#ffffff" fontFamily={MONO}>
+            {s.name.toLowerCase()}
+          </text>
+        </g>
+      ))}
+      <text x={626} y={Y + 40} fontSize={8} textAnchor="middle" fill={dim(0.4)} fontFamily={MONO}>
+        → your wiki, when the org flips the switch
+      </text>
+    </Frame>
+  );
+}
+
+/* ── The refusals: a panel of switches that do not exist ──────────────────────
+ *
+ * Four blanked-off switch positions, riveted shut. Not "off" — ABSENT: there is
+ * no lever to flip, because each of these would put the rot back. The captions
+ * beside the figure carry the one-line why.
+ */
+
+const REFUSED = [
+  "BIDIRECTIONAL SYNC",
+  "AGENT PAGE-WRITE",
+  "INVENTED DIAGRAMS",
+  "PRIVATE DATA OUTBOUND",
+];
+
+export function NoSwitches() {
+  return (
+    <Frame viewBox="0 0 320 232" label="Four switches this product refuses to have: bidirectional sync, agents writing pages, invented diagrams, private data outbound.">
+      <rect x={12} y={10} width={296} height={212} rx={10} fill="rgba(255,255,255,0.015)" stroke={dim(0.14)} />
+      {/* corner rivets */}
+      {[
+        [26, 24],
+        [294, 24],
+        [26, 208],
+        [294, 208],
+      ].map(([x, y]) => (
+        <circle key={`${x}-${y}`} cx={x} cy={y} r={2.2} fill={dim(0.18)} />
+      ))}
+
+      {REFUSED.map((label, i) => {
+        const y = 40 + i * 46;
+        return (
+          <g key={label}>
+            {/* the blanked switch position: a housing with a plate where the
+                lever would be, and a weld across it */}
+            <rect x={34} y={y} width={44} height={26} rx={6} fill="rgba(0,0,0,0.3)" stroke={dim(0.2)} />
+            <rect x={40} y={y + 5} width={32} height={16} rx={4} fill="rgba(255,255,255,0.03)" stroke={dim(0.1)} />
+            <line x1={40} y1={y + 5} x2={72} y2={y + 21} stroke={MAGENTA} strokeWidth={1.6} />
+            <line x1={72} y1={y + 5} x2={40} y2={y + 21} stroke={MAGENTA} strokeWidth={1.6} />
+            <text x={92} y={y + 12} fontSize={9} letterSpacing="1.2" fill={dim(0.75)} fontFamily={MONO}>
+              {label}
+            </text>
+            <text x={92} y={y + 24} fontSize={7.5} fill={MAGENTA} fontFamily={MONO}>
+              no lever fitted — not a setting, not a tier
+            </text>
+          </g>
+        );
+      })}
     </Frame>
   );
 }
