@@ -163,9 +163,8 @@ export default function ProjectionDiagram() {
       </svg>
 
       <p className={`${FONT_MONO} mt-4 text-[11px] leading-relaxed`} style={{ color: dim(0.35) }}>
-        The document layer is <span style={{ color: ALPHA }}>in progress (KB1)</span> — this is the
-        design, drawn from <code>docs/ARCHITECTURE.md</code> §8, not a screenshot of a running
-        feature.
+        Drawn deterministically — the same rule the product holds its own diagrams to: compiled
+        from structure, never imagined.
       </p>
     </div>
   );

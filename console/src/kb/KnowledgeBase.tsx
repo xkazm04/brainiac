@@ -3,26 +3,39 @@
 /*
  * The knowledge base — the wiki that cannot rot.
  *
- * Told in seven moves:
- *   1. the thesis      — a page is a projection, not a second source of truth
- *   2. the asymmetry   — the one-way relationship, drawn
- *   3. the properties  — four claims, each stamped shipped / in progress / roadmap
- *   4. the pipeline    — how a page is actually built
- *   5. Confluence      — the incumbent becomes a render target (roadmap)
- *   6. never           — what this layer will refuse to do
- *   7. the ladder      — the honest status of every phase, checkable in the repo
+ * Told in seven moves, each led by a DRAWING with text as commentary — the
+ * page practices what it preaches: concepts are compiled into diagrams the way
+ * the product compiles knowledge into pages, and prose only carries what a
+ * drawing cannot.
  *
- * Honesty rule inherited from pitch-data.ts:1-19 and enforced by kb-data.test.ts:
- * every capability carries an explicit status and nothing unbuilt is drawn as
- * shipped. A doc layer that lies on its own landing page has already lost the
- * argument it is making.
+ *   1. the thesis      — the decay curve, drawn (and labelled a schematic)
+ *   2. the asymmetry   — the one-way relationship, drawn
+ *   3. the properties  — five claims, each with its own mechanism sketch
+ *   4. the pipeline    — six stages on a rail, the breaker visibly off
+ *   5. publishing      — one-way into the wiki you already read, drawn
+ *   6. never           — the refusals
+ *   7. the ladder      — the honest status of every phase
+ *
+ * Honesty rule enforced by kb-data.test.ts: every capability carries a status
+ * stamp and nothing is overstated or understated. Audience rule enforced by the
+ * same tests: no file paths, no internal table names — a visitor cannot open
+ * the repo mid-sentence, so the page never asks them to.
  */
 
 import Link from "next/link";
-import { motion, useScroll, useSpring } from "framer-motion";
+import { motion, useReducedMotion, useScroll, useSpring } from "framer-motion";
 
 import { BG, FONT_DISPLAY, FONT_MONO, GOLD, GOLD_GLOW, LABEL, MAGENTA, band } from "../design/theme";
 import ProjectionDiagram from "./ProjectionDiagram";
+import RotCurve from "./RotCurve";
+import {
+  ArtifactSurvives,
+  GateMeter,
+  LifecycleSplit,
+  OneWayPublish,
+  PropagationSpark,
+  RoundTripLoop,
+} from "./illustrations";
 import {
   ASYMMETRY,
   CHECK_US,
@@ -32,6 +45,7 @@ import {
   LADDER,
   NEVER,
   PROPERTIES,
+  ROT_CAPTION,
   SCOPES,
   STATUS_LABEL,
   THESIS,
@@ -49,15 +63,9 @@ const rise = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.2, 0.7, 0.3, 1] as const } },
 };
 
-/* The one piece of visual vocabulary this page adds to the system: a status
-   stamp. Shipped is mint (the console's "active recall" band), in-progress is
-   gold, roadmap is a dashed cyan outline — dashed because it is not there.
-
-   `built · not enabled` (KB3's external publishing) gets its own treatment:
-   gold, and solid — the code IS there — but ringed rather than filled, because
-   nothing is running. It must be impossible to mistake for shipped and equally
-   impossible to mistake for roadmap. Understating is as dishonest as
-   overstating, and this stamp is the page's proof that we know the difference. */
+/* Status stamps. Shipped is mint, roadmap a dashed cyan outline. `built · not
+   enabled` is gold and ringed rather than filled — the code IS there, nothing
+   is running. Impossible to read as shipped, impossible to read as roadmap. */
 const STATUS_TONE: Record<Status, string> = {
   shipped: MINT,
   built_off: GOLD,
@@ -143,9 +151,93 @@ function Lede({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* Panel: the shared quiet surface every drawing sits on. */
+function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <motion.div
+      variants={rise}
+      className={`rounded-xl border p-5 md:p-8 ${className}`}
+      style={{ borderColor: dim(0.1), background: "rgba(255,255,255,0.02)" }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/* The property cards each lead with their mechanism drawing. */
+const PROPERTY_ART: Record<string, React.ReactNode> = {
+  projection: <PropagationSpark />,
+  lifecycle: <LifecycleSplit />,
+  structure: <ArtifactSurvives />,
+  "health-gate": <GateMeter />,
+  "round-trip": <RoundTripLoop />,
+};
+
+/* One stage on the compose rail. */
+function StageNode({
+  n,
+  name,
+  status,
+  body,
+  index,
+  pulseCount,
+}: {
+  n: string;
+  name: string;
+  status: Status;
+  body: string;
+  index: number;
+  pulseCount: number;
+}) {
+  const reduce = !!useReducedMotion();
+  const tone = STATUS_TONE[status];
+  const beat = 0.7;
+  return (
+    <div className="relative p-5" style={{ background: BG }}>
+      <div className="flex items-center gap-3">
+        <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">
+          <span
+            className={`${FONT_MONO} flex h-9 w-9 items-center justify-center rounded-full border text-[10px]`}
+            style={{ borderColor: tone, color: tone, borderStyle: status === "built_off" ? "double" : "solid" }}
+          >
+            {n}
+          </span>
+          {!reduce && (
+            <motion.span
+              className="absolute inset-0 rounded-full border"
+              style={{ borderColor: tone }}
+              initial={{ opacity: 0, scale: 1 }}
+              animate={{ opacity: [0, 0.7, 0], scale: [1, 1.5, 1.8] }}
+              transition={{
+                duration: beat,
+                delay: index * beat,
+                repeat: Infinity,
+                repeatDelay: pulseCount * beat - beat,
+                ease: "easeOut",
+              }}
+            />
+          )}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold tracking-tight text-white">{name}</div>
+          <div className={`${FONT_MONO} text-[9px] uppercase tracking-[0.14em]`} style={{ color: tone }}>
+            {STATUS_GLYPH[status]} {STATUS_LABEL[status]}
+          </div>
+        </div>
+      </div>
+      <p className={`${FONT_MONO} mt-3 text-[11px] leading-relaxed`} style={{ color: dim(0.55) }}>
+        {body}
+      </p>
+    </div>
+  );
+}
+
 export default function KnowledgeBase() {
   const { scrollYProgress } = useScroll();
   const progress = useSpring(scrollYProgress, { stiffness: 90, damping: 30 });
+
+  const railStages = COMPOSE_STAGES.slice(0, 4);
+  const breakerStages = COMPOSE_STAGES.slice(4);
 
   return (
     <div className={`${FONT_DISPLAY} min-h-screen`} style={{ background: BG, color: INK }}>
@@ -174,7 +266,7 @@ export default function KnowledgeBase() {
         </nav>
       </header>
 
-      {/* ─── 1. THE THESIS ───────────────────────────────────────────────── */}
+      {/* ─── 1. THE THESIS + THE DECAY CURVE ─────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-6 pb-8 pt-10 md:pt-16">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
           <div className="flex flex-wrap items-center gap-3">
@@ -193,8 +285,19 @@ export default function KnowledgeBase() {
           <p className={`${FONT_MONO} mt-6 max-w-2xl text-sm leading-relaxed`} style={{ color: dim(0.65) }}>
             {THESIS_BODY}
           </p>
+
+          <div
+            className="mt-10 rounded-xl border p-5 md:p-8"
+            style={{ borderColor: dim(0.1), background: "rgba(255,255,255,0.02)" }}
+          >
+            <RotCurve />
+            <p className="mt-4 max-w-2xl text-base font-medium leading-snug tracking-tight text-white md:text-lg">
+              {ROT_CAPTION}
+            </p>
+          </div>
+
           <p
-            className="mt-8 max-w-3xl border-l-2 pl-6 text-xl font-medium leading-snug tracking-tight text-white md:text-2xl"
+            className="mt-10 max-w-3xl border-l-2 pl-6 text-xl font-medium leading-snug tracking-tight text-white md:text-2xl"
             style={{ borderColor: GOLD }}
           >
             {THESIS}
@@ -209,82 +312,79 @@ export default function KnowledgeBase() {
       <Section eyebrow="the asymmetry" id="asymmetry" tone={ALPHA}>
         <H2>Truth flows one way. There is no way back except through a human.</H2>
         <Lede>
-          The memory layer and the knowledge base are separate, and the relationship between
-          them is deliberately lopsided. Memories compose into pages. Pages never write back
-          into memories — a human edit re-enters through extraction and faces the same review
-          gate as any agent proposal.
+          Memories compose into pages. Pages never write back — a human edit re-enters through
+          extraction and faces the same review gate as any agent proposal.
         </Lede>
 
-        <motion.div
-          variants={rise}
-          className="mt-12 rounded-xl border p-5 md:p-8"
-          style={{ borderColor: "rgba(233,237,255,0.10)", background: "rgba(255,255,255,0.02)" }}
-        >
+        <Panel className="mt-12">
           <ProjectionDiagram />
-        </motion.div>
+        </Panel>
 
-        <div className="mt-10 grid gap-px overflow-hidden rounded-xl border md:grid-cols-2" style={{ borderColor: "rgba(233,237,255,0.10)", background: "rgba(233,237,255,0.08)" }}>
+        {/* the diagram's legend — one line per flow, not four paragraphs */}
+        <motion.div variants={rise} className="mt-8 grid gap-x-10 gap-y-4 md:grid-cols-2">
           {ASYMMETRY.map((f) => (
-            <motion.div key={f.label} variants={rise} className="p-7" style={{ background: BG }}>
-              <div className={`${FONT_MONO} flex items-center gap-2 text-xs`} style={{ color: dim(0.5) }}>
-                <span style={{ color: f.allowed ? dim(0.75) : MAGENTA }}>{f.from}</span>
-                <span style={{ color: f.allowed ? GOLD : MAGENTA }}>{f.allowed ? "→" : "⨯"}</span>
-                <span style={{ color: f.allowed ? dim(0.75) : MAGENTA }}>{f.to}</span>
-              </div>
-              <h3
-                className="mt-3 text-lg font-semibold tracking-tight"
-                style={{ color: f.allowed ? "#fff" : MAGENTA }}
+            <div key={f.label} className="flex gap-3">
+              <span
+                className={`${FONT_MONO} mt-[1px] w-4 shrink-0 text-center text-sm`}
+                style={{ color: f.allowed ? GOLD : MAGENTA }}
               >
-                {f.allowed ? f.label : `${f.label} — never`}
-              </h3>
-              {f.gate && (
-                <div className={`${LABEL} mt-2`} style={{ color: GOLD }}>
-                  through: {f.gate}
-                </div>
-              )}
-              <p className={`${FONT_MONO} mt-3 text-xs leading-relaxed`} style={{ color: dim(0.55) }}>
-                {f.note}
-              </p>
-            </motion.div>
+                {f.allowed ? "→" : "⨯"}
+              </span>
+              <div>
+                <span className="text-sm font-semibold tracking-tight" style={{ color: f.allowed ? "#fff" : MAGENTA }}>
+                  {f.label}
+                  {!f.allowed && " — never"}
+                </span>
+                {f.gate && (
+                  <span className={`${FONT_MONO} ml-2 text-[10px] uppercase tracking-[0.14em]`} style={{ color: GOLD }}>
+                    via {f.gate}
+                  </span>
+                )}
+                <p className={`${FONT_MONO} mt-1 text-[11px] leading-relaxed`} style={{ color: dim(0.5) }}>
+                  {f.note}
+                </p>
+              </div>
+            </div>
           ))}
-        </div>
+        </motion.div>
       </Section>
 
       {/* ─── 3. THE PROPERTIES ───────────────────────────────────────────── */}
-      <Section eyebrow="four properties · four honest statuses" tone={MINT}>
-        <H2>What makes a page that cannot rot — and how much of it exists today.</H2>
+      <Section eyebrow="five properties · five honest stamps" tone={MINT}>
+        <H2>What makes a page that cannot rot.</H2>
         <Lede>
-          Four of these are shipped and you can check every one of them in the repo. One — the
-          health breaker that gates external publishing — is built, tested, and switched off, and
-          says so. Nothing on this page pretends otherwise in either direction.
+          Each mechanism, drawn. Four are shipped and measured; the breaker is built, tested, and
+          deliberately switched off — the stamp says which is which.
         </Lede>
 
         <div className="mt-14 grid gap-6 md:grid-cols-2">
           {PROPERTIES.map((p) => {
-            const tone = STATUS_TONE[p.status];
+            const wide = p.key === "round-trip";
             return (
               <motion.div
                 key={p.key}
                 variants={rise}
-                className="flex flex-col rounded-xl border p-7"
+                className={`flex flex-col rounded-xl border p-6 ${wide ? "md:col-span-2 md:flex-row md:items-center md:gap-8" : ""}`}
                 style={{
-                  borderColor: p.status === "shipped" ? "hsla(158,90%,68%,0.3)" : "rgba(233,237,255,0.10)",
-                  borderStyle: p.status === "roadmap" ? "dashed" : "solid",
-                  background: p.status === "shipped" ? "hsla(158,90%,60%,0.03)" : "rgba(255,255,255,0.02)",
+                  borderColor: p.status === "shipped" ? "hsla(158,90%,68%,0.25)" : "rgba(233,237,255,0.10)",
+                  background: p.status === "shipped" ? "hsla(158,90%,60%,0.025)" : "rgba(255,255,255,0.02)",
                 }}
               >
-                <div className="flex items-start justify-between gap-4">
-                  <h3 className="text-xl font-semibold tracking-tight text-white">{p.title}</h3>
-                  <Stamp status={p.status} />
-                </div>
-                <div className={`${FONT_MONO} mt-3 text-xs`} style={{ color: tone }}>
-                  {p.claim}
-                </div>
-                <p className={`${FONT_MONO} mt-4 flex-1 text-xs leading-relaxed`} style={{ color: dim(0.58) }}>
-                  {p.body}
-                </p>
-                <div className={`${FONT_MONO} mt-5 text-[10px]`} style={{ color: dim(0.32) }}>
-                  check it: {p.evidence}
+                <div className={wide ? "md:w-1/2" : ""}>{PROPERTY_ART[p.key]}</div>
+                <div className={wide ? "mt-5 md:mt-0 md:w-1/2" : "mt-5"}>
+                  <div className="flex items-start justify-between gap-4">
+                    <h3 className="text-lg font-semibold tracking-tight text-white">{p.title}</h3>
+                    <Stamp status={p.status} />
+                  </div>
+                  <div className={`${FONT_MONO} mt-2 text-xs`} style={{ color: STATUS_TONE[p.status] }}>
+                    {p.claim}
+                  </div>
+                  <p className={`${FONT_MONO} mt-3 text-xs leading-relaxed`} style={{ color: dim(0.58) }}>
+                    {p.body}
+                  </p>
+                  <div className={`${FONT_MONO} mt-4 text-[10px] leading-relaxed`} style={{ color: dim(0.35) }}>
+                    verified: {p.evidence}
+                  </div>
                 </div>
               </motion.div>
             );
@@ -292,65 +392,86 @@ export default function KnowledgeBase() {
         </div>
       </Section>
 
-      {/* ─── 4. THE PIPELINE ─────────────────────────────────────────────── */}
+      {/* ─── 4. THE PIPELINE RAIL ────────────────────────────────────────── */}
       <Section eyebrow="how a page is built" id="pipeline">
         <H2>Nobody schedules a doc review. There is nothing to review.</H2>
         <Lede>{DIRTY_LOOP}</Lede>
 
-        <div
-          className="mt-14 grid gap-px overflow-hidden rounded-xl border sm:grid-cols-2 lg:grid-cols-3"
-          style={{ borderColor: "rgba(233,237,255,0.10)", background: "rgba(233,237,255,0.08)" }}
-        >
-          {COMPOSE_STAGES.map((s) => (
-            <motion.div key={s.n} variants={rise} className="p-7" style={{ background: BG }}>
-              <div className="flex items-center justify-between gap-3">
-                <div className={LABEL} style={{ color: STATUS_TONE[s.status] }}>
-                  {s.n} · {s.name}
-                </div>
-                <Stamp status={s.status} />
-              </div>
-              <p className={`${FONT_MONO} mt-4 text-xs leading-relaxed`} style={{ color: dim(0.58) }}>
-                {s.body}
-              </p>
-            </motion.div>
-          ))}
-        </div>
+        <motion.div variants={rise} className="mt-14 flex flex-col gap-6 lg:flex-row lg:items-stretch">
+          {/* the four running stages */}
+          <div
+            className="grid flex-[2] gap-px overflow-hidden rounded-xl border sm:grid-cols-2 lg:grid-cols-4"
+            style={{ borderColor: dim(0.1), background: dim(0.08) }}
+          >
+            {railStages.map((s, i) => (
+              <StageNode key={s.n} {...s} index={i} pulseCount={COMPOSE_STAGES.length} />
+            ))}
+          </div>
+
+          {/* the breaker — where the rail crosses to the outside world */}
+          <div className="flex items-center gap-2 lg:flex-col lg:justify-center lg:px-1">
+            <span className="h-px flex-1 border-t border-dashed lg:h-auto lg:w-px lg:flex-1 lg:border-l lg:border-t-0" style={{ borderColor: GOLD }} />
+            <span className={`${FONT_MONO} whitespace-nowrap text-[9px] uppercase tracking-[0.2em] lg:[writing-mode:vertical-rl]`} style={{ color: GOLD }}>
+              the breaker
+            </span>
+            <span className="h-px flex-1 border-t border-dashed lg:h-auto lg:w-px lg:flex-1 lg:border-l lg:border-t-0" style={{ borderColor: GOLD }} />
+          </div>
+
+          {/* the two external stages — built, and off */}
+          <div
+            className="grid flex-1 gap-px overflow-hidden rounded-xl border sm:grid-cols-2"
+            style={{ borderColor: "hsla(46,90%,68%,0.3)", background: dim(0.08) }}
+          >
+            {breakerStages.map((s, i) => (
+              <StageNode key={s.n} {...s} index={i + railStages.length} pulseCount={COMPOSE_STAGES.length} />
+            ))}
+          </div>
+        </motion.div>
+
+        <motion.p variants={rise} className={`${FONT_MONO} mt-5 text-[11px]`} style={{ color: dim(0.38) }}>
+          stages 01–04 run today on every change · stages 05–06 exist, pass their tests, and stay
+          dark until the org flips the switch
+        </motion.p>
       </Section>
 
-      {/* ─── 5. CONFLUENCE ───────────────────────────────────────────────── */}
-      <Section eyebrow="publishing · roadmap" tone={ALPHA}>
+      {/* ─── 5. PUBLISHING ───────────────────────────────────────────────── */}
+      <Section eyebrow="publishing · built, not enabled" tone={ALPHA}>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Stamp status={CONFLUENCE.status} />
           <span className={`${FONT_MONO} text-xs`} style={{ color: dim(0.4) }}>
-            designed, not built — docs/KB-PLAN.md, phase KB3
+            merged and tested — switched on per organization, never by an upgrade
           </span>
         </div>
         <H2>{CONFLUENCE.headline}</H2>
         <Lede>{CONFLUENCE.body}</Lede>
 
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
+        <Panel className="mt-12">
+          <OneWayPublish />
+        </Panel>
+
+        <div className="mt-8 grid gap-6 md:grid-cols-3">
           {CONFLUENCE.invariants.map((inv) => (
             <motion.div
               key={inv.title}
               variants={rise}
-              className="rounded-xl border border-dashed p-6"
-              style={{ borderColor: "hsla(190,90%,68%,0.28)", background: "rgba(255,255,255,0.015)" }}
+              className="rounded-xl border p-5"
+              style={{ borderColor: "hsla(190,90%,68%,0.22)", background: "rgba(255,255,255,0.015)" }}
             >
               <div className={LABEL} style={{ color: ALPHA }}>
                 {inv.title}
               </div>
-              <p className={`${FONT_MONO} mt-4 text-xs leading-relaxed`} style={{ color: dim(0.58) }}>
+              <p className={`${FONT_MONO} mt-3 text-xs leading-relaxed`} style={{ color: dim(0.55) }}>
                 {inv.body}
               </p>
             </motion.div>
           ))}
         </div>
 
-        {/* scoping */}
+        {/* scoping — two keys, one switch */}
         <motion.div
           variants={rise}
-          className="mt-14 rounded-xl border border-dashed p-8"
-          style={{ borderColor: "rgba(233,237,255,0.14)", background: "rgba(255,255,255,0.02)" }}
+          className="mt-10 rounded-xl border p-7"
+          style={{ borderColor: dim(0.12), background: "rgba(255,255,255,0.02)" }}
         >
           <div className="flex flex-wrap items-center gap-3">
             <div className={LABEL} style={{ color: GOLD }}>
@@ -361,13 +482,16 @@ export default function KnowledgeBase() {
           <p className={`${FONT_MONO} mt-4 max-w-3xl text-xs leading-relaxed`} style={{ color: dim(0.6) }}>
             {SCOPES.body}
           </p>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
             {SCOPES.rows.map((r) => (
-              <div key={r.scope}>
-                <code className={`${FONT_MONO} text-sm`} style={{ color: GOLD }}>
+              <div key={r.scope} className="flex gap-4">
+                <span
+                  className={`${FONT_MONO} h-fit shrink-0 rounded-md border px-2.5 py-1.5 text-xs`}
+                  style={{ borderColor: "hsla(46,90%,68%,0.35)", color: GOLD, background: "hsla(46,90%,60%,0.05)" }}
+                >
                   {r.scope}
-                </code>
-                <p className={`${FONT_MONO} mt-2 text-[11px] leading-relaxed`} style={{ color: dim(0.5) }}>
+                </span>
+                <p className={`${FONT_MONO} text-[11px] leading-relaxed`} style={{ color: dim(0.5) }}>
                   {r.body}
                 </p>
               </div>
@@ -384,18 +508,25 @@ export default function KnowledgeBase() {
           improvement. Each one would put the rot back.
         </Lede>
 
-        <div
-          className="mt-14 grid gap-px overflow-hidden rounded-xl border md:grid-cols-2"
-          style={{ borderColor: "rgba(233,237,255,0.10)", background: "rgba(233,237,255,0.08)" }}
-        >
+        <div className="mt-14 grid gap-6 md:grid-cols-2">
           {NEVER.map((n) => (
-            <motion.div key={n.title} variants={rise} className="p-7" style={{ background: BG }}>
-              <h3 className="text-lg font-semibold tracking-tight" style={{ color: MAGENTA }}>
-                {n.title}
-              </h3>
-              <p className={`${FONT_MONO} mt-3 text-xs leading-relaxed`} style={{ color: dim(0.58) }}>
-                {n.body}
-              </p>
+            <motion.div
+              key={n.title}
+              variants={rise}
+              className="flex gap-5 rounded-xl border p-6"
+              style={{ borderColor: "rgba(255,93,162,0.18)", background: "rgba(255,93,162,0.02)" }}
+            >
+              <span className="text-2xl leading-none" style={{ color: MAGENTA }} aria-hidden>
+                ⨯
+              </span>
+              <div>
+                <h3 className="text-base font-semibold tracking-tight" style={{ color: MAGENTA }}>
+                  {n.title}
+                </h3>
+                <p className={`${FONT_MONO} mt-2 text-xs leading-relaxed`} style={{ color: dim(0.55) }}>
+                  {n.body}
+                </p>
+              </div>
             </motion.div>
           ))}
         </div>
@@ -403,47 +534,65 @@ export default function KnowledgeBase() {
 
       {/* ─── 7. THE LADDER ───────────────────────────────────────────────── */}
       <Section eyebrow="what is actually built" id="status" tone={dim(0.6)}>
-        <H2>The status of every phase, including the ones we have not written yet.</H2>
+        <H2>The status of every phase — including the one we built and switched off.</H2>
         <Lede>
-          This is the same ladder as <code>docs/KB-PLAN.md</code>. A reviewer can walk it against
-          the status log in the repo and catch us if a stamp is wrong. That is the point of
-          printing it.
+          The build plan ships in the open with the product. Walk this ladder against it and catch
+          us if a stamp is wrong. That is the point of printing it.
         </Lede>
 
-        <div className="mt-14 space-y-px overflow-hidden rounded-xl border" style={{ borderColor: "rgba(233,237,255,0.10)", background: "rgba(233,237,255,0.08)" }}>
-          {LADDER.map((p) => (
-            <motion.div
-              key={p.id}
-              variants={rise}
-              className="grid gap-5 p-7 md:grid-cols-[180px_1fr]"
-              style={{ background: BG }}
-            >
-              <div>
-                <div className="text-lg font-semibold tracking-tight" style={{ color: STATUS_TONE[p.status] }}>
-                  {p.id}
-                </div>
-                <div className={`${FONT_MONO} mt-1 text-xs`} style={{ color: dim(0.6) }}>
-                  {p.name}
-                </div>
-                <div className="mt-3">
-                  <Stamp status={p.status} />
-                </div>
-              </div>
-              <div>
-                <p className={`${FONT_MONO} text-xs leading-relaxed`} style={{ color: dim(0.62) }}>
-                  {p.body}
-                </p>
-                {p.gate && (
-                  <p
-                    className={`${FONT_MONO} mt-4 border-l pl-4 text-[11px] leading-relaxed`}
-                    style={{ borderColor: MINT, color: dim(0.45) }}
+        <div className="relative mt-14">
+          {/* the rail */}
+          <span aria-hidden className="absolute bottom-3 left-[13px] top-3 w-px" style={{ background: dim(0.12) }} />
+          <div className="space-y-10">
+            {LADDER.map((p) => {
+              const tone = STATUS_TONE[p.status];
+              return (
+                <motion.div key={p.id} variants={rise} className="relative flex gap-6">
+                  <span
+                    className={`${FONT_MONO} z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px]`}
+                    style={{
+                      borderColor: tone,
+                      color: tone,
+                      background: BG,
+                      borderStyle: p.status === "built_off" ? "double" : "solid",
+                    }}
                   >
-                    {p.gate}
-                  </p>
-                )}
-              </div>
-            </motion.div>
-          ))}
+                    {STATUS_GLYPH[p.status]}
+                  </span>
+                  <div className="min-w-0 flex-1 pb-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-lg font-semibold tracking-tight" style={{ color: tone }}>
+                        {p.id}
+                      </span>
+                      <span className="text-lg font-medium tracking-tight text-white">{p.name}</span>
+                      <Stamp status={p.status} />
+                    </div>
+                    <p className={`${FONT_MONO} mt-2 max-w-3xl text-xs leading-relaxed`} style={{ color: dim(0.6) }}>
+                      {p.body}
+                    </p>
+                    {p.stats && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {p.stats.map((s) => (
+                          <span
+                            key={s}
+                            className={`${FONT_MONO} rounded-full border px-2.5 py-1 text-[10px]`}
+                            style={{ borderColor: "hsla(158,90%,68%,0.3)", color: dim(0.65) }}
+                          >
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {p.gate && (
+                      <p className={`${FONT_MONO} mt-3 max-w-3xl text-[11px] leading-relaxed`} style={{ color: dim(0.4) }}>
+                        {p.gate}
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
         </div>
       </Section>
 
@@ -468,9 +617,9 @@ export default function KnowledgeBase() {
             </span>
           </h2>
           <p className={`${FONT_MONO} mx-auto mt-6 max-w-xl text-xs leading-relaxed`} style={{ color: dim(0.45) }}>
-            The memory layer underneath this — capture, review gate, permission-aware retrieval,
+            The memory layer underneath — capture, review gate, permission-aware retrieval,
             contradictions, Knowledge Health — is shipped and measured. The document layer on top
-            of it is being built now, in the open.
+            is built and measured the same way. Publishing is the one switch still off, on purpose.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
@@ -483,7 +632,7 @@ export default function KnowledgeBase() {
             <Link
               href="/health"
               className={`${FONT_MONO} rounded-full border px-7 py-3.5 text-sm transition hover:text-[#f3c74f]`}
-              style={{ borderColor: "rgba(233,237,255,0.2)", color: dim(0.7) }}
+              style={{ borderColor: dim(0.2), color: dim(0.7) }}
             >
               the health score that gates publishing
             </Link>
@@ -493,10 +642,10 @@ export default function KnowledgeBase() {
 
       <footer
         className={`${LABEL} mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 border-t px-6 py-8`}
-        style={{ borderColor: "rgba(233,237,255,0.10)", color: dim(0.32) }}
+        style={{ borderColor: dim(0.1), color: dim(0.32) }}
       >
         <span>brainiac · the wiki that cannot rot</span>
-        <span>every capability on this page is stamped shipped, in progress, or roadmap</span>
+        <span>every capability stamped: shipped · built, not enabled · roadmap</span>
       </footer>
     </div>
   );
