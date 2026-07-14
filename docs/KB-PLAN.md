@@ -281,6 +281,49 @@ Ordered roughly by leverage; none block the phase ladder.
         (`compose_tick` opens `worker_tx` for team pages); the test seeded the
         wrong way and exposed it. An RLS no-op looks exactly like success, which
         is what makes it worth a comment in the code.
-- [ ] KB3 publishing (publisher trait, Git + Confluence, scopes, breaker)
+- [x] **KB3 publishing** (2026-07-14) — code complete; NOT enabled for any real
+      org (see the sequencing rule below, which still stands).
+      - `migrations/0020_kb_publishing.sql`: `orgs.kb_enabled` (OFF by default —
+        a feature that turns itself on inside someone's Confluence is not a
+        feature, it is an incident), `publish_targets`, `document_publications`
+        (the ledger: what is live, where, at which revision — makes publishing
+        idempotent and lets an operator prove what left the building).
+        **Credentials are never stored**: a target holds `secret_ref`, the NAME
+        of an env var. A database dump must not contain a PAT that can write to
+        a customer's wiki.
+      - `brainiac-core::health`: the pillar formulas extracted from console.rs
+        as pure functions. The report and the breaker now compute currency and
+        governance with the SAME code — a breaker that disagreed with the
+        dashboard it is named after would be indefensible.
+      - **The circuit breaker** (`publish_gate`): currency < 70 or governance <
+        50 → publishing PAUSES; pages hold their last published revision. This
+        is what turns the health score from a dashboard nobody acts on into an
+        actuator. It reads only those two pillars deliberately: they answer "is
+        what we would publish still true?" and "is anyone still checking?".
+      - `brainiac-publish`: the `Publisher` trait + **Git** (writes markdown
+        files; deliberately does NOT commit or push — branch protection, CI
+        budget and release policy are the operator's, and a tool that guesses at
+        them gets uninstalled) and **Confluence** (Cloud REST v2, PAT, one-way,
+        update-in-place so a team never ends up with two pages of the same name).
+      - Markdown → Confluence storage format: small, total, and escape-first.
+        Anything unrecognized degrades to visible text; nothing the model writes
+        can reach a customer's wiki as live markup. Citations survive the trip as
+        links back into the console — a reader in Confluence is one click from
+        the governed memory a named human signed.
+      - KB token scopes: `kb:read` on the doc endpoints, **`kb:publish` on
+        approve** — a token minted to read the knowledge base must not be able to
+        sign a revision into the org's mouth.
+      - Worker: `publish_org` runs after compose each tick.
+      - Tests: `publish_pg.rs` (4) — nothing publishes without opt-in; only
+        org-visible pages leave; a rotting corpus trips the breaker and the live
+        page HOLDS its last revision (rather than being deleted or updated);
+        publishing the same revision twice is a no-op. Plus 10 unit tests on the
+        renderer (HTML can't become markup, a CDATA terminator can't escape a
+        code block, a bogus citation stays text) and 6 on the pillar math.
+      - Note from the org-visibility test: `withheld_visibility` is 0 because RLS
+        never even shows the publish principal a team page — the memory layer's
+        own enforcement hides it before the publisher's check runs. The code
+        check stays as the second line; the first line is the same RLS path every
+        user query takes.
 - [ ] KB4 round-trip & hardening (edit reingestion, propagation SLA, docs
       health signals)

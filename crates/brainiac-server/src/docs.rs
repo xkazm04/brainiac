@@ -19,7 +19,14 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::http::{internal, principal_of, AppState, HttpError};
+use crate::http::{auth_of, internal, AppState, HttpError};
+
+/// KB token scopes (KB-PLAN D6). The layer is optional and separately scoped, so
+/// an agent's token can read the knowledge base without ever being able to
+/// publish a page — and a token issued for the memory layer alone cannot read
+/// pages at all. `admin` implies both (see AuthContext::allows).
+pub const SCOPE_KB_READ: &str = "kb:read";
+pub const SCOPE_KB_PUBLISH: &str = "kb:publish";
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct DocSummary {
@@ -120,7 +127,7 @@ pub(crate) async fn docs_list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<DocsListResponse>, HttpError> {
-    let principal = principal_of(&state, &headers).await?;
+    let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let docs = brainiac_store::documents::list_documents(&mut tx)
@@ -149,7 +156,7 @@ pub(crate) async fn doc_get(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Json<DocDetailResponse>, HttpError> {
-    let principal = principal_of(&state, &headers).await?;
+    let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     // RLS makes an unreadable page indistinguishable from a missing one, which
@@ -225,7 +232,7 @@ pub(crate) async fn doc_revisions(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Json<DocRevisionsResponse>, HttpError> {
-    let principal = principal_of(&state, &headers).await?;
+    let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let doc = brainiac_store::documents::get_document_by_slug(&mut tx, &slug)
         .await
@@ -257,7 +264,10 @@ pub(crate) async fn doc_approve(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DocApproveResponse>, HttpError> {
-    let principal = principal_of(&state, &headers).await?;
+    // Publishing a revision is the act that puts words in the org's mouth (and,
+    // once a target is configured, into its wiki). It takes `kb:publish` — a
+    // token minted to READ the knowledge base must not be able to sign one.
+    let principal = auth_of(&state, &headers, SCOPE_KB_PUBLISH).await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let rev = brainiac_store::documents::get_revision(&mut tx, id)

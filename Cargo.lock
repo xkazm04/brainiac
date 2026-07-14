@@ -279,6 +279,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "brainiac-publish"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "brainiac-core",
+ "brainiac-store",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "brainiac-server"
 version = "0.1.0"
 dependencies = [
@@ -289,6 +307,7 @@ dependencies = [
  "brainiac-fixtures",
  "brainiac-gateway",
  "brainiac-pipeline",
+ "brainiac-publish",
  "brainiac-store",
  "chrono",
  "clap",

@@ -7,6 +7,7 @@
 
 pub mod embed;
 pub mod fusion;
+pub mod health;
 pub mod metrics;
 pub mod redact;
 pub mod rerank;

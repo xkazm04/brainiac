@@ -1575,14 +1575,11 @@ pub(crate) struct SnapshotResponse {
     pub grade: String,
 }
 
-fn clamp100(v: i64) -> i64 {
-    v.clamp(0, 100)
-}
-
 /// The org's own promotion-review SLO (ARCHITECTURE §7): median review under
 /// 48h or the governance flywheel dies. The governance pillar and the
-/// attention-list breach both key off it.
-const REVIEW_SLO_SECS: i64 = 48 * 3600;
+/// attention-list breach both key off it — and so does the KB3 publish breaker,
+/// which is why the constant (like the pillar math) lives in core.
+use brainiac_core::health::REVIEW_SLO_SECS;
 
 fn grade_of(score: i64) -> &'static str {
     match score {
@@ -1703,42 +1700,17 @@ async fn compute_health_core(
     let oldest: i64 = gov.get("oldest");
 
     // ── pillar scores ──────────────────────────────────────────────────
-    // Consistency: an org contradicting itself is the cardinal sin; a cross-team
-    // conflict costs far more than an intra-team one (no one can see it).
-    let intra = (open_contra - cross_contra).max(0);
-    let consistency = clamp100(100 - (cross_contra * 30 + intra * 10));
-    // Currency: fraction of the corpus that is still true.
-    let currency = if total > 0 {
-        clamp100(((total - stale) as f64 / total as f64 * 100.0).round() as i64)
-    } else {
-        100
-    };
-    // Liquidity: how much of the together-picture the graph actually assembles —
-    // the share of canonical entities that carry ≥2 teams' knowledge.
-    let liquidity = if canon > 0 {
-        clamp100((cross_entities as f64 / canon as f64 * 100.0).round() as i64)
-    } else {
-        0
-    };
-    // Governance: full marks for an empty queue; degrade as the oldest item ages
-    // past the org's own 48h review SLO, and for sheer depth.
-    let slo_secs = REVIEW_SLO_SECS;
-    let age_penalty = ((oldest as f64 / slo_secs as f64) * 40.0).round() as i64;
-    let depth_penalty = (backlog * 3).min(40);
-    let governance = clamp100(100 - age_penalty - depth_penalty);
-
-    // Composite — consistency carries the most weight; it's the flagship claim.
-    let composite = (consistency as f64 * 0.35)
-        + (currency as f64 * 0.25)
-        + (governance as f64 * 0.20)
-        + (liquidity as f64 * 0.20);
-    // Cardinal-sin cap: a weighted average would let a strong corpus dilute an
-    // unreconciled cross-team conflict down to a ~10-point ding, so a report could
-    // read "Healthy" while the org silently contradicts itself. Cap the headline
-    // so ONE cross-team contradiction drops it out of Healthy and each additional
-    // one bites hard — the flagship signal must move the number a leader watches.
-    let cross_cap = 100 - cross_contra * 22;
-    let score = clamp100((composite.round() as i64).min(cross_cap));
+    // The formulas live in brainiac_core::health, NOT here, because the KB3
+    // publish circuit breaker gates on the same two pillars. A breaker that
+    // computed "currency" differently from the dashboard it is named after would
+    // be indefensible — so there is exactly one implementation, and this report
+    // is one of its two callers.
+    use brainiac_core::health as hp;
+    let consistency = hp::consistency_pillar(open_contra, cross_contra);
+    let currency = hp::currency_pillar(total, stale);
+    let liquidity = hp::liquidity_pillar(canon, cross_entities);
+    let governance = hp::governance_pillar(backlog, oldest);
+    let score = hp::composite_score(consistency, currency, liquidity, governance, cross_contra);
 
     Ok(HealthCore {
         total,

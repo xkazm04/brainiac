@@ -18,6 +18,7 @@ brainiac-fixtures = { workspace = true }
 brainiac-store = { workspace = true }
 brainiac-gateway = { workspace = true }
 brainiac-pipeline = { workspace = true }
+brainiac-publish = { workspace = true }
 brainiac-eval = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }

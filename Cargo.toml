@@ -6,6 +6,7 @@ members = [
     "crates/brainiac-store",
     "crates/brainiac-gateway",
     "crates/brainiac-pipeline",
+    "crates/brainiac-publish",
     "crates/brainiac-eval",
     "crates/brainiac-server",
 ]
@@ -45,6 +46,7 @@ brainiac-fixtures = { path = "crates/brainiac-fixtures" }
 brainiac-store = { path = "crates/brainiac-store" }
 brainiac-gateway = { path = "crates/brainiac-gateway" }
 brainiac-pipeline = { path = "crates/brainiac-pipeline" }
+brainiac-publish = { path = "crates/brainiac-publish" }
 brainiac-eval = { path = "crates/brainiac-eval" }
 
 [workspace.lints.clippy]

@@ -16,6 +16,7 @@ pub mod feedback;
 pub mod governance;
 pub mod memories;
 pub mod orgs;
+pub mod publishing;
 pub mod queue;
 pub mod retrieval;
 pub mod tokens;

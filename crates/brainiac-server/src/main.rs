@@ -602,6 +602,18 @@ struct KbStats {
     auto_published: usize,
     needs_review: usize,
     scaffolded: usize,
+    /// Pages pushed to an external target (git / Confluence).
+    published: usize,
+    /// Pages held back by the health circuit breaker — the number an operator
+    /// should be alarmed by if it stays non-zero.
+    publish_blocked: usize,
+}
+
+/// Where the console lives, so a published page can link its citations back to
+/// the governed memory behind each claim. A wiki page whose sources point
+/// nowhere is just another wiki page.
+fn console_url() -> String {
+    std::env::var("BRAINIAC_CONSOLE_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into())
 }
 
 /// One knowledge-base pass across every org that has any (ARCHITECTURE §8).
@@ -622,6 +634,7 @@ async fn compose_sweep(
 ) -> Result<KbStats> {
     use sqlx::Row;
     let mut stats = KbStats::default();
+    let console_url = console_url();
 
     // Every org that has at least one page, plus every org with canonical
     // entities (a candidate for scaffolding its first page).
@@ -658,6 +671,18 @@ async fn compose_sweep(
         stats.composed += c.composed;
         stats.auto_published += c.auto_published;
         stats.needs_review += c.needs_review;
+
+        // Publish outward (KB3) — only if the org opted in, only org-visible
+        // pages, and only while the health circuit breaker allows it. Every one
+        // of those checks lives in brainiac-publish; a failure to publish must
+        // never take down the ingest loop, so it is logged and swallowed here.
+        match brainiac_publish::publish_org(store, org_id, &console_url).await {
+            Ok(p) => {
+                stats.published += p.pushed;
+                stats.publish_blocked += p.blocked;
+            }
+            Err(e) => tracing::warn!(org = %org_id, error = %e, "knowledge-base publish failed"),
+        }
     }
     Ok(stats)
 }
