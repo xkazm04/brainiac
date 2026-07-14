@@ -10,10 +10,18 @@ export interface ActionResult {
   message: string;
 }
 
+// TRUST MODEL (single-operator console): edits/approvals run under one shared
+// service token (BRAINIAC_API_TOKEN), not a per-user identity — a 403 is about
+// that token's team roles. Deliberate single-maintainer posture; see
+// reviews/actions.ts and INDEX.md Theme A. NOTE: the backend now also requires
+// kb:publish + maintainer for editSection (was kb:read) — so a read-scoped token
+// correctly gets a 403 here.
 function describe(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.status === 403) return "You need to be a maintainer of the owning team.";
-    if (e.status === 404) return "That revision is gone or already reviewed.";
+    if (e.status === 403)
+      return "The console's service token is not a maintainer of the owning team (check BRAINIAC_API_TOKEN).";
+    if (e.status === 404 || e.status === 409)
+      return "That revision is gone or was already reviewed in another session.";
     return `API error ${e.status}: ${e.message}`;
   }
   return e instanceof Error ? e.message : String(e);

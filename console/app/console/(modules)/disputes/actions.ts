@@ -1,5 +1,10 @@
 "use server";
 
+// TRUST MODEL (single-operator console): adjudication runs under one shared
+// service token (BRAINIAC_API_TOKEN), not a per-user identity, so a 403 is about
+// that token's team roles rather than the human. Deliberate single-maintainer
+// posture — see reviews/actions.ts and INDEX.md Theme A.
+
 import { revalidatePath } from "next/cache";
 
 import { ApiError, configFromEnv } from "@/lib/api";
@@ -14,11 +19,18 @@ export interface DecisionResult {
 
 function describe(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.status === 403) return "You need to be a maintainer of the owning team.";
-    if (e.status === 404) return "Memory is gone or already answered.";
+    if (e.status === 403)
+      return "The console's service token is not a maintainer of the owning team (check BRAINIAC_API_TOKEN).";
+    if (e.status === 404 || e.status === 409)
+      return "Already answered in another session — the bench has been refreshed.";
     return `API error ${e.status}: ${e.message}`;
   }
   return e instanceof Error ? e.message : String(e);
+}
+
+function refreshBench() {
+  revalidatePath("/console/disputes");
+  revalidatePath("/console/analytics");
 }
 
 const SAID: Record<Resolution, string> = {
@@ -33,8 +45,7 @@ export async function resolveDisputeAction(
 ): Promise<DecisionResult> {
   try {
     const out = await resolveDispute(configFromEnv(), memoryId, resolution);
-    revalidatePath("/console/disputes");
-    revalidatePath("/console/analytics");
+    refreshBench();
     return {
       ok: true,
       message: `${SAID[resolution]} · ${out.claims_closed} claim${
@@ -42,6 +53,9 @@ export async function resolveDisputeAction(
       } closed.`,
     };
   } catch (e) {
+    // On a lost race (already answered elsewhere) still refresh, so the stale
+    // dispute clears instead of tempting a second adjudication.
+    if (e instanceof ApiError && (e.status === 404 || e.status === 409)) refreshBench();
     return { ok: false, message: describe(e) };
   }
 }
