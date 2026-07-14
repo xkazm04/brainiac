@@ -143,7 +143,8 @@ async fn actionable_promotion(
         "SELECT p.memory_id, p.to_status::text AS to_status, m.team_id
          FROM promotions p
          JOIN memories m ON m.id = p.memory_id
-         WHERE p.id = $1 AND p.policy_decision = 'needs_review' AND p.reviewed_at IS NULL",
+         WHERE p.id = $1 AND p.policy_decision = 'needs_review' AND p.reviewed_at IS NULL
+         FOR UPDATE OF p",
     )
     .bind(id)
     .fetch_optional(conn)
@@ -187,16 +188,30 @@ async fn review_promotion(
     } else {
         ("denied", MemoryStatus::Rejected)
     };
-    sqlx::query(
+    // Self-guarding transition: re-assert `reviewed_at IS NULL` in the WHERE so a
+    // promotion already decided by a concurrent approve/reject (or a double-submit)
+    // updates 0 rows. Combined with the `FOR UPDATE OF p` in actionable_promotion,
+    // the second request either blocks-then-404s at the read or lands here with
+    // rows_affected == 0 — never a last-writer-wins reviewer or a double
+    // set_memory_status that leaves the memory in a nondeterministic status.
+    let updated = sqlx::query(
         "UPDATE promotions SET policy_decision = $2, reviewer_id = $3, reviewed_at = now()
-         WHERE id = $1",
+         WHERE id = $1 AND reviewed_at IS NULL",
     )
     .bind(id)
     .bind(decision)
     .bind(principal.user_id)
     .execute(&mut *tx)
     .await
-    .map_err(internal)?;
+    .map_err(internal)?
+    .rows_affected();
+    if updated == 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            "promotion was already reviewed".into(),
+        )
+            .into());
+    }
     brainiac_store::governance::set_memory_status(&mut tx, pending.memory_id, new_status)
         .await
         .map_err(internal)?;
