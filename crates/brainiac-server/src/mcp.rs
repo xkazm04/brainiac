@@ -161,7 +161,10 @@ impl McpState {
             .context("BRAINIAC_MCP_TOKEN does not resolve to a principal")?;
         let embedding_version = {
             let mut tx = store.scoped_tx(&principal).await?;
-            let v = brainiac_store::memories::ensure_embedding_version(
+            // Serve path: refuse to start on a version whose reembed backfill did
+            // not complete, rather than silently answering from a half-embedded
+            // corpus. Writers (the worker) still use ensure_embedding_version.
+            let v = brainiac_store::memories::serving_embedding_version(
                 &mut tx,
                 embedder.model_name(),
                 embedder.dim() as i32,

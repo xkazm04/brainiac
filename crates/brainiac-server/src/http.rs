@@ -47,7 +47,10 @@ pub async fn router(
     let embedding_version = {
         let principal = brainiac_pipeline::pipeline_principal(Uuid::nil());
         let mut tx = store.scoped_tx(&principal).await?;
-        let v = brainiac_store::memories::ensure_embedding_version(
+        // Serve path: require the version be fully backfilled (is_active). An
+        // interrupted reembed leaves its target version inactive, so this refuses
+        // to serve a half-embedded corpus instead of silently under-answering.
+        let v = brainiac_store::memories::serving_embedding_version(
             &mut tx,
             embedder.model_name(),
             embedder.dim() as i32,

@@ -94,6 +94,17 @@ pub async fn reembed(pool: &PgPool, embedder: &dyn Embedder, batch: usize) -> Re
             rows.len()
         );
         for ((id, _), v) in rows.iter().zip(&vecs) {
+            // The embeddings column is typmod-free, so a wrong-length vector would
+            // insert silently and then be permanently excluded from search
+            // (search_vector filters on vector_dims = version dim) while satisfying
+            // `missing_embedding`'s NOT EXISTS, so resume never retries it. Reject
+            // it here instead of storing an unsearchable, unrecoverable row.
+            anyhow::ensure!(
+                v.len() == embedder.dim(),
+                "embedder returned a {}-dim vector for a version declared dim {} (memory {id})",
+                v.len(),
+                embedder.dim()
+            );
             memories::upsert_embedding(&mut conn, *id, version_id, v).await?;
         }
         stats.memories += rows.len();
@@ -125,6 +136,12 @@ pub async fn reembed(pool: &PgPool, embedder: &dyn Embedder, batch: usize) -> Re
             rows.len()
         );
         for ((id, _), v) in rows.iter().zip(&vecs) {
+            anyhow::ensure!(
+                v.len() == embedder.dim(),
+                "embedder returned a {}-dim vector for a version declared dim {} (canonical {id})",
+                v.len(),
+                embedder.dim()
+            );
             entities::upsert_canonical_embedding(&mut conn, *id, version_id, v).await?;
         }
         stats.canonicals += rows.len();
@@ -136,12 +153,21 @@ pub async fn reembed(pool: &PgPool, embedder: &dyn Embedder, batch: usize) -> Re
         );
     }
 
+    // Both loops drained (each breaks only when `missing_embedding` returns
+    // empty), so every memory and canonical now has an embedding under this
+    // version — mark it servable. An interrupted run never reaches here, so its
+    // partial version stays inactive and the serve path refuses it. Activation is
+    // idempotent, so a resumed run that finds nothing to do still activates.
+    memories::activate_embedding_version(&mut conn, version_id)
+        .await
+        .context("activate embedding version after backfill")?;
+
     tracing::info!(
         version_id,
         memories = stats.memories,
         canonicals = stats.canonicals,
         batches = stats.batches,
-        "reembed backfill complete"
+        "reembed backfill complete — version activated"
     );
     Ok(stats)
 }

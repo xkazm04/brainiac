@@ -90,8 +90,16 @@ pub async fn ensure_embedding_version(
     {
         return Ok(row.get::<i32, _>("id"));
     }
+    // `is_active` means "backfill complete, safe to serve" (migration 0001:
+    // "backfill, flip is_active"). A brand-new version is born complete ONLY when
+    // it is the first version in the corpus — a fresh system has nothing to
+    // backfill and ingest fills it going forward. A later swap-target version is
+    // born INCOMPLETE: reembed must fully drain both backfill loops before it
+    // calls `activate_embedding_version`. This is what stops an interrupted
+    // reembed from leaving a half-populated version silently servable.
     let row = sqlx::query(
-        "INSERT INTO embedding_versions (model_name, dim, is_active) VALUES ($1, $2, true)
+        "INSERT INTO embedding_versions (model_name, dim, is_active)
+         VALUES ($1, $2, NOT EXISTS (SELECT 1 FROM embedding_versions))
          RETURNING id",
     )
     .bind(model_name)
@@ -99,6 +107,41 @@ pub async fn ensure_embedding_version(
     .fetch_one(conn)
     .await?;
     Ok(row.get::<i32, _>("id"))
+}
+
+/// Mark an embedding version fully backfilled and safe to serve. Called by
+/// `reembed` only after both backfill loops have drained. Idempotent.
+pub async fn activate_embedding_version(conn: &mut PgConnection, version_id: i32) -> Result<()> {
+    sqlx::query("UPDATE embedding_versions SET is_active = true WHERE id = $1")
+        .bind(version_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Resolve the version a **serve** path (REST/MCP) should use: ensure it exists,
+/// then require it be `is_active` (backfill-complete). A configured-but-not-yet-
+/// backfilled swap-target version fails loudly here instead of silently serving a
+/// partially-embedded corpus — the operator must run `reembed` to completion (which
+/// activates it) or revert the embedder config. Writers keep using
+/// `ensure_embedding_version` (they populate the version and don't require active).
+pub async fn serving_embedding_version(
+    conn: &mut PgConnection,
+    model_name: &str,
+    dim: i32,
+) -> Result<i32> {
+    let id = ensure_embedding_version(&mut *conn, model_name, dim).await?;
+    let active: bool = sqlx::query_scalar("SELECT is_active FROM embedding_versions WHERE id = $1")
+        .bind(id)
+        .fetch_one(conn)
+        .await?;
+    if !active {
+        anyhow::bail!(
+            "embedding version {id} ({model_name}, dim {dim}) is not fully backfilled — \
+             run `reembed` to completion before serving this model, or revert the embedder config"
+        );
+    }
+    Ok(id)
 }
 
 /// Ensure the partial HNSW index for `dim` exists (0012's SECURITY DEFINER
