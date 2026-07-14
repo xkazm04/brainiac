@@ -326,6 +326,32 @@ async fn console_reviews_graph_analytics() {
         body["attention"].is_array(),
         "attention list present: {body}"
     );
+    // No snapshots taken yet → the trend is empty.
+    assert!(
+        body["trend"].as_array().expect("trend").is_empty(),
+        "trend empty before any snapshot: {body}"
+    );
+
+    // Record a snapshot, then the trend carries one point at the current score.
+    let r = http
+        .post(format!("{base}/v1/analytics/knowledge-health/snapshot"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("snapshot");
+    assert!(r.status().is_success(), "snapshot failed: {}", r.status());
+    let snap: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(snap["score"], score, "snapshot records the live score");
+    let r = http
+        .get(format!("{base}/v1/analytics/knowledge-health"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("kh again");
+    let body: serde_json::Value = r.json().await.expect("json");
+    let trend = body["trend"].as_array().expect("trend");
+    assert_eq!(trend.len(), 1, "one snapshot in the trend: {body}");
+    assert_eq!(trend[0]["score"], score);
 
     // ── cortex map: overview ──────────────────────────────────────────────
     let r = http

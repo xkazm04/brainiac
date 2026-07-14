@@ -48,6 +48,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/analytics", get(analytics))
         .route("/v1/analytics/observatory", get(observatory))
         .route("/v1/analytics/knowledge-health", get(knowledge_health))
+        .route(
+            "/v1/analytics/knowledge-health/snapshot",
+            post(knowledge_health_snapshot),
+        )
         .route("/v1/graph/overview", get(graph_overview))
         .route("/v1/graph/canonical/{id}", get(graph_canonical))
         .route("/v1/memories", get(memories_list))
@@ -1520,6 +1524,16 @@ pub(crate) struct KhAttention {
 }
 
 #[derive(Serialize, ToSchema)]
+pub(crate) struct TrendPoint {
+    pub captured_at: DateTime<Utc>,
+    pub score: i64,
+    pub consistency: i64,
+    pub currency: i64,
+    pub liquidity: i64,
+    pub governance: i64,
+}
+
+#[derive(Serialize, ToSchema)]
 pub(crate) struct KnowledgeHealthResponse {
     /// 0–100 composite the org tracks week over week.
     pub score: i64,
@@ -1529,27 +1543,63 @@ pub(crate) struct KnowledgeHealthResponse {
     pub signals: KhSignals,
     /// Ranked, most-urgent-first — the whole point: turn the score into action.
     pub attention: Vec<KhAttention>,
+    /// Recorded snapshots oldest→newest — the score over time. The report's power
+    /// is the line, not the point. Empty until the first snapshot is taken.
+    pub trend: Vec<TrendPoint>,
     pub embedding_model: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SnapshotResponse {
+    pub captured_at: DateTime<Utc>,
+    pub score: i64,
+    pub grade: String,
 }
 
 fn clamp100(v: i64) -> i64 {
     v.clamp(0, 100)
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/analytics/knowledge-health",
-    tag = "analytics",
-    description = "The leadership Knowledge Health report: a tracked composite score over four pillars (consistency, currency, liquidity, governance), the org-level signals behind it, and a ranked attention list. RLS-scoped — a leader sees their org's view.",
-    responses((status = 200, description = "Knowledge Health report", body = KnowledgeHealthResponse))
-)]
-pub(crate) async fn knowledge_health(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<KnowledgeHealthResponse>, HttpError> {
-    let principal = principal_of(&state, &headers).await?;
-    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+/// The org's own promotion-review SLO (ARCHITECTURE §7): median review under
+/// 48h or the governance flywheel dies. The governance pillar and the
+/// attention-list breach both key off it.
+const REVIEW_SLO_SECS: i64 = 48 * 3600;
 
+fn grade_of(score: i64) -> &'static str {
+    match score {
+        85..=100 => "Healthy",
+        70..=84 => "Watch",
+        55..=69 => "At risk",
+        _ => "Critical",
+    }
+}
+
+/// The numeric core of a Knowledge Health reading — every score + the signals
+/// behind it, RLS-scoped to the caller's org. Shared by the live report (GET) and
+/// the trend snapshot writer (POST) so the number a leader watches and the number
+/// recorded to history are computed one way, never two.
+struct HealthCore {
+    total: i64,
+    stale: i64,
+    org_wide: i64,
+    team_only: i64,
+    siloed: i64,
+    open_contra: i64,
+    cross_contra: i64,
+    canon: i64,
+    cross_entities: i64,
+    backlog: i64,
+    oldest: i64,
+    consistency: i64,
+    currency: i64,
+    liquidity: i64,
+    governance: i64,
+    score: i64,
+}
+
+async fn compute_health_core(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<HealthCore, HttpError> {
     // Corpus size + currency (deprecated or past valid_to = stale).
     let corpus = sqlx::query(
         "SELECT
@@ -1561,7 +1611,7 @@ pub(crate) async fn knowledge_health(
            count(*) FILTER (WHERE visibility = 'private') AS private_siloed
          FROM memories WHERE status <> 'rejected'",
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
     let total: i64 = corpus.get("total");
@@ -1580,7 +1630,7 @@ pub(crate) async fn knowledge_health(
          JOIN memories mb ON mb.id = c.memory_b
          WHERE c.status = 'open'",
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
     let open_contra: i64 = contra.get("open");
@@ -1597,7 +1647,7 @@ pub(crate) async fn knowledge_health(
          SELECT count(*) AS canon, count(*) FILTER (WHERE teams >= 2) AS cross_team
          FROM spans",
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
     let canon: i64 = graph.get("canon");
@@ -1609,7 +1659,7 @@ pub(crate) async fn knowledge_health(
                 COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::bigint AS oldest
          FROM promotions WHERE policy_decision = 'needs_review' AND reviewed_at IS NULL",
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(internal)?;
     let backlog: i64 = gov.get("pending");
@@ -1635,7 +1685,7 @@ pub(crate) async fn knowledge_health(
     };
     // Governance: full marks for an empty queue; degrade as the oldest item ages
     // past the org's own 48h review SLO, and for sheer depth.
-    let slo_secs = 48 * 3600;
+    let slo_secs = REVIEW_SLO_SECS;
     let age_penalty = ((oldest as f64 / slo_secs as f64) * 40.0).round() as i64;
     let depth_penalty = (backlog * 3).min(40);
     let governance = clamp100(100 - age_penalty - depth_penalty);
@@ -1652,13 +1702,60 @@ pub(crate) async fn knowledge_health(
     // one bites hard — the flagship signal must move the number a leader watches.
     let cross_cap = 100 - cross_contra * 22;
     let score = clamp100((composite.round() as i64).min(cross_cap));
-    let grade = match score {
-        85..=100 => "Healthy",
-        70..=84 => "Watch",
-        55..=69 => "At risk",
-        _ => "Critical",
-    }
-    .to_string();
+
+    Ok(HealthCore {
+        total,
+        stale,
+        org_wide,
+        team_only,
+        siloed,
+        open_contra,
+        cross_contra,
+        canon,
+        cross_entities,
+        backlog,
+        oldest,
+        consistency,
+        currency,
+        liquidity,
+        governance,
+        score,
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/analytics/knowledge-health",
+    tag = "analytics",
+    description = "The leadership Knowledge Health report: a tracked composite score over four pillars (consistency, currency, liquidity, governance), the org-level signals behind it, and a ranked attention list. RLS-scoped — a leader sees their org's view.",
+    responses((status = 200, description = "Knowledge Health report", body = KnowledgeHealthResponse))
+)]
+pub(crate) async fn knowledge_health(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<KnowledgeHealthResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let HealthCore {
+        total,
+        stale,
+        org_wide,
+        team_only,
+        siloed,
+        open_contra,
+        cross_contra,
+        canon,
+        cross_entities,
+        backlog,
+        oldest,
+        consistency,
+        currency,
+        liquidity,
+        governance,
+        score,
+    } = compute_health_core(&mut tx).await?;
+    let grade = grade_of(score).to_string();
 
     // ── attention list (ranked; the score made actionable) ──────────────
     let mut attention: Vec<KhAttention> = Vec::new();
@@ -1721,7 +1818,7 @@ pub(crate) async fn knowledge_health(
     }
 
     // Governance: SLO breach on the review queue.
-    if oldest > slo_secs {
+    if oldest > REVIEW_SLO_SECS {
         attention.push(KhAttention {
             severity: "warning".into(),
             kind: "governance".into(),
@@ -1738,6 +1835,26 @@ pub(crate) async fn knowledge_health(
     } else {
         0
     };
+
+    // The trend: recorded snapshots, oldest→newest, RLS-scoped to this org.
+    let trend = sqlx::query(
+        "SELECT captured_at, score, consistency, currency, liquidity, governance
+         FROM knowledge_health_snapshots
+         ORDER BY captured_at ASC LIMIT 52",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?
+    .iter()
+    .map(|r| TrendPoint {
+        captured_at: r.get("captured_at"),
+        score: r.get::<i32, _>("score") as i64,
+        consistency: r.get::<i32, _>("consistency") as i64,
+        currency: r.get::<i32, _>("currency") as i64,
+        liquidity: r.get::<i32, _>("liquidity") as i64,
+        governance: r.get::<i32, _>("governance") as i64,
+    })
+    .collect();
 
     Ok(Json(KnowledgeHealthResponse {
         score,
@@ -1763,7 +1880,54 @@ pub(crate) async fn knowledge_health(
             oldest_review_secs: oldest,
         },
         attention,
+        trend,
         embedding_model: state.embedder.model_name().to_string(),
+    }))
+}
+
+/// Record a Knowledge Health snapshot for the caller's org — the tick that builds
+/// the trend line. An org runs this on a schedule (their cron or ours); each call
+/// captures the current score + pillars + flagship signals into history. Needs a
+/// `write` principal, since it mutates. Returns the snapshot it took.
+#[utoipa::path(
+    post,
+    path = "/v1/analytics/knowledge-health/snapshot",
+    tag = "analytics",
+    description = "Record a Knowledge Health snapshot into the org's trend history (call weekly). Returns the captured score + grade.",
+    responses((status = 200, description = "Snapshot recorded", body = SnapshotResponse))
+)]
+pub(crate) async fn knowledge_health_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<SnapshotResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let c = compute_health_core(&mut tx).await?;
+    let captured_at: DateTime<Utc> = sqlx::query(
+        "INSERT INTO knowledge_health_snapshots
+           (org_id, score, consistency, currency, liquidity, governance,
+            cross_team_contradictions, stale_beliefs, total_memories)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING captured_at",
+    )
+    .bind(principal.org_id)
+    .bind(c.score as i32)
+    .bind(c.consistency as i32)
+    .bind(c.currency as i32)
+    .bind(c.liquidity as i32)
+    .bind(c.governance as i32)
+    .bind(c.cross_contra as i32)
+    .bind(c.stale as i32)
+    .bind(c.total as i32)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?
+    .get("captured_at");
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(SnapshotResponse {
+        captured_at,
+        score: c.score,
+        grade: grade_of(c.score).to_string(),
     }))
 }
 
