@@ -338,27 +338,43 @@ pub fn extract_json_array(s: &str) -> Option<&str> {
 /// keep whichever recovered more memories, so a dropped wrapper can never
 /// masquerade as an empty extraction.
 fn parse_extraction(text: &str) -> std::result::Result<ExtractionOutput, String> {
-    let obj_out =
-        extract_json_object(text).and_then(|s| serde_json::from_str::<ExtractionOutput>(s).ok());
+    let obj_str = extract_json_object(text);
+    // Canonical object shape — but ONLY when the object actually carries a
+    // `memories` key. `ExtractionOutput.memories` is #[serde(default)], so a
+    // valid-but-wrong object (a refusal/reasoning wrapper like {"refusal":"…"} or
+    // {"result":{…}}) would otherwise deserialize to an empty vec and masquerade
+    // as a clean 0-extraction — skipping the repair loop and silently dropping a
+    // transcript full of knowledge. A genuine empty result is {"memories":[]},
+    // which HAS the key, so it still parses here.
+    let obj_out = obj_str.and_then(|s| {
+        let v: serde_json::Value = serde_json::from_str(s).ok()?;
+        v.get("memories")?; // require the key to be present
+        serde_json::from_str::<ExtractionOutput>(s).ok()
+    });
     let arr_out = extract_json_array(text)
         .and_then(|s| serde_json::from_str::<Vec<ExtractedMemory>>(s).ok())
         .map(|memories| ExtractionOutput { memories });
-    if let Some(best) = match (obj_out, arr_out) {
-        (Some(o), Some(a)) => Some(if a.memories.len() > o.memories.len() {
-            a
-        } else {
-            o
-        }),
-        (Some(o), None) => Some(o),
-        (None, Some(a)) => Some(a),
-        (None, None) => None,
-    } {
-        return Ok(best);
+    match (obj_out, arr_out) {
+        (Some(o), Some(a)) => Ok(if a.memories.len() > o.memories.len() { a } else { o }),
+        (Some(o), None) => Ok(o),
+        // A recovered array counts on its own only when it is NON-EMPTY: an empty
+        // array pulled out of an ambiguous wrapper ({"status":"ok","data":[]}) is
+        // not a confident "0 extraction" — only the canonical {"memories":[]}
+        // object shape is. Fall through to a repair instead of dropping the chunk.
+        (None, Some(a)) if !a.memories.is_empty() => Ok(a),
+        // Nothing parsed as a valid extraction — return the sharpest reason so the
+        // repair re-prompt asks for the right shape instead of accepting empty.
+        _ => match obj_str {
+            None => Err("no JSON object or array in response".to_string()),
+            Some(s) => match serde_json::from_str::<serde_json::Value>(s) {
+                Ok(v) if v.get("memories").is_none() => {
+                    Err("response JSON had no `memories` field".to_string())
+                }
+                Ok(_) => Err("`memories` was not an array of the expected shape".to_string()),
+                Err(e) => Err(e.to_string()),
+            },
+        },
     }
-    // Nothing parsed either way — report the sharpest reason to drive the repair.
-    let json_str =
-        extract_json_object(text).ok_or_else(|| "no JSON object in response".to_string())?;
-    serde_json::from_str(json_str).map_err(|e| e.to_string())
 }
 
 /// Bounded JSON-repair re-prompts after a malformed first response. Real Qwen
@@ -811,6 +827,26 @@ mod tests {
     fn parse_extraction_reports_failure_reason() {
         assert!(parse_extraction("not json at all").is_err());
         assert!(parse_extraction(r#"{"memories":[]}"#).is_ok());
+    }
+
+    #[test]
+    fn valid_but_wrong_object_is_a_failure_not_a_silent_empty() {
+        // A well-formed JSON object with no `memories` key (a refusal or a
+        // reasoning/status wrapper) must drive the repair loop, NOT deserialize to
+        // an empty extraction and drop the transcript. A genuine empty keeps its
+        // key and still parses.
+        for wrapper in [
+            r#"{"refusal":"I won't do that"}"#,
+            r#"{"result":{"memories":[]}}"#,
+            r#"{"status":"ok","data":[]}"#,
+        ] {
+            let err = parse_extraction(wrapper).expect_err("wrapper must fail to parse");
+            assert!(
+                err.contains("memories"),
+                "reason should name the missing field, got: {err}"
+            );
+        }
+        assert!(parse_extraction(r#"{"memories":[]}"#).is_ok(), "real empty still ok");
     }
 
     #[test]
