@@ -201,6 +201,130 @@
         }
       }
     },
+    "/v1/docs": {
+      "get": {
+        "tags": [
+          "crate::docs"
+        ],
+        "operationId": "docs_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/docs/revisions/{id}/approve": {
+      "post": {
+        "tags": [
+          "crate::docs"
+        ],
+        "summary": "Publish a pending revision. The same gate as promotions: an agent composed\nit; a NAMED HUMAN publishes it. Maintainer of the owning team only — and for\nan org-wide page with no owning team, any maintainer in the org, since no\nsingle team owns the org's shared view.",
+        "operationId": "doc_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocApproveResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/docs/{slug}": {
+      "get": {
+        "tags": [
+          "crate::docs"
+        ],
+        "operationId": "doc_get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/docs/{slug}/revisions": {
+      "get": {
+        "tags": [
+          "crate::docs"
+        ],
+        "operationId": "doc_revisions",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocRevisionsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/graph": {
       "get": {
         "tags": [
@@ -2130,6 +2254,49 @@
           }
         }
       },
+      "Citation": {
+        "type": "object",
+        "description": "A memory a page's revision cites, resolved for the reader's provenance popover.",
+        "required": [
+          "memory_id",
+          "content",
+          "kind",
+          "lifecycle",
+          "status"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "detail_md": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The artifact behind the claim, when there is one (KB-PLAN D3)."
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lifecycle": {
+            "type": "string",
+            "description": "shipped | in_flight | proposed — so the reader can mark a claim that\ndescribes intent rather than production (KB-PLAN D2)."
+          },
+          "memory_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ContradictionMemoryRef": {
         "type": "object",
         "description": "One side of a contradiction. `content` is null when the memory is not\nvisible to the caller under RLS (the row itself is org-scoped metadata).",
@@ -2346,6 +2513,179 @@
             "type": "integer",
             "format": "int64",
             "description": "Total dead letters on the queue — the full recovery backlog, independent\nof the page window, so an operator knows how far `offset` can reach."
+          }
+        }
+      },
+      "DocApproveResponse": {
+        "type": "object",
+        "required": [
+          "revision_id",
+          "document_id",
+          "published"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "published": {
+            "type": "boolean"
+          },
+          "revision_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DocDetailResponse": {
+        "type": "object",
+        "required": [
+          "document",
+          "citations"
+        ],
+        "properties": {
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "document": {
+            "$ref": "#/components/schemas/DocSummary"
+          },
+          "pending": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DocRevisionView",
+                "description": "A revision awaiting review, if any."
+              }
+            ]
+          },
+          "revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DocRevisionView",
+                "description": "The published view. `None` for a page whose first revision is still\nawaiting a human — nothing publishes itself into existence."
+              }
+            ]
+          }
+        }
+      },
+      "DocRevisionView": {
+        "type": "object",
+        "required": [
+          "id",
+          "content_md",
+          "composed_from",
+          "policy_decision",
+          "created_at"
+        ],
+        "properties": {
+          "composed_from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "content_md": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy_decision": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DocRevisionsResponse": {
+        "type": "object",
+        "required": [
+          "revisions"
+        ],
+        "properties": {
+          "revisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocRevisionView"
+            }
+          }
+        }
+      },
+      "DocSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "doc_kind",
+          "visibility",
+          "status",
+          "dirty",
+          "pending_review",
+          "updated_at"
+        ],
+        "properties": {
+          "dirty": {
+            "type": "boolean",
+            "description": "An underlying memory changed and the page has not recomposed yet. The\nhonest signal that what you are reading may already be behind the corpus."
+          },
+          "doc_kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pending_review": {
+            "type": "boolean",
+            "description": "A revision is waiting on a human. Work, not decoration."
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "DocsListResponse": {
+        "type": "object",
+        "required": [
+          "documents"
+        ],
+        "properties": {
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocSummary"
+            }
           }
         }
       },

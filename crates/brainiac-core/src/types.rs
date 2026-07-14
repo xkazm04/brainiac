@@ -539,6 +539,7 @@ pub struct Document {
     pub current_revision: Option<Uuid>,
     /// Set when a memory this page depends on changed; cleared on recompose.
     pub dirty_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

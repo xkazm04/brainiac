@@ -156,6 +156,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/docs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["docs_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/docs/revisions/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish a pending revision. The same gate as promotions: an agent composed
+         *     it; a NAMED HUMAN publishes it. Maintainer of the owning team only — and for
+         *     an org-wide page with no owning team, any maintainer in the org, since no
+         *     single team owns the org's shared view.
+         */
+        post: operations["doc_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/docs/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["doc_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/docs/{slug}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["doc_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/graph": {
         parameters: {
             query?: never;
@@ -367,6 +437,57 @@ export interface paths {
          * @description Re-verify a memory: extend its validity window from now and close any open feedback claims against it. Requires a maintainer of the owning team.
          */
         post: operations["memory_reverify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ops/sweeps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Every configured org-intelligence sweep with its cadence and last-run status. Admin scope. */
+        get: operations["sweeps_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ops/sweeps/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Enable/disable a sweep or retune its cadence. Enabling schedules it to run on the next scheduler tick. Admin scope. */
+        put: operations["sweep_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ops/sweeps/{kind}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Trigger a one-shot run now — marks the sweep due so the worker picks it up within ~20s. Works whether or not the sweep is enabled. Admin scope. */
+        post: operations["sweep_run"];
         delete?: never;
         options?: never;
         head?: never;
@@ -893,6 +1014,22 @@ export interface components {
             valid_from?: string | null;
             valid_to?: string | null;
         };
+        /** @description A memory a page's revision cites, resolved for the reader's provenance popover. */
+        Citation: {
+            content: string;
+            /** @description The artifact behind the claim, when there is one (KB-PLAN D3). */
+            detail_md?: string | null;
+            kind: string;
+            /**
+             * @description shipped | in_flight | proposed — so the reader can mark a claim that
+             *     describes intent rather than production (KB-PLAN D2).
+             */
+            lifecycle: string;
+            /** Format: uuid */
+            memory_id: string;
+            status: string;
+            team?: string | null;
+        };
         /**
          * @description One side of a contradiction. `content` is null when the memory is not
          *     visible to the caller under RLS (the row itself is org-scoped metadata).
@@ -976,6 +1113,51 @@ export interface components {
              *     of the page window, so an operator knows how far `offset` can reach.
              */
             total: number;
+        };
+        DocApproveResponse: {
+            /** Format: uuid */
+            document_id: string;
+            published: boolean;
+            /** Format: uuid */
+            revision_id: string;
+        };
+        DocDetailResponse: {
+            citations: components["schemas"]["Citation"][];
+            document: components["schemas"]["DocSummary"];
+            pending?: null | components["schemas"]["DocRevisionView"];
+            revision?: null | components["schemas"]["DocRevisionView"];
+        };
+        DocRevisionView: {
+            composed_from: string[];
+            content_md: string;
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            policy_decision: string;
+            published_at?: string | null;
+        };
+        DocRevisionsResponse: {
+            revisions: components["schemas"]["DocRevisionView"][];
+        };
+        DocSummary: {
+            /**
+             * @description An underlying memory changed and the page has not recomposed yet. The
+             *     honest signal that what you are reading may already be behind the corpus.
+             */
+            dirty: boolean;
+            doc_kind: string;
+            /** Format: uuid */
+            id: string;
+            /** @description A revision is waiting on a human. Work, not decoration. */
+            pending_review: boolean;
+            slug: string;
+            status: string;
+            title: string;
+            updated_at: string;
+            visibility: string;
+        };
+        DocsListResponse: {
+            documents: components["schemas"]["DocSummary"][];
         };
         /**
          * @description The JSON error body. Documented once in the OpenAPI spec and returned by
@@ -1625,6 +1807,13 @@ export interface components {
             id: string;
             revoked: boolean;
         };
+        RunSweepResponse: {
+            kind: string;
+            /** Format: date-time */
+            next_run_at?: string | null;
+            /** @description The sweep was marked due; the worker picks it up within ~20s. */
+            queued: boolean;
+        };
         SearchBody: {
             /** Format: date-time */
             as_of?: string | null;
@@ -1771,6 +1960,40 @@ export interface components {
             /** Format: uuid */
             team_id: string;
         };
+        SweepSchedule: {
+            /**
+             * Format: int64
+             * @description Seconds between runs when enabled.
+             */
+            cadence_secs: number;
+            /** @description Whether the scheduler runs this sweep on its cadence. */
+            enabled: boolean;
+            /** @description 'divergence' | 'health_snapshot'. */
+            kind: string;
+            /** @description Human summary of the last run ("7 clusters, 1 divergences") or its error. */
+            last_detail?: string | null;
+            /**
+             * Format: int64
+             * @description Wall-clock of the last run.
+             */
+            last_duration_ms?: number | null;
+            /**
+             * Format: date-time
+             * @description When it last started.
+             */
+            last_run_at?: string | null;
+            /** @description 'ok' | 'error' | 'running' — null until it has run once. */
+            last_status?: string | null;
+            /**
+             * Format: date-time
+             * @description When the scheduler will next run it (null once disabled and idle).
+             */
+            next_run_at?: string | null;
+        };
+        SweepsResponse: {
+            /** @description Every configured sweep, ordered by kind. */
+            sweeps: components["schemas"]["SweepSchedule"][];
+        };
         /** @description Binding strength between two team lobes = canonicals both teams link into. */
         TeamLink: {
             /** Format: uuid */
@@ -1849,6 +2072,15 @@ export interface components {
             liquidity: number;
             /** Format: int64 */
             score: number;
+        };
+        UpdateSweepBody: {
+            /**
+             * Format: int64
+             * @description Retune the cadence (seconds; floored at 300).
+             */
+            cadence_secs?: number | null;
+            /** @description Turn the sweep's schedule on or off. */
+            enabled?: boolean | null;
         };
         /**
          * @description One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the
@@ -2028,6 +2260,112 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuditResponse"];
                 };
+            };
+        };
+    };
+    docs_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocsListResponse"];
+                };
+            };
+        };
+    };
+    doc_approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocApproveResponse"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    doc_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocDetailResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    doc_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocRevisionsResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2467,6 +2805,90 @@ export interface operations {
                 content?: never;
             };
             /** @description Memory not found, or superseded (supersessions are final) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sweeps_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sweep schedules */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepsResponse"];
+                };
+            };
+        };
+    };
+    sweep_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sweep kind: divergence | health_snapshot */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSweepBody"];
+            };
+        };
+        responses: {
+            /** @description Updated schedule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepSchedule"];
+                };
+            };
+            /** @description No such sweep kind */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sweep_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sweep kind: divergence | health_snapshot */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSweepResponse"];
+                };
+            };
+            /** @description No such sweep kind */
             404: {
                 headers: {
                     [name: string]: unknown;

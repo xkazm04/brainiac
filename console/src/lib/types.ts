@@ -60,6 +60,12 @@ export type KhPillars = S["KhPillars"];
 export type KhSignals = S["KhSignals"];
 export type KhAttention = S["KhAttention"];
 export type KhTrendPoint = S["TrendPoint"];
+export type PracticeDivergences = S["PracticeDivergenceResponse"];
+export type PracticeDivergence = S["PracticeDivergence"];
+
+// ── ops (sweeps) ────────────────────────────────────────────────────────
+export type Sweeps = S["SweepsResponse"];
+export type SweepSchedule = S["SweepSchedule"];
 
 // ── ingest ──────────────────────────────────────────────────────────────
 export type SourceFeedItem = S["SourceRow"];
@@ -71,3 +77,24 @@ export type ApiToken = S["TokenSummary"];
 export type MintedToken = S["CreatedTokenResponse"];
 export type OrgUser = S["OrgUser"];
 export type TokenPreview = S["TokenPreviewResponse"];
+
+// ── documents / the knowledge base (KB2, ARCHITECTURE §8) ───────────────
+// Generated like everything else now that the /v1/docs endpoints ship.
+
+/** A memory's lifecycle facet (migration 0015) — what a claim's standing is. */
+export type MemoryLifecycle = "shipped" | "in_flight" | "proposed";
+
+/** Revision publish policy (brainiac-core RevisionPolicy). */
+export type RevisionPolicy = "auto_published" | "needs_review" | "rejected";
+
+export type DocSummary = S["DocSummary"];
+export type DocRevision = S["DocRevisionView"];
+/** A revision awaiting a human — the page's unpublished future. */
+export type DocPendingRevision = S["DocRevisionView"];
+/** A memory resolved from `composed_from` — the provenance of one claim. */
+export type DocCitation = S["Citation"];
+export type DocDocument = S["DocSummary"];
+/** GET /v1/docs/{slug} — the reader's whole payload, provenance included. */
+export type DocDetail = S["DocDetailResponse"];
+export type DocRevisionSummary = S["DocRevisionView"];
+export type DocApproval = S["DocApproveResponse"];

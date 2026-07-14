@@ -492,6 +492,9 @@ async fn worker_loop(
     // Admin (RLS-bypassing) pool for the scheduled cross-org sweeps — they loop
     // every org, exactly like reembed, so they cannot run on the app-role pool.
     let sweep_admin = brainiac_store::admin_pool(&database_url()?).await?;
+    // The KB tick is likewise cross-org: it must enumerate every org that has
+    // pages, which no single tenant-scoped principal can do.
+    let kb_admin = brainiac_store::admin_pool(&database_url()?).await?;
     // Stagger the first scheduler check so a just-booted worker drains any
     // backlog before it also fires sweeps; then every SCHED_INTERVAL.
     let mut last_sched_check = tokio::time::Instant::now();
@@ -556,6 +559,25 @@ async fn worker_loop(
             }
         }
 
+        // The knowledge base maintains itself (§8): recompose every page whose
+        // memories moved, and scaffold entity pages for canonical entities that
+        // have crossed the threshold. Runs AFTER ingest in the same loop, on
+        // purpose — a page must never recompose from a half-ingested corpus, and
+        // dirty pages are a durable work list, so falling behind for one tick
+        // costs nothing but a little freshness.
+        //
+        // Both are no-ops for an org with no pages: a dirty-page lookup that
+        // matches nothing, and a threshold query that returns nothing. An org
+        // that has not turned the KB layer on pays a query per tick and nothing
+        // else.
+        match compose_sweep(&store, &providers, embedder.as_ref(), version, &kb_admin).await {
+            Ok(stats) if stats.composed > 0 || stats.scaffolded > 0 => {
+                tracing::info!(?stats, "knowledge base tick");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "knowledge-base tick failed"),
+        }
+
         // Sweep scheduler: at most once per SCHED_INTERVAL, dispatch any due
         // org-intelligence sweeps. Claiming is one atomic UPDATE and each due
         // sweep runs on its own spawned task, so this never delays ingest.
@@ -569,8 +591,75 @@ async fn worker_loop(
         }
     }
     sweep_admin.close().await;
+    kb_admin.close().await;
     tracing::info!("brainiac worker shut down gracefully");
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct KbStats {
+    composed: usize,
+    auto_published: usize,
+    needs_review: usize,
+    scaffolded: usize,
+}
+
+/// One knowledge-base pass across every org that has any (ARCHITECTURE §8).
+///
+/// Scaffolding runs BEFORE composition so a page created this tick composes in
+/// the same tick rather than sitting empty until the next one — an empty page is
+/// the single worst thing a wiki can show a reader who came looking for an
+/// answer.
+///
+/// Orgs are enumerated from the pages/entities that exist, not from a list of
+/// tenants: an org with no KB does no work here beyond the two lookups.
+async fn compose_sweep(
+    store: &Store,
+    providers: &brainiac_gateway::ProviderRouter,
+    embedder: &dyn Embedder,
+    version: i32,
+    admin: &sqlx::PgPool,
+) -> Result<KbStats> {
+    use sqlx::Row;
+    let mut stats = KbStats::default();
+
+    // Every org that has at least one page, plus every org with canonical
+    // entities (a candidate for scaffolding its first page).
+    let orgs = sqlx::query(
+        "SELECT DISTINCT org_id FROM documents
+         UNION
+         SELECT DISTINCT org_id FROM canonical_entities",
+    )
+    .fetch_all(admin)
+    .await?;
+
+    for row in orgs {
+        let org_id: uuid::Uuid = row.get("org_id");
+        let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+        // Scaffold under worker authority: deciding whether an entity has earned
+        // a page requires seeing every team's memories.
+        let mut tx = store.worker_tx(&principal).await?;
+        match brainiac_pipeline::compose::scaffold_entity_pages(&mut tx, org_id, 5).await {
+            Ok(created) => {
+                stats.scaffolded += created.len();
+                tx.commit().await?;
+            }
+            Err(e) => {
+                tracing::warn!(org = %org_id, error = %e, "entity-page scaffolding failed");
+                // Drop the tx; composition of existing pages still runs below.
+            }
+        }
+
+        let c = brainiac_pipeline::worker::compose_tick(
+            store, providers, embedder, version, org_id, 20,
+        )
+        .await?;
+        stats.composed += c.composed;
+        stats.auto_published += c.auto_published;
+        stats.needs_review += c.needs_review;
+    }
+    Ok(stats)
 }
 
 /// The `docs` profile (EVAL.md §2.6): compose the gold pages with a REAL

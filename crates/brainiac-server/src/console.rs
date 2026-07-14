@@ -78,6 +78,14 @@ pub fn routes() -> Router<Arc<AppState>> {
             axum::routing::put(crate::sweeps::sweep_update),
         )
         .route("/v1/ops/sweeps/{kind}/run", post(crate::sweeps::sweep_run))
+        // ── the knowledge base (§8): pages are projections over memories ──
+        .route("/v1/docs", get(crate::docs::docs_list))
+        .route("/v1/docs/{slug}", get(crate::docs::doc_get))
+        .route("/v1/docs/{slug}/revisions", get(crate::docs::doc_revisions))
+        .route(
+            "/v1/docs/revisions/{id}/approve",
+            post(crate::docs::doc_approve),
+        )
 }
 
 /// `{status, count}` — the shape every status histogram in this module emits
@@ -88,7 +96,7 @@ pub(crate) struct StatusCount {
     pub count: i64,
 }
 
-async fn is_maintainer(
+pub(crate) async fn is_maintainer(
     conn: &mut PgConnection,
     principal: &Principal,
     team_id: Uuid,

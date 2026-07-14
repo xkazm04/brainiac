@@ -239,7 +239,48 @@ Ordered roughly by leverage; none block the phase ladder.
 - [ ] KB5 public surfaces (KB page, pitch, README, docs/KNOWLEDGE-BASE.md) —
       landed alongside KB1; honesty guard tests pin every public claim to this
       status log.
-- [ ] KB2 read surfaces (console reader/editor, MCP doc tools, scaffolding)
+- [x] **KB2 read surfaces** (2026-07-14)
+      - REST (`crates/brainiac-server/src/docs.rs`): `GET /v1/docs`,
+        `GET /v1/docs/{slug}`, `GET /v1/docs/{slug}/revisions`,
+        `POST /v1/docs/revisions/{id}/approve` (maintainer of the owning team;
+        for an org page with no owning team, any maintainer — no single team
+        owns the org's shared view). `doc_get` resolves the revision's ENTIRE
+        provenance closure in one response: if checking a citation cost a round
+        trip, nobody would check one and the guarantee would become decorative.
+      - MCP: `doc_search` + `doc_get`. Agents READ pages; there is deliberately
+        no `doc_write` — an agent contributes by proposing MEMORIES, which pass
+        the review gate and then flow into pages. An unpublished page serves an
+        agent no content at all: a draft nobody signed must not reach a coding
+        agent through the back door.
+      - Entity-page auto-scaffolding (`compose::scaffold_entity_pages`): a
+        canonical entity earns a page at ≥4 org-visible canonical memories
+        across ≥2 teams. The cross-team half of the test is the sharp one — a
+        fact one team knows is that team's business; a thing two teams both had
+        to learn is exactly what an org page is for. Scaffolds a DRAFT with a
+        lifecycle-split section skeleton: the machine decides a page should
+        exist, a human decides it is right.
+      - Worker: `compose_sweep` in the worker loop — scaffold, then recompose
+        dirty pages, per org, every tick. Without this the KB never actually
+        maintains itself in production. No-op for an org with no pages.
+      - Console: `/docs` index (pending-review work surfaced first) and the
+        `/docs/[slug]` reader — a dependency-free markdown renderer with no
+        raw-HTML node kind (sanitizing by construction), inline provenance chips
+        that open the memory behind any claim, lifecycle marking so an
+        `in_flight` claim is visibly not-yet-shipped, revision history
+        distinguishing auto-published from human-approved, and an Approve action
+        that is only wired when the API is live.
+      - Tests: `docs_pg.rs` (3) — a team page is invisible to a non-member (and
+        "not found", not "forbidden": existence is itself information); MCP
+        serves published pages and refuses unsigned drafts; scaffolding fires
+        only where knowledge crosses teams, and is idempotent. Console: 31
+        vitest (13 new, on the citation parser). Full Rust suite green.
+      - Bug found and fixed en route: writing a TEAM document through
+        `scoped_tx` as the pipeline principal silently updated ZERO rows —
+        Postgres applies the SELECT policy to an UPDATE's WHERE clause, and the
+        pipeline principal is in no team. Production was already correct
+        (`compose_tick` opens `worker_tx` for team pages); the test seeded the
+        wrong way and exposed it. An RLS no-op looks exactly like success, which
+        is what makes it worth a comment in the code.
 - [ ] KB3 publishing (publisher trait, Git + Confluence, scopes, breaker)
 - [ ] KB4 round-trip & hardening (edit reingestion, propagation SLA, docs
       health signals)

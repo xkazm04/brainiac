@@ -376,6 +376,28 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["memory_id"]
             }
+        },
+        {
+            "name": "doc_search",
+            "description": "Find knowledge-base PAGES (compiled, human-published views over the org's memories) by topic. A page is the org's settled, reviewed account of a service or topic — prefer it over raw memory_search when you need the whole picture of something rather than a specific fact. Returns page slugs + titles; read one with doc_get.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Topic, service, or entity you want the org's page on" }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "doc_get",
+            "description": "Read a knowledge-base page as markdown. Every factual sentence carries an inline [m:<uuid>] citation to the governed memory it came from, so you can trace or feed back on any claim (memory_provenance / memory_feedback). IMPORTANT: the page reflects only what a named human PUBLISHED — a page marked stale:true has pending changes not yet reviewed, and claims marked not-yet-shipped describe intent, not production. Scoped to you: a page you cannot see returns 'not found'.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slug": { "type": "string", "description": "Page slug, e.g. `psp-gateway` (from doc_search)" }
+                },
+                "required": ["slug"]
+            }
         }
     ])
 }
@@ -398,6 +420,8 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
         "memory_feedback" => memory_feedback(state, &args).await,
         "knowledge_propose" => knowledge_propose(state, &args).await,
         "memory_provenance" => memory_provenance(state, &args).await,
+        "doc_get" => doc_get(state, &args).await,
+        "doc_search" => doc_search(state, &args).await,
         other => return Err(RpcError::new(-32602, format!("unknown tool: {other}"))),
     };
 
@@ -1000,6 +1024,95 @@ async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value, ToolEr
         "feedback_totals": summary.iter().map(|(v, n)| json!({
             "verdict": v, "count": n,
         })).collect::<Vec<_>>(),
+    }))
+}
+
+// ── knowledge base (§8.4) ───────────────────────────────────────────────
+//
+// Agents get READ access to pages and nothing else. There is deliberately no
+// `doc_write` / `doc_edit` tool: an agent contributes by writing MEMORIES
+// (memory_add / knowledge_propose), which pass the review gate and then flow
+// into pages by composition. Letting an agent author a page directly would put
+// unreviewed prose into the org's wiki through the one door the whole product
+// exists to keep shut.
+
+/// Read a page. Everything runs under the operator's RLS scope, so a page the
+/// developer cannot see is simply "not found" — existence is itself information.
+async fn doc_get(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let slug = within_cap(required_str(args, "slug")?, MAX_NAME_CHARS, "slug")?;
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+
+    let Some(doc) = brainiac_store::documents::get_document_by_slug(&mut tx, slug).await? else {
+        return Ok(json!({ "found": false, "slug": slug }));
+    };
+    let current = brainiac_store::documents::current_revision(&mut tx, doc.id).await?;
+    tx.commit().await?;
+
+    // An unpublished page has no content to serve. Handing an agent a draft
+    // nobody signed would defeat the review gate as surely as letting it write
+    // one — so we say the page exists and is unpublished, and stop there.
+    let Some(rev) = current else {
+        return Ok(json!({
+            "found": true,
+            "slug": doc.slug,
+            "title": doc.title,
+            "published": false,
+            "note": "this page has no published revision yet — a maintainer has not signed one. Use memory_search for the underlying knowledge."
+        }));
+    };
+
+    Ok(json!({
+        "found": true,
+        "slug": doc.slug,
+        "title": doc.title,
+        "kind": doc.doc_kind.as_str(),
+        "published": true,
+        "published_at": rev.published_at,
+        // The honest freshness signal: an underlying memory has changed and the
+        // page has not recomposed yet, so what you are reading may already be
+        // behind the org's actual belief.
+        "stale": doc.dirty_at.is_some(),
+        "content_md": rev.content_md,
+        "cites": rev.composed_from,
+    }))
+}
+
+/// Find pages by topic. Page-level retrieval, not memory-level: an agent that
+/// needs the whole picture of a service should read the org's settled account of
+/// it rather than reassembling one from twenty facts.
+async fn doc_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    use sqlx::Row;
+    let query = within_cap(required_str(args, "query")?, MAX_QUERY_CHARS, "query")?;
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+
+    // Lexical over title/slug + the published markdown. Deliberately simple:
+    // pages are few and their titles name the thing they are about, so embedding
+    // the corpus of pages would buy little and cost an index to keep fresh.
+    // If page count ever makes this weak, the fix is a page embedding — not a
+    // cleverer LIKE.
+    let rows = sqlx::query(
+        "SELECT d.slug, d.title, d.doc_kind, d.dirty_at IS NOT NULL AS stale
+         FROM documents d
+         LEFT JOIN document_revisions r ON r.id = d.current_revision
+         WHERE d.status = 'published'
+           AND (d.title ILIKE '%' || $1 || '%'
+                OR d.slug ILIKE '%' || $1 || '%'
+                OR r.content_md ILIKE '%' || $1 || '%')
+         ORDER BY (d.title ILIKE '%' || $1 || '%') DESC, d.updated_at DESC
+         LIMIT 10",
+    )
+    .bind(query)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(json!({
+        "pages": rows.iter().map(|r| json!({
+            "slug": r.get::<String, _>("slug"),
+            "title": r.get::<String, _>("title"),
+            "kind": r.get::<String, _>("doc_kind"),
+            "stale": r.get::<bool, _>("stale"),
+        })).collect::<Vec<_>>()
     }))
 }
 

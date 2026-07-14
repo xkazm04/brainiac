@@ -11,6 +11,10 @@ import type {
   CanonicalDetail,
   Contradiction,
   ContradictionResolution,
+  DocApproval,
+  DocDetail,
+  DocRevisionSummary,
+  DocSummary,
   Graph,
   GraphOverview,
   KnowledgeHealth,
@@ -21,10 +25,13 @@ import type {
   OrgUser,
   PendingPromotion,
   PipelineRun,
+  PracticeDivergences,
   QueueHealth,
   ReviewedPromotion,
   SearchHit,
   SourceFeedItem,
+  SweepSchedule,
+  Sweeps,
   TokenPreview,
 } from "./types";
 
@@ -54,7 +61,7 @@ export function configFromEnv(): ApiConfig {
 
 async function call<T>(
   cfg: ApiConfig,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -159,6 +166,30 @@ export async function getKnowledgeHealth(cfg: ApiConfig): Promise<KnowledgeHealt
   return call(cfg, "GET", "/v1/analytics/knowledge-health");
 }
 
+export async function getPracticeDivergence(cfg: ApiConfig): Promise<PracticeDivergences> {
+  return call(cfg, "GET", "/v1/analytics/practice-divergence");
+}
+
+// ── ops: sweep scheduling (admin token) ─────────────────────────────────
+export async function getSweeps(cfg: ApiConfig): Promise<Sweeps> {
+  return call(cfg, "GET", "/v1/ops/sweeps");
+}
+
+export async function updateSweep(
+  cfg: ApiConfig,
+  kind: string,
+  patch: { enabled?: boolean; cadence_secs?: number },
+): Promise<SweepSchedule> {
+  return call(cfg, "PUT", `/v1/ops/sweeps/${kind}`, patch);
+}
+
+export async function runSweep(
+  cfg: ApiConfig,
+  kind: string,
+): Promise<{ kind: string; queued: boolean; next_run_at: string | null }> {
+  return call(cfg, "POST", `/v1/ops/sweeps/${kind}/run`);
+}
+
 export async function getGraphOverview(cfg: ApiConfig): Promise<GraphOverview> {
   return call(cfg, "GET", "/v1/graph/overview");
 }
@@ -232,4 +263,34 @@ export async function getGraphCanonical(
   id: string,
 ): Promise<CanonicalDetail> {
   return call(cfg, "GET", `/v1/graph/canonical/${id}`);
+}
+
+// ── documents (KB2) ─────────────────────────────────────────────────────
+export async function listDocs(cfg: ApiConfig): Promise<DocSummary[]> {
+  const out = await call<{ documents: DocSummary[] }>(cfg, "GET", "/v1/docs");
+  return out.documents;
+}
+
+export async function getDoc(cfg: ApiConfig, slug: string): Promise<DocDetail> {
+  return call(cfg, "GET", `/v1/docs/${encodeURIComponent(slug)}`);
+}
+
+export async function getDocRevisions(
+  cfg: ApiConfig,
+  slug: string,
+): Promise<DocRevisionSummary[]> {
+  const out = await call<{ revisions: DocRevisionSummary[] }>(
+    cfg,
+    "GET",
+    `/v1/docs/${encodeURIComponent(slug)}/revisions`,
+  );
+  return out.revisions;
+}
+
+/** Publish a pending revision. Maintainer-scoped; never wired to demo data. */
+export async function approveDocRevision(
+  cfg: ApiConfig,
+  revisionId: string,
+): Promise<DocApproval> {
+  return call(cfg, "POST", `/v1/docs/revisions/${revisionId}/approve`);
 }

@@ -93,7 +93,12 @@ async fn mcp_handshake_and_tools() {
             "entity_lookup",
             "knowledge_propose",
             "memory_feedback",
-            "memory_provenance"
+            "memory_provenance",
+            // KB2 (§8.4): agents READ the knowledge base. There is deliberately
+            // no doc_write/doc_edit — an agent contributes by proposing
+            // memories, which pass the review gate and then flow into pages.
+            "doc_search",
+            "doc_get"
         ]
     );
 

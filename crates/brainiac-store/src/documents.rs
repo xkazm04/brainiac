@@ -89,11 +89,12 @@ fn row_to_document(r: &sqlx::postgres::PgRow) -> Document {
         status: DocStatus::parse(r.get::<String, _>("status").as_str()).unwrap_or_default(),
         current_revision: r.get("current_revision"),
         dirty_at: r.get("dirty_at"),
+        updated_at: r.get("updated_at"),
     }
 }
 
 const DOC_COLUMNS: &str = "id, org_id, team_id, slug, title, visibility::text AS visibility,
-     doc_kind, status, current_revision, dirty_at";
+     doc_kind, status, current_revision, dirty_at, updated_at";
 
 pub async fn get_document(conn: &mut PgConnection, id: Uuid) -> Result<Option<Document>> {
     let row = sqlx::query(&format!(

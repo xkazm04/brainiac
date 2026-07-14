@@ -36,6 +36,13 @@ export const PRODUCT_ROUTES: ProductRoute[] = [
   { path: "/analytics", segment: "analytics", label: "analytics", band: "beta" },
   // The leadership read: one composite the org can be held to (KB-PLAN KB0).
   { path: "/health", segment: "health", label: "health", band: "alpha" },
+  // The document layer (KB-PLAN KB2): pages compiled from canonical memories.
+  // Gamma — the binding band — because a composed page is exactly that: many
+  // teams' governed memories bound into one percept.
+  { path: "/docs", segment: "docs", label: "pages", band: "gamma" },
+  // Standardization: where teams solved the same problem different ways (theta,
+  // the divergence band — same family as disputes/contradiction work).
+  { path: "/divergence", segment: "divergence", label: "standards", band: "theta" },
   { path: "/keys", segment: "keys", label: "keys", band: "ground" },
 ];
 

@@ -24,8 +24,8 @@
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
 use brainiac_core::{
-    Document, DocumentSection, Lifecycle, Memory, MemoryStatus, RevisionPolicy, SectionBinding,
-    SectionMode, Visibility,
+    Document, DocumentSection, Lifecycle, Memory, MemoryKind, MemoryStatus, RevisionPolicy,
+    SectionBinding, SectionMode, Visibility,
 };
 use brainiac_gateway::{ChatProvider, ChatRequest};
 use brainiac_store::retrieval::{RetrievalFilters, RetrievalRequest};
@@ -108,12 +108,15 @@ async fn bound_memories(
     // Entity-anchored bindings are the backbone of an entity_page: they don't
     // depend on phrasing the way a search query does.
     if !binding.entities.is_empty() {
-        let mems = brainiac_store::memories::for_entities(
-            conn,
-            &binding.entities,
-            (binding.max_items * 3) as i64,
-        )
-        .await?;
+        // A binding may name either a RAW entity (a team's own node) or a
+        // CANONICAL one (the merged hub — what auto-scaffolding binds to).
+        // Memories anchor to raw entities, so a canonical id must be expanded
+        // through entity_links or an entity page would compose to nothing —
+        // silently, which is the worst way for it to fail.
+        let anchors = expand_entity_anchors(conn, &binding.entities).await?;
+        let mems =
+            brainiac_store::memories::for_entities(conn, &anchors, (binding.max_items * 3) as i64)
+                .await?;
         out.extend(mems);
     }
 
@@ -162,6 +165,23 @@ async fn bound_memories(
     }
     kept.truncate(binding.max_items);
     Ok(kept)
+}
+
+/// Resolve a binding's entity ids to the RAW entity ids memories actually anchor
+/// to: pass raw ids through, and expand any canonical id to every raw entity
+/// linked under it. Cheap, and it makes a binding tolerant of which kind of id
+/// the author (human or scaffolder) happened to have.
+async fn expand_entity_anchors(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT entity_id FROM entity_links WHERE canonical_id = ANY($1)
+         UNION
+         SELECT id FROM entities WHERE id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.iter().map(|r| r.get("entity_id")).collect())
 }
 
 /// Render the memory set the model is allowed to use. Lifecycle is stated in
@@ -434,6 +454,143 @@ pub async fn compose_document(
     })
 }
 
+// ── entity-page auto-scaffolding (§8.4) ─────────────────────────────────
+//
+// "The wiki grows where the knowledge actually is, instead of where someone
+// remembered to create a page." A canonical entity that has accumulated real,
+// cross-team knowledge is, by definition, something the org keeps needing to
+// explain to itself — and nobody ever gets around to writing that page.
+
+/// A canonical entity earns a page when it carries at least this many canonical
+/// ORG-VISIBLE memories across at least [`SCAFFOLD_MIN_TEAMS`] teams.
+///
+/// The thresholds are the whole safety argument. Scaffold too eagerly and the
+/// KB fills with stub pages that say nothing — which is how a wiki teaches its
+/// readers to stop visiting. Requiring knowledge from two teams is the sharper
+/// half of the test: a fact only one team knows is that team's business, but a
+/// thing two teams have both had to learn about is precisely what an org-wide
+/// page is for.
+pub const SCAFFOLD_MIN_MEMORIES: i64 = 4;
+pub const SCAFFOLD_MIN_TEAMS: i64 = 2;
+
+/// Create `entity_page`s for canonical entities that have crossed the threshold
+/// and don't have one yet. Idempotent: the slug is derived from the entity, and
+/// an existing page is skipped rather than duplicated.
+///
+/// Scaffolds a DRAFT with composed sections. It does not publish — the first
+/// revision still needs a human, exactly like every other page. The machine
+/// decides *that a page should exist*; a person decides *that it is right*.
+pub async fn scaffold_entity_pages(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        "SELECT c.id, c.name,
+                count(DISTINCT m.id)      AS memories,
+                count(DISTINCT m.team_id) AS teams
+         FROM canonical_entities c
+         JOIN entity_links l   ON l.canonical_id = c.id
+         JOIN memory_entities me ON me.entity_id = l.entity_id
+         JOIN memories m       ON m.id = me.memory_id
+         WHERE m.status = 'canonical'
+           AND m.visibility = 'org'
+           AND m.superseded_by IS NULL
+           AND NOT EXISTS (
+                 SELECT 1 FROM documents d
+                 WHERE d.doc_kind = 'entity_page' AND d.slug = 'entity-' || c.id::text
+               )
+         GROUP BY c.id, c.name
+         HAVING count(DISTINCT m.id) >= $1 AND count(DISTINCT m.team_id) >= $2
+         ORDER BY count(DISTINCT m.id) DESC
+         LIMIT $3",
+    )
+    .bind(SCAFFOLD_MIN_MEMORIES)
+    .bind(SCAFFOLD_MIN_TEAMS)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut created = Vec::new();
+    for r in rows {
+        let canonical_id: Uuid = r.get("id");
+        let name: String = r.get("name");
+        let doc_id = Uuid::new_v4();
+
+        brainiac_store::documents::insert_document(
+            conn,
+            &brainiac_store::documents::NewDocument {
+                id: doc_id,
+                org_id,
+                // No owning team: the page exists precisely BECAUSE the
+                // knowledge crosses team lines. Publishing it is any
+                // maintainer's call.
+                team_id: None,
+                slug: format!("entity-{canonical_id}"),
+                title: name.clone(),
+                visibility: Visibility::Org,
+                doc_kind: brainiac_core::DocKind::EntityPage,
+            },
+        )
+        .await?;
+
+        // The sections encode the questions an engineer actually arrives with,
+        // in the order they ask them — and the lifecycle split (KB-PLAN D2)
+        // keeps "how it works" from quietly absorbing "how we intend it to
+        // work", which is the most common way a wiki starts lying.
+        let sections = [
+            (
+                "How it works today",
+                vec![Lifecycle::Shipped],
+                vec![MemoryKind::Fact, MemoryKind::Decision, MemoryKind::Pattern],
+            ),
+            (
+                "Pitfalls",
+                vec![Lifecycle::Shipped],
+                vec![MemoryKind::Pitfall],
+            ),
+            (
+                "How to work with it",
+                vec![Lifecycle::Shipped],
+                vec![MemoryKind::Howto],
+            ),
+            (
+                "On its way (not yet shipped)",
+                vec![Lifecycle::InFlight, Lifecycle::Proposed],
+                vec![],
+            ),
+        ];
+        for (i, (heading, lifecycle, kinds)) in sections.into_iter().enumerate() {
+            brainiac_store::documents::insert_section(
+                conn,
+                &brainiac_store::documents::NewSection {
+                    id: Uuid::new_v4(),
+                    document_id: doc_id,
+                    org_id,
+                    position: i as i32,
+                    heading: heading.to_string(),
+                    mode: SectionMode::Composed,
+                    binding: Some(SectionBinding {
+                        entities: vec![canonical_id],
+                        kinds,
+                        lifecycle,
+                        query: name.clone(),
+                        max_items: 10,
+                    }),
+                    pinned_content: None,
+                },
+            )
+            .await?;
+        }
+        brainiac_store::documents::mark_dirty(conn, doc_id).await?;
+        created.push(doc_id);
+        tracing::info!(entity = %name, document = %doc_id, "entity page scaffolded");
+    }
+    Ok(created)
+}
+
 /// The principal composition runs as.
 ///
 /// A synthetic user with NO team memberships: under the `memories_read` RLS
@@ -490,6 +647,7 @@ mod tests {
             status: Default::default(),
             current_revision: None,
             dirty_at: None,
+            updated_at: Utc::now(),
         }
     }
 

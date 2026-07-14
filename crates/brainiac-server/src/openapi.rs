@@ -96,6 +96,11 @@ impl Modify for BearerAuth {
         console::knowledge_health,
         console::knowledge_health_snapshot,
         console::practice_divergence,
+        // knowledge base (§8)
+        crate::docs::docs_list,
+        crate::docs::doc_get,
+        crate::docs::doc_revisions,
+        crate::docs::doc_approve,
         // ops (admin)
         crate::sweeps::sweeps_list,
         crate::sweeps::sweep_update,
@@ -205,6 +210,14 @@ impl Modify for BearerAuth {
         console::SnapshotResponse,
         console::PracticeDivergence,
         console::PracticeDivergenceResponse,
+        // knowledge base (§8)
+        crate::docs::DocSummary,
+        crate::docs::DocsListResponse,
+        crate::docs::DocRevisionView,
+        crate::docs::Citation,
+        crate::docs::DocDetailResponse,
+        crate::docs::DocRevisionsResponse,
+        crate::docs::DocApproveResponse,
         // ops
         crate::sweeps::SweepSchedule,
         crate::sweeps::SweepsResponse,
