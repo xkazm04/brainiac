@@ -34,6 +34,8 @@ export const PRODUCT_ROUTES: ProductRoute[] = [
   { path: "/memories", segment: "memories", label: "archive", band: "delta" },
   { path: "/ingest", segment: "ingest", label: "ingest", band: "theta" },
   { path: "/analytics", segment: "analytics", label: "analytics", band: "beta" },
+  // The leadership read: one composite the org can be held to (KB-PLAN KB0).
+  { path: "/health", segment: "health", label: "health", band: "alpha" },
   { path: "/keys", segment: "keys", label: "keys", band: "ground" },
 ];
 

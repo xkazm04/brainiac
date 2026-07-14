@@ -3,9 +3,17 @@
 # cross-team org-visible knowledge, a Czech slice, and private leak targets).
 #
 # Conventions: visibility defaults to `team`; status defaults to `canonical`;
-# language defaults to `en`. Timestamps are RFC3339. `source` ties a memory to
-# the transcript it was distilled from (extraction gold lives in the
-# transcript files; this file is the retrieval substrate).
+# language defaults to `en`; lifecycle defaults to `shipped`. Timestamps are
+# RFC3339. `source` ties a memory to the transcript it was distilled from
+# (extraction gold lives in the transcript files; this file is the retrieval
+# substrate).
+#
+# KB0 facets (docs/KB-PLAN.md D2/D3): `lifecycle` marks knowledge that is NOT
+# yet shipped reality (in_flight | proposed) — composed pages must never
+# present a roadmap intent as how the system works today. `detail_md` carries
+# the literal artifact a statement summarizes, so pages can render structure
+# instead of paraphrasing it away. Both are rare by design; the entries below
+# are the corpus's exercise cases for them.
 memories:
   # ── payments ──────────────────────────────────────────────────────────
   - id: mem-pay-0042
@@ -22,8 +30,33 @@ memories:
     visibility: org
     kind: decision
     content: "raise refund-worker retry cap to 30s with jitter, aligned to std-retry policy"
+    # D3: the claim is the sentence; the artifact is the config the team
+    # actually merged. A page that renders the sentence alone forces the reader
+    # back into the repo — which is how docs lose their audience.
+    detail_md: |
+      ```yaml
+      retry:
+        max_backoff: 30s
+        jitter: full
+        policy: std-retry
+      ```
     entities: [ent-pay-refund-worker, ent-pay-retry-rules]
     valid_from: "2026-04-01T00:00:00Z"
+    source: src-pay-007
+  # D2: decided, underway, NOT in production. Canonical and currently valid —
+  # governance status and temporal validity both say "true" — yet a page that
+  # renders this next to shipped facts tells the reader the ledger already
+  # talks to chargeback-svc. Only `lifecycle` can carry that distinction.
+  - id: mem-pay-0044
+    team: team-payments
+    visibility: org
+    kind: decision
+    lifecycle: in_flight
+    content: "chargeback-svc will settle through the ledger service directly, retiring the psp-adapter settlement path"
+    entities: [ent-pay-chargeback-svc, ent-pay-ledger, ent-pay-psp-adapter]
+    relations:
+      - {src: ent-pay-chargeback-svc, rel: depends_on, dst: ent-pay-ledger}
+    valid_from: "2026-05-01T00:00:00Z"
     source: src-pay-007
   - id: mem-pay-0021
     team: team-payments

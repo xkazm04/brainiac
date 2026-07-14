@@ -132,6 +132,8 @@ CREATE TABLE memories (
   kind text,                          -- fact | decision | pattern | pitfall | howto
   content text NOT NULL,              -- distilled natural-language statement
   content_fts tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
+  lifecycle text DEFAULT 'shipped',   -- shipped | in_flight | proposed (§2.3 below)
+  detail_md text,                     -- optional artifact the statement summarizes
   valid_from timestamptz,             -- temporal validity window
   valid_to   timestamptz,             -- NULL = still valid
   superseded_by uuid,                 -- forward pointer on deprecation
@@ -158,6 +160,8 @@ Design points:
 - **Embeddings live in a side table keyed by version.** Model swap = insert new `embedding_versions` row, re-embed worker backfills, flip `is_active`, drop old rows later. Retrieval always filters on the active version. No in-place mutation of the corpus.
 - **Temporal validity is first-class** (`valid_from`/`valid_to` + `superseded_by`), enabling "what did we know in March" queries and preventing stale knowhow from poisoning retrieval — deprecated memories are excluded by default but preserved for audit.
 - `kind` matters for promotion policy: a `pitfall` ("don't use library X with runtime Y") can have different auto-promotion rules than a `decision`.
+- **`lifecycle` separates shipped reality from intent.** Governance status answers *has a human signed this?*; temporal validity answers *when did it hold?*. Neither answers the question a reader of a generated page asks first: *is this how the system works today, or how we plan for it to work?* A decision to adopt Kafka can be canonical, currently valid, and describe nothing that exists in production. Composed pages split on this facet (§8), so the wiki cannot quietly present a roadmap as an architecture. Default `shipped`; the extractor departs from it only when the transcript is explicit.
+- **`detail_md` preserves structure the sentence destroys.** `content` stays the distilled claim and remains the *only* retrieval surface (FTS + embeddings point at it, unchanged); `detail_md` optionally carries the literal code block / config / table the claim summarizes. Without it, every composed page is prose-about-artifacts rather than the artifact — the quality ceiling that makes generated docs feel worse than the code they describe. It runs through the same secret-redaction firewall as `content` (a credential is likelier to hide in a code block than in prose).
 
 ### 2.4 Graph: entities and edges (collision-tolerant)
 
@@ -407,7 +411,8 @@ CREATE TABLE document_dependencies (  -- inverted index: which pages a memory fe
 | Dirty marking | Canonical memory inserted / superseded / deprecated → look up `document_dependencies` → mark dependent pages dirty. Contradiction resolutions therefore **propagate automatically to every page** citing the losing memory. |
 | Compose | For each composed section: run its binding through the retrieval engine (canonical-only, visibility-capped), BYOM writes section prose **citing memory ids inline** (`[m:uuid]` annotations, rendered as footnotes for humans, structured refs for agents). Pinned sections pass through untouched. |
 | Diff & policy | New revision diffed against current. Cedar decides: small additive diff + all claims traceable → `auto_published`; structural change / deletion of previously published claims → review queue (same UI as promotions). |
-| Publish | Revision becomes current; exported to Git (`docs/` alongside compiled skills, same semver). |
+| Health gate | Before any *external* publish, the Knowledge Health composite (§7 / `/v1/analytics/knowledge-health`) is consulted: if the **currency** or **governance** pillar is below threshold, the sync pauses and the page holds its last published revision with a "verification pending" stamp. An auto-published wiki is an amplifier; without this gate a stalled review queue would broadcast stale beliefs to the whole company at machine speed — the exact failure the UAT runs found (the backlog kept being served as truth and nothing went red). The circuit breaker is what turns the health score from a report into an actuator. |
+| Publish | Revision becomes current and is handed to the **`Publisher`** targets configured for the org (see §8.5). |
 
 **Visibility capping (leak prevention):** composition of an `org`-visible page runs retrieval as a synthetic principal with only org-tier access — team-private memories physically cannot enter the page, enforced by the same RLS path as user queries. This must be a hard invariant, verified by the eval harness (see fixture design).
 
@@ -424,13 +429,25 @@ Humans can edit pages in the UI, but edits do not fork the truth:
 - **REST/UI:** page reader (rendered revisions, per-claim provenance popovers), page editor with pinned/composed section awareness, revision diff review queue.
 - **Page bootstrapping:** an `entity_page` can be auto-scaffolded for any canonical entity above an activity threshold (e.g. referenced by ≥ N canonical memories across ≥ 2 teams) — the wiki grows where the knowledge actually is, instead of where someone remembered to create a page.
 
+### 8.5 Publishing: the KB is a projection, and so is the wiki you already have
+
+Publishing is a **`Publisher` trait** with pluggable targets — Git (`docs/`, semver, alongside compiled skills), **Confluence** (PAT), and later Notion / Backstage. The strategic point of the Confluence target is that a team does not have to abandon its wiki to stop it rotting: Brainiac keeps the pages they already read honest, and Confluence becomes a render surface rather than a competing source of truth.
+
+Hard invariants on every external target:
+
+- **One-way.** Pages are pushed, never pulled. A published page carries a generated-content banner and provenance links back to the console. Direct edits in the external tool are overwritten on the next compose — harvesting them back as an ingestion source is a later increment, not a promise we make on day one. Bidirectional sync would recreate exactly the two-sources-of-truth problem §8 exists to eliminate.
+- **`org`-visibility only (v1).** External publish leaves RLS behind entirely, so only `org`-visible canonical memories may compose into a synced page; team and private knowledge renders in the console only. Per-team space mapping comes after the leak eval covers the mapping matrix. A leaked private memory in a company wiki is not a score deduction — it is an unrecoverable trust event.
+- **Health-gated** (§8.2) — a degraded corpus stops publishing rather than broadcasting.
+
+**Scoping (optional but recommended).** The document layer is an org capability flag, and API tokens carry KB scopes (`kb:read`, `kb:compose`, `kb:publish`) alongside their memory scopes. A single-team org that wants only the memory layer never pays for the KB layer, and an agent's token can read pages without ever being able to publish one. Agents write *memories*; pages follow from them.
+
 ---
 
 ## 9. v0 → v1 cut line
 
 **In v0:** memories + entities/links + hybrid retrieval + extract/resolve/promote pipeline + MCP surface + review UI + Helm chart + eval harness.
 
-**v0.5 (first post-validation increment):** document layer (§8) — it reuses retrieval, policy, review, and export machinery, so it lands cheaply once the core is proven; entity-page auto-scaffolding last.
+**v0.5 — IN PROGRESS (see `docs/KB-PLAN.md` for the phase ladder):** document layer (§8) — it reuses retrieval, policy, review, and export machinery, so it lands cheaply once the core is proven; entity-page auto-scaffolding last. KB0 (the memory facets §2.3 depends on, plus the Knowledge Health surface the publish gate reads) is done; KB1–KB4 build the page model, read surfaces, publishing, and the human-edit round trip. External publishing does not ship to a real org until the extraction-recall gate is green — composed pages inherit the trustworthiness of their substrate.
 
 **Deliberately deferred:** Kafka (pgmq until corporate scale proves it), Apache AGE (recursive CTEs first), connectors beyond transcript upload + one Git connector, SaaS multi-tenancy hardening, fine-grained per-memory ACLs beyond the three-tier visibility, automated decay scoring (start with manual `memory_feedback` signals).
 

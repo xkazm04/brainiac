@@ -58,6 +58,8 @@ mod tests {
             status: MemoryStatus::Raw,
             kind,
             content: "x".into(),
+            lifecycle: Default::default(),
+            detail_md: None,
             valid_from: None,
             valid_to: None,
             superseded_by: None,

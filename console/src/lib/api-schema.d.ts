@@ -59,6 +59,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/analytics/knowledge-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The leadership Knowledge Health report: a tracked composite score over four pillars (consistency, currency, liquidity, governance), the org-level signals behind it, and a ranked attention list. RLS-scoped — a leader sees their org's view. */
+        get: operations["knowledge_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analytics/knowledge-health/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a Knowledge Health snapshot for the caller's org — the tick that builds
+         *     the trend line. An org runs this on a schedule (their cron or ours); each call
+         *     captures the current score + pillars + flagship signals into history. Needs a
+         *     `write` principal, since it mutates. Returns the snapshot it took.
+         * @description Record a Knowledge Health snapshot into the org's trend history (call weekly). Returns the captured score + grade.
+         */
+        post: operations["knowledge_health_snapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/analytics/observatory": {
         parameters: {
             query?: never;
@@ -68,6 +108,23 @@ export interface paths {
         };
         /** @description The dashboard payload: status totals, weekly captured/promoted flow, kind×team volumes, top canonical themes, review latency, contradiction mix, queue depth. */
         get: operations["observatory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analytics/practice-divergence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Practice divergences the org should standardize — cross-team clusters an LLM sweep judged to be the SAME practice solved DIFFERENTLY, each with a recommended standard. RLS-scoped. Populated by the `scan-divergence` sweep. */
+        get: operations["practice_divergence"];
         put?: never;
         post?: never;
         delete?: never;
@@ -670,14 +727,47 @@ export interface components {
             reviews: components["schemas"]["AnalyticsReviews"];
         };
         AnalyticsReviews: {
+            /**
+             * Format: double
+             * @description Share of RESOLVED contradictions that were dismissed as "not a conflict",
+             *     over the last 30 days. Since an unresolved contradiction now WITHHOLDS both
+             *     sides from serving (the open-contradiction fix), a high dismiss rate means
+             *     an over-eager detector is *suppressing real knowledge*, not just adding
+             *     noise — a signal to retune it. `null` if nothing was resolved.
+             */
+            contradiction_dismiss_rate?: number | null;
             /** Format: int64 */
             flagged_memories: number;
+            /**
+             * Format: int64
+             * @description Median seconds from a memory entering the queue to a human deciding it,
+             *     over the last 30 days. `null` if nothing was reviewed. Against their own
+             *     48h SLO (ARCHITECTURE §7) this is the review-latency truth.
+             */
+            median_time_to_review_secs?: number | null;
             /** Format: int64 */
             oldest_pending_secs: number;
             /** Format: int64 */
             open_contradictions: number;
             /** Format: int64 */
             pending_promotions: number;
+            /** Format: int64 */
+            reviewed_last_30d: number;
+            /**
+             * Format: int64
+             * @description Review VELOCITY — the abandonment signal. A queue with a growing backlog
+             *     and near-zero throughput is a review step nobody is working; a healthy one
+             *     clears roughly what it takes in. Made observable so the failure the whole
+             *     governance model rides on stops being silent (UAT relay
+             *     `promotion-queue-backlog`). Human decisions only (auto-approvals excluded).
+             */
+            reviewed_last_7d: number;
+            /**
+             * Format: double
+             * @description Share of last-30d human reviews decided in under 5s — the rubber-stamp
+             *     proxy. High + a deep backlog = clearing, not reviewing. `null` if none.
+             */
+            rubber_stamp_rate?: number | null;
         };
         /** @description A canonical entity anchoring a hit (id + name). */
         AnchorRef: {
@@ -1058,11 +1148,99 @@ export interface components {
             /** Format: int64 */
             wrong: number;
         };
+        KhAttention: {
+            detail: string;
+            headline: string;
+            /** @description contradiction | staleness | silo | governance */
+            kind: string;
+            /** @description critical | warning | info — encodes urgency in form, not just number. */
+            severity: string;
+        };
+        KhPillars: {
+            /**
+             * Format: int64
+             * @description 100 − penalty for the org contradicting itself (cross-team conflicts hurt most).
+             */
+            consistency: number;
+            /**
+             * Format: int64
+             * @description Share of the corpus that is still current (not superseded/expired).
+             */
+            currency: number;
+            /**
+             * Format: int64
+             * @description Is the review queue actually being worked (backlog age vs the 48h SLO).
+             */
+            governance: number;
+            /**
+             * Format: int64
+             * @description How much knowledge crosses team lines — the "together-picture" density.
+             */
+            liquidity: number;
+        };
+        KhSignals: {
+            /** Format: int64 */
+            canonical_entities: number;
+            /**
+             * Format: int64
+             * @description Open contradictions where the two sides belong to DIFFERENT teams — the ones
+             *     no individual team can see. The flagship signal.
+             */
+            cross_team_contradictions: number;
+            /**
+             * Format: int64
+             * @description Canonical entities carrying knowledge from ≥2 teams — the graph doing its job.
+             */
+            cross_team_entities: number;
+            /**
+             * Format: int64
+             * @description org_wide / total, as a percentage — knowledge liquidity.
+             */
+            liquidity_pct: number;
+            /** Format: int64 */
+            oldest_review_secs: number;
+            /** Format: int64 */
+            open_contradictions: number;
+            /** Format: int64 */
+            org_wide: number;
+            /** Format: int64 */
+            review_backlog: number;
+            /** Format: int64 */
+            siloed_private: number;
+            /**
+             * Format: int64
+             * @description Superseded/expired beliefs still sitting in the corpus (landmines).
+             */
+            stale_beliefs: number;
+            /** Format: int64 */
+            team_only: number;
+            /** Format: int64 */
+            total_memories: number;
+        };
         KindTeamCount: {
             /** Format: int64 */
             count: number;
             kind: string;
             team: string;
+        };
+        KnowledgeHealthResponse: {
+            /** @description Ranked, most-urgent-first — the whole point: turn the score into action. */
+            attention: components["schemas"]["KhAttention"][];
+            embedding_model: string;
+            /** @description Healthy | Watch | At risk | Critical. */
+            grade: string;
+            pillars: components["schemas"]["KhPillars"];
+            /**
+             * Format: int64
+             * @description 0–100 composite the org tracks week over week.
+             */
+            score: number;
+            signals: components["schemas"]["KhSignals"];
+            /**
+             * @description Recorded snapshots oldest→newest — the score over time. The report's power
+             *     is the line, not the point. Empty until the first snapshot is taken.
+             */
+            trend: components["schemas"]["TrendPoint"][];
         };
         /**
          * @description The 202 receipt: the source row that was written and the queue job that
@@ -1272,6 +1450,26 @@ export interface components {
              */
             total: number;
         };
+        PracticeDivergence: {
+            /** @description Each team's approach: [{team, approach}]. */
+            approaches: unknown;
+            /** Format: date-time */
+            detected_at: string;
+            /** @description high | medium | low. */
+            impact: string;
+            /** @description Which model adjudicated it — provenance for a decision-shaping report. */
+            model_ref?: string | null;
+            /** @description The named practice, e.g. "service retry policy". */
+            practice: string;
+            /** @description The adjudicator's recommended single standard. */
+            recommended_standard: string;
+            /** @description One line: what actually differs between the teams. */
+            summary: string;
+        };
+        PracticeDivergenceResponse: {
+            /** @description Detected divergences, highest-impact first. Empty until the first scan. */
+            divergences: components["schemas"]["PracticeDivergence"][];
+        };
         PreviewBody: {
             /** Format: uuid */
             user_id: string;
@@ -1470,6 +1668,13 @@ export interface components {
         SearchResponse: {
             hits: components["schemas"]["SearchHit"][];
         };
+        SnapshotResponse: {
+            /** Format: date-time */
+            captured_at: string;
+            grade: string;
+            /** Format: int64 */
+            score: number;
+        };
         SourceFeedResponse: {
             sources: components["schemas"]["SourceRow"][];
             /**
@@ -1631,6 +1836,20 @@ export interface components {
             /** Format: int64 */
             teams: number;
         };
+        TrendPoint: {
+            /** Format: date-time */
+            captured_at: string;
+            /** Format: int64 */
+            consistency: number;
+            /** Format: int64 */
+            currency: number;
+            /** Format: int64 */
+            governance: number;
+            /** Format: int64 */
+            liquidity: number;
+            /** Format: int64 */
+            score: number;
+        };
         /**
          * @description One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the
          *     captured/promoted series stay joinable client-side.
@@ -1707,6 +1926,46 @@ export interface operations {
             };
         };
     };
+    knowledge_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Knowledge Health report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeHealthResponse"];
+                };
+            };
+        };
+    };
+    knowledge_health_snapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotResponse"];
+                };
+            };
+        };
+    };
     observatory: {
         parameters: {
             query?: never;
@@ -1723,6 +1982,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ObservatoryResponse"];
+                };
+            };
+        };
+    };
+    practice_divergence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detected practice divergences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PracticeDivergenceResponse"];
                 };
             };
         };

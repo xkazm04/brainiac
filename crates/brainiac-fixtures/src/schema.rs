@@ -15,6 +15,9 @@ fn default_status() -> String {
 fn default_language() -> String {
     "en".into()
 }
+fn default_lifecycle() -> String {
+    "shipped".into()
+}
 
 // ── org.yaml ────────────────────────────────────────────────────────────
 
@@ -92,6 +95,14 @@ pub struct MemoryFx {
     pub status: String,
     pub kind: String,
     pub content: String,
+    /// KB-PLAN D2 — omit for shipped reality (the overwhelming default).
+    #[serde(default = "default_lifecycle")]
+    pub lifecycle: String,
+    /// KB-PLAN D3 — the artifact the statement summarizes, when the gold
+    /// memory has one (composition gold uses these to check that pages render
+    /// structure instead of paraphrasing it away).
+    #[serde(default)]
+    pub detail_md: Option<String>,
     #[serde(default = "default_language")]
     pub language: String,
     #[serde(default)]

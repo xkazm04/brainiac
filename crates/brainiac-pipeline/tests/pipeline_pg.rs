@@ -602,6 +602,8 @@ async fn supersession_serves_only_the_winner() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        lifecycle: Default::default(),
+        detail_md: None,
         content: content.to_string(),
         language: "en".into(),
         valid_from: Some(Utc::now()),

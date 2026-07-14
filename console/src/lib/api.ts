@@ -13,6 +13,7 @@ import type {
   ContradictionResolution,
   Graph,
   GraphOverview,
+  KnowledgeHealth,
   MemoriesList,
   MemoryDetail,
   MintedToken,
@@ -152,6 +153,10 @@ export async function getAnalytics(cfg: ApiConfig): Promise<Analytics> {
 
 export async function getObservatory(cfg: ApiConfig): Promise<ObservatoryPayload> {
   return call(cfg, "GET", "/v1/analytics/observatory");
+}
+
+export async function getKnowledgeHealth(cfg: ApiConfig): Promise<KnowledgeHealth> {
+  return call(cfg, "GET", "/v1/analytics/knowledge-health");
 }
 
 export async function getGraphOverview(cfg: ApiConfig): Promise<GraphOverview> {

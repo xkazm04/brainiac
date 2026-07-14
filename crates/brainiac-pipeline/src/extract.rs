@@ -3,7 +3,9 @@
 
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
-use brainiac_core::{ActorKind, EdgeRelation, EntityKind, MemoryKind, MemoryStatus, Visibility};
+use brainiac_core::{
+    ActorKind, EdgeRelation, EntityKind, Lifecycle, MemoryKind, MemoryStatus, Visibility,
+};
 use brainiac_gateway::{ChatProvider, ChatRequest};
 use serde::Deserialize;
 use sqlx::PgConnection;
@@ -29,6 +31,8 @@ Respond with ONLY a JSON object:
 {\"memories\":[{
   \"kind\":\"fact|decision|pattern|pitfall|howto\",
   \"content\":\"one self-contained natural-language statement\",
+  \"lifecycle\":\"shipped|in_flight|proposed\",
+  \"detail_md\":\"optional: the verbatim code/config/table the statement summarizes\",
   \"visibility\":\"team|org\",
   \"confidence\":0.0,
   \"entities\":[{\"name\":\"...\",\"kind\":\"service|repo|tech|feature|concept|team\",\"aliases\":[\"...\"]}],
@@ -39,7 +43,13 @@ Rules: entity names verbatim as the team says them (do NOT normalize across team
 aliases are OTHER surface forms the transcript uses for that SAME entity (acronyms,
 short names, spelled-out forms) — omit or leave [] when the entity is named only one
 way, never invent synonyms; relations only between listed entities; confidence
-reflects how explicitly the transcript supports the statement.";
+reflects how explicitly the transcript supports the statement.
+lifecycle: omit (defaults to shipped) unless the transcript is explicit that the thing
+is not yet in production — \"in_flight\" = decided and underway, \"proposed\" = intended,
+not started. Never guess.
+detail_md: omit unless the transcript contains the literal artifact the statement is
+about (a code block, config snippet, or table) — copy it verbatim into a markdown
+block. Never write prose here and never invent an artifact; content stays the claim.";
 
 /// Lenient array deserializer for extractor output. Real BYOM providers (Qwen
 /// among them) intermittently emit a nested array field as a JSON-ENCODED STRING
@@ -81,6 +91,13 @@ struct ExtractionOutput {
 struct ExtractedMemory {
     kind: String,
     content: String,
+    /// KB-PLAN D2. Absent/unparseable → [`Lifecycle::default`] (shipped): the
+    /// facet is a bonus signal, never a reason to drop a memory.
+    #[serde(default)]
+    lifecycle: Option<String>,
+    /// KB-PLAN D3. Absent for most memories; see [`clean_detail`].
+    #[serde(default)]
+    detail_md: Option<String>,
     #[serde(default)]
     visibility: Option<String>,
     #[serde(default)]
@@ -120,6 +137,33 @@ impl ExtractedEntity {
 
 fn default_entity_kind() -> String {
     "concept".into()
+}
+
+/// Largest structured payload we keep on a memory. `detail_md` is evidence for
+/// one claim, not a document: a model that dumps half the transcript into it is
+/// misusing the field, and an unbounded body would bloat every page that cites
+/// the memory. Truncated (never dropped) — a clipped code block still helps.
+const MAX_DETAIL_CHARS: usize = 2_000;
+
+/// Sanitize an extractor-proposed `detail_md` (KB-PLAN D3): trim, drop empties,
+/// run the SAME secret firewall as `content` (a credential is no less durable
+/// for living in a code block — this is the likeliest place for one to hide),
+/// and bound the length. Returns `None` when there is nothing worth keeping.
+fn clean_detail(raw: Option<&str>) -> Option<String> {
+    let t = raw?.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let redacted = brainiac_core::redact::redact(t);
+    if redacted.trim().is_empty() {
+        return None;
+    }
+    let clipped: String = if redacted.chars().count() > MAX_DETAIL_CHARS {
+        redacted.chars().take(MAX_DETAIL_CHARS).collect::<String>() + "\n…"
+    } else {
+        redacted
+    };
+    Some(clipped)
 }
 
 #[derive(Debug, Deserialize)]
@@ -512,6 +556,16 @@ pub async fn run_extract(
                 .and_then(Visibility::parse)
                 .unwrap_or(Visibility::Team);
             let confidence = m.confidence.map(|c| c.clamp(0.0, 1.0));
+            // Facet firewall (KB-PLAN D2/D3): both facets are advisory. An
+            // unknown lifecycle coerces to `shipped` rather than dropping the
+            // memory — losing a real learning over a mislabeled facet would be
+            // the exact recall failure the UAT flagged as the top threat.
+            let lifecycle = m
+                .lifecycle
+                .as_deref()
+                .and_then(Lifecycle::parse)
+                .unwrap_or_default();
+            let detail_md = clean_detail(m.detail_md.as_deref());
 
             let memory_id = Uuid::new_v4();
             // Freshness lifecycle: stamp the validity window at extraction so
@@ -530,6 +584,8 @@ pub async fn run_extract(
                     status: MemoryStatus::Raw,
                     kind,
                     content: content.clone(),
+                    lifecycle,
+                    detail_md,
                     language: "en".into(),
                     valid_from: Some(now),
                     valid_to: ttl_days(kind).map(|d| now + chrono::Duration::days(d)),
@@ -623,6 +679,81 @@ pub async fn run_extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── KB0 facets (KB-PLAN D2/D3) ──────────────────────────────────────────
+
+    #[test]
+    fn facets_are_optional_and_default_safely() {
+        // The overwhelmingly common shape: a V1-style memory with neither
+        // facet. It must still parse, and must NOT be treated as unshipped.
+        let raw = r#"{"memories":[{"kind":"fact","content":"MSK is the cluster"}]}"#;
+        let out = parse_extraction(raw).expect("parses");
+        let m = &out.memories[0];
+        assert!(m.lifecycle.is_none() && m.detail_md.is_none());
+        assert_eq!(
+            m.lifecycle
+                .as_deref()
+                .and_then(Lifecycle::parse)
+                .unwrap_or_default(),
+            Lifecycle::Shipped
+        );
+    }
+
+    #[test]
+    fn unknown_lifecycle_coerces_to_shipped_and_keeps_the_memory() {
+        // A mislabeled facet must never cost us the memory — dropping real
+        // learnings over advisory metadata is the recall failure UAT flagged.
+        let raw = r#"{"memories":[{"kind":"fact","content":"x","lifecycle":"someday"}]}"#;
+        let out = parse_extraction(raw).expect("parses");
+        assert_eq!(out.memories.len(), 1);
+        assert_eq!(
+            out.memories[0]
+                .lifecycle
+                .as_deref()
+                .and_then(Lifecycle::parse)
+                .unwrap_or_default(),
+            Lifecycle::Shipped
+        );
+    }
+
+    #[test]
+    fn lifecycle_parses_when_the_transcript_was_explicit() {
+        let raw =
+            r#"{"memories":[{"kind":"decision","content":"adopt kafka","lifecycle":"in_flight"}]}"#;
+        let out = parse_extraction(raw).expect("parses");
+        assert_eq!(
+            out.memories[0]
+                .lifecycle
+                .as_deref()
+                .and_then(Lifecycle::parse),
+            Some(Lifecycle::InFlight)
+        );
+    }
+
+    #[test]
+    fn detail_md_is_redacted_like_content() {
+        // The likeliest hiding place for a credential is the code block, not
+        // the prose. Same secret firewall, or the field is a leak vector.
+        let detail = clean_detail(Some(
+            "```\nexport AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n```",
+        ))
+        .expect("kept");
+        assert!(
+            !detail.contains("AKIAIOSFODNN7EXAMPLE"),
+            "secret survived into detail_md: {detail}"
+        );
+        // The surrounding artifact still survives — we redact, not discard.
+        assert!(detail.contains("AWS_ACCESS_KEY_ID"));
+    }
+
+    #[test]
+    fn detail_md_drops_empties_and_bounds_length() {
+        assert!(clean_detail(None).is_none());
+        assert!(clean_detail(Some("   \n ")).is_none());
+        let huge = "x".repeat(MAX_DETAIL_CHARS * 2);
+        let clipped = clean_detail(Some(&huge)).expect("kept");
+        assert!(clipped.chars().count() <= MAX_DETAIL_CHARS + 2);
+    }
 
     #[test]
     fn json_extraction_tolerates_fences() {

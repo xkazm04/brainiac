@@ -55,6 +55,11 @@ export type CanonicalDetail = S["CanonicalDetailResponse"];
 // ── analytics ───────────────────────────────────────────────────────────
 export type Analytics = S["AnalyticsResponse"];
 export type ObservatoryPayload = S["ObservatoryResponse"];
+export type KnowledgeHealth = S["KnowledgeHealthResponse"];
+export type KhPillars = S["KhPillars"];
+export type KhSignals = S["KhSignals"];
+export type KhAttention = S["KhAttention"];
+export type KhTrendPoint = S["TrendPoint"];
 
 // ── ingest ──────────────────────────────────────────────────────────────
 export type SourceFeedItem = S["SourceRow"];

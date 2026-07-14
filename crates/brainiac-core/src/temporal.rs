@@ -124,6 +124,8 @@ mod tests {
             status: MemoryStatus::Canonical,
             kind: MemoryKind::Fact,
             content: format!("memory {id}"),
+            lifecycle: crate::Lifecycle::Shipped,
+            detail_md: None,
             valid_from: from.map(ts),
             valid_to: to.map(ts),
             superseded_by: superseded_by.map(uuid),

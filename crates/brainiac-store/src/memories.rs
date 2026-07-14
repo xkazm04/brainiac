@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 
-use brainiac_core::{Memory, MemoryKind, MemoryStatus, Visibility};
+use brainiac_core::{Lifecycle, Memory, MemoryKind, MemoryStatus, Visibility};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -19,6 +19,10 @@ pub struct NewMemory {
     pub status: MemoryStatus,
     pub kind: MemoryKind,
     pub content: String,
+    /// KB-PLAN D2. Callers with no signal use [`Lifecycle::default`] (shipped).
+    pub lifecycle: Lifecycle,
+    /// KB-PLAN D3. `None` unless the source carried structure worth preserving.
+    pub detail_md: Option<String>,
     pub language: String,
     pub valid_from: Option<DateTime<Utc>>,
     pub valid_to: Option<DateTime<Utc>>,
@@ -37,8 +41,9 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     sqlx::query(
         "INSERT INTO memories
             (id, org_id, team_id, owner_user_id, visibility, status, kind,
-             content, language, valid_from, valid_to, superseded_by, confidence, provenance_id)
-         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14)",
+             content, lifecycle, detail_md, language, valid_from, valid_to,
+             superseded_by, confidence, provenance_id)
+         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
     )
     .bind(m.id)
     .bind(m.org_id)
@@ -48,6 +53,8 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     .bind(m.status.as_str())
     .bind(m.kind.as_str())
     .bind(&m.content)
+    .bind(m.lifecycle.as_str())
+    .bind(&m.detail_md)
     .bind(&m.language)
     .bind(m.valid_from)
     .bind(m.valid_to)
@@ -308,6 +315,8 @@ fn row_to_memory(r: &sqlx::postgres::PgRow) -> Memory {
             .unwrap_or(MemoryStatus::Raw),
         kind: MemoryKind::parse(r.get::<String, _>("kind").as_str()).unwrap_or(MemoryKind::Fact),
         content: r.get("content"),
+        lifecycle: Lifecycle::parse(r.get::<String, _>("lifecycle").as_str()).unwrap_or_default(),
+        detail_md: r.get("detail_md"),
         valid_from: r.get("valid_from"),
         valid_to: r.get("valid_to"),
         superseded_by: r.get("superseded_by"),
@@ -318,8 +327,8 @@ fn row_to_memory(r: &sqlx::postgres::PgRow) -> Memory {
 }
 
 const MEMORY_COLUMNS: &str = "id, org_id, team_id, owner_user_id, visibility::text AS visibility,
-     status::text AS status, kind, content, valid_from, valid_to, superseded_by,
-     confidence, provenance_id, created_at";
+     status::text AS status, kind, content, lifecycle, detail_md, valid_from, valid_to,
+     superseded_by, confidence, provenance_id, created_at";
 
 /// Fetch memories by id (RLS filters silently — absent ids were not visible).
 pub async fn get_by_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Memory>> {

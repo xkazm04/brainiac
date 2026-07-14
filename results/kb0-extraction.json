@@ -1,0 +1,167 @@
+{
+  "fixture_version": "v1",
+  "embedding_model": "qwen:text-embedding-v4",
+  "provider": "qwen:qwen-max",
+  "match_threshold": 0.7,
+  "gold_memories": 21,
+  "extracted_memories": 11,
+  "matched": 8,
+  "precision": 0.7272727272727273,
+  "recall": 0.38095238095238093,
+  "micro_f1": 0.5,
+  "spurious": 3,
+  "per_transcript": [
+    {
+      "transcript": "src-data-021",
+      "team": "team-data",
+      "gold": 2,
+      "extracted": 0,
+      "matched": 0,
+      "recall": 0.0
+    },
+    {
+      "transcript": "src-data-012",
+      "team": "team-data",
+      "gold": 2,
+      "extracted": 0,
+      "matched": 0,
+      "recall": 0.0
+    },
+    {
+      "transcript": "src-plat-004",
+      "team": "team-platform",
+      "gold": 3,
+      "extracted": 1,
+      "matched": 0,
+      "recall": 0.0
+    },
+    {
+      "transcript": "src-pay-011",
+      "team": "team-payments",
+      "gold": 3,
+      "extracted": 1,
+      "matched": 1,
+      "recall": 0.3333333333333333
+    },
+    {
+      "transcript": "src-pay-007",
+      "team": "team-payments",
+      "gold": 2,
+      "extracted": 1,
+      "matched": 1,
+      "recall": 0.5
+    },
+    {
+      "transcript": "src-pay-015",
+      "team": "team-payments",
+      "gold": 2,
+      "extracted": 3,
+      "matched": 1,
+      "recall": 0.5
+    },
+    {
+      "transcript": "src-plat-001",
+      "team": "team-platform",
+      "gold": 2,
+      "extracted": 1,
+      "matched": 1,
+      "recall": 0.5
+    },
+    {
+      "transcript": "src-plat-009",
+      "team": "team-platform",
+      "gold": 2,
+      "extracted": 1,
+      "matched": 1,
+      "recall": 0.5
+    },
+    {
+      "transcript": "src-data-017",
+      "team": "team-data",
+      "gold": 3,
+      "extracted": 3,
+      "matched": 3,
+      "recall": 1.0
+    }
+  ],
+  "misses": [
+    {
+      "transcript": "src-data-021",
+      "kind": "fact",
+      "gold": "Airflow orchestrates event-lake backfills; the replay job is a DAG parameterized by partition date",
+      "best_similarity": 0.0
+    },
+    {
+      "transcript": "src-data-021",
+      "kind": "pitfall",
+      "gold": "backfill DAG must not run concurrently with the hourly ingest — event-lake partition locks deadlock",
+      "best_similarity": 0.0
+    },
+    {
+      "transcript": "src-data-012",
+      "kind": "fact",
+      "gold": "checkout funnel analytics reads checkout.events.v2 from the event bus into event-lake hourly",
+      "best_similarity": 0.0
+    },
+    {
+      "transcript": "src-data-012",
+      "kind": "decision",
+      "gold": "checkout funnel dashboards are the source of truth for conversion; product reviews them weekly",
+      "best_similarity": 0.0
+    },
+    {
+      "transcript": "src-plat-001",
+      "kind": "decision",
+      "gold": "OPA gates every production deploy; policies in infra-live/policies, evaluated by ArgoCD pre-sync",
+      "best_similarity": 0.352
+    },
+    {
+      "transcript": "src-plat-004",
+      "kind": "decision",
+      "gold": "payment topic partition counts are fixed at 24; changes need data-team sign-off because funnel jobs key by partition",
+      "best_similarity": 0.51
+    },
+    {
+      "transcript": "src-plat-004",
+      "kind": "pitfall",
+      "gold": "Kafka Streams state-store restores saturate broker network; throttle to 40 MB/s",
+      "best_similarity": 0.549
+    },
+    {
+      "transcript": "src-pay-011",
+      "kind": "howto",
+      "gold": "triage a decline spike by grouping tracing spans by psp.decline_code, then check the PSP status page before rollback",
+      "best_similarity": 0.57
+    },
+    {
+      "transcript": "src-pay-011",
+      "kind": "pitfall",
+      "gold": "decline code 05 spikes are issuer-side; retrying burns PSP quota and reads as fraud velocity",
+      "best_similarity": 0.576
+    },
+    {
+      "transcript": "src-pay-015",
+      "kind": "decision",
+      "gold": "keep the checkout v1 fallback path dark but deployable for one more quarter",
+      "best_similarity": 0.576
+    },
+    {
+      "transcript": "src-plat-004",
+      "kind": "fact",
+      "gold": "MSK broker storage autoscaling is not enabled; disk expansion is a manual infra-live change",
+      "best_similarity": 0.585
+    },
+    {
+      "transcript": "src-plat-009",
+      "kind": "fact",
+      "gold": "OPA deploy policies are conftest unit-tested in CI; a failing test blocks the infra-live merge",
+      "best_similarity": 0.636
+    },
+    {
+      "transcript": "src-pay-007",
+      "kind": "decision",
+      "gold": "raise refund-worker retry cap to 30s with jitter, aligned to std-retry policy",
+      "best_similarity": 0.676
+    }
+  ]
+}

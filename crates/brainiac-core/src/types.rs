@@ -122,6 +122,48 @@ impl MemoryKind {
     }
 }
 
+/// Where a memory's claim sits relative to shipped reality (KB-PLAN D2).
+///
+/// Orthogonal to [`MemoryStatus`] (governance: has a human signed it?) and to
+/// temporal validity (when did the belief hold?). Neither can answer the
+/// question a reader of a generated page asks first — *is this how the system
+/// works today, or how we intend it to work?* A decision to adopt Kafka is
+/// canonical, currently valid, and still describes nothing that exists in
+/// production. Docs that blur the two are the most common way a wiki lies.
+///
+/// [`Self::Shipped`] is the default: pre-existing memories, and anything the
+/// transcript does not mark as intent, describe the world as captured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Lifecycle {
+    /// In product: the claim describes deployed, observable reality.
+    #[default]
+    Shipped,
+    /// On its way: decided and underway, not yet fully in production.
+    InFlight,
+    /// Considered/decided in principle, no implementation started.
+    Proposed,
+}
+
+impl Lifecycle {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Shipped => "shipped",
+            Self::InFlight => "in_flight",
+            Self::Proposed => "proposed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "shipped" => Some(Self::Shipped),
+            "in_flight" => Some(Self::InFlight),
+            "proposed" => Some(Self::Proposed),
+            _ => None,
+        }
+    }
+}
+
 /// Who/what produced an artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -345,8 +387,15 @@ pub struct Memory {
     pub visibility: Visibility,
     pub status: MemoryStatus,
     pub kind: MemoryKind,
-    /// Distilled natural-language statement.
+    /// Distilled natural-language statement. Stays the retrieval surface (FTS +
+    /// embeddings point here) — [`Self::detail_md`] is evidence, not the claim.
     pub content: String,
+    /// Where the claim sits relative to shipped reality (KB-PLAN D2).
+    pub lifecycle: Lifecycle,
+    /// Optional structure the sentence summarizes: a code block, table, or
+    /// config snippet lifted from the source (KB-PLAN D3). `None` for the vast
+    /// majority of memories — a claim with no artifact behind it.
+    pub detail_md: Option<String>,
     pub valid_from: Option<DateTime<Utc>>,
     /// `None` = still valid.
     pub valid_to: Option<DateTime<Utc>>,

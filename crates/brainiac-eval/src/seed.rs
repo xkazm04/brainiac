@@ -134,6 +134,8 @@ pub async fn seed_gold(store: &Store, fx: &Fixtures, embedder: &dyn Embedder) ->
                 status: MemoryStatus::parse(&m.status).unwrap_or(MemoryStatus::Canonical),
                 kind: MemoryKind::parse(&m.kind).unwrap_or(MemoryKind::Fact),
                 content: m.content.clone(),
+                lifecycle: brainiac_core::Lifecycle::parse(&m.lifecycle).unwrap_or_default(),
+                detail_md: m.detail_md.clone(),
                 language: m.language.clone(),
                 valid_from: m.valid_from,
                 valid_to: m.valid_to,
