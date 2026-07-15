@@ -126,10 +126,15 @@ pub async fn list_documents(conn: &mut PgConnection) -> Result<Vec<Document>> {
 }
 
 /// Pages whose underlying memories moved. The compose worker's work list.
+/// Pages awaiting recompose. Skips any page inside its failure backoff window
+/// (0021): a deterministically-failing compose would otherwise be re-picked on
+/// every tick, burning an LLM call each time and crowding healthy pages out of the
+/// tick's limit. `compose_next_at IS NULL` is the healthy case.
 pub async fn dirty_documents(conn: &mut PgConnection, limit: i64) -> Result<Vec<Document>> {
     let rows = sqlx::query(&format!(
         "SELECT {DOC_COLUMNS} FROM documents
          WHERE dirty_at IS NOT NULL AND status <> 'archived'
+           AND (compose_next_at IS NULL OR compose_next_at <= now())
          ORDER BY dirty_at LIMIT $1"
     ))
     .bind(limit)
@@ -204,6 +209,40 @@ pub async fn mark_dirty_for_memory(conn: &mut PgConnection, memory_id: Uuid) -> 
     .execute(conn)
     .await?;
     Ok(res.rows_affected())
+}
+
+/// Record a failed compose and schedule the retry (0021).
+///
+/// The page STAYS dirty — a failed compose must retry, never silently leave a
+/// stale page looking fresh — but it retries on an exponential schedule instead of
+/// on the very next tick. Returns the new attempt count so the caller can log the
+/// severity; a page with a climbing count is queryable and no longer invisibly
+/// stuck.
+///
+/// Backoff: `base * 2^(attempts-1)`, capped, so one poison page costs a handful of
+/// LLM calls a day rather than one per tick forever.
+pub async fn record_compose_failure(
+    conn: &mut PgConnection,
+    document_id: Uuid,
+    base_secs: i64,
+    max_secs: i64,
+) -> Result<i32> {
+    let row = sqlx::query(
+        "UPDATE documents
+         SET compose_attempts = compose_attempts + 1,
+             compose_next_at = now() + make_interval(
+                 secs => LEAST($2::bigint * (2 ^ LEAST(compose_attempts, 20))::bigint, $3::bigint)::double precision
+             ),
+             updated_at = now()
+         WHERE id = $1
+         RETURNING compose_attempts",
+    )
+    .bind(document_id)
+    .bind(base_secs)
+    .bind(max_secs)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|r| r.get::<i32, _>("compose_attempts")).unwrap_or(0))
 }
 
 /// Mark a page dirty directly (a new binding, a manual recompose request).
@@ -296,6 +335,10 @@ pub async fn insert_revision(conn: &mut PgConnection, r: &NewRevision) -> Result
                  ELSE dirty_at
              END,
              updated_at = now(),
+             -- A revision was produced, so any failure backoff (0021) is cleared:
+             -- the page composed successfully and must not stay throttled.
+             compose_attempts = 0,
+             compose_next_at = NULL,
              current_revision = CASE WHEN $2 THEN $3 ELSE current_revision END,
              status = CASE WHEN $2 THEN 'published' ELSE status END
          WHERE id = $1",

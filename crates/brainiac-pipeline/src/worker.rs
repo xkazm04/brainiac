@@ -207,6 +207,31 @@ pub async fn tick(
 ///
 /// Each page composes in its own transaction: one page's bad binding or
 /// provider error must not roll back its neighbours' good revisions.
+/// Compose-failure backoff (0021): `base * 2^(attempts-1)`, capped. A poison page
+/// then costs a handful of LLM calls a day instead of one per tick forever, while
+/// a transient failure still recovers quickly.
+const COMPOSE_BACKOFF_BASE_SECS: i64 = 60;
+const COMPOSE_BACKOFF_MAX_SECS: i64 = 3600;
+
+/// Stamp a page's compose backoff in its own transaction (the compose tx rolled
+/// back). Separated so the caller can treat it as best-effort.
+async fn record_compose_backoff(
+    store: &Store,
+    worker: &brainiac_core::Principal,
+    document_id: Uuid,
+) -> Result<i32> {
+    let mut tx = store.worker_tx(worker).await?;
+    let attempts = brainiac_store::documents::record_compose_failure(
+        &mut tx,
+        document_id,
+        COMPOSE_BACKOFF_BASE_SECS,
+        COMPOSE_BACKOFF_MAX_SECS,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(attempts)
+}
+
 pub async fn compose_tick(
     store: &Store,
     providers: &ProviderRouter,
@@ -286,8 +311,29 @@ pub async fn compose_tick(
             }
             Err(e) => {
                 // The page stays dirty: a failed compose must retry, never
-                // silently leave a stale page looking fresh.
-                tracing::error!(document = %doc.slug, error = %e, "compose failed");
+                // silently leave a stale page looking fresh. But it retries on an
+                // exponential schedule (0021) — an unbounded per-tick retry made a
+                // deterministically-failing page burn one LLM call every tick,
+                // forever, while crowding healthy pages out of the tick's limit.
+                // The tx above rolled back, so record the failure on its own — and
+                // best-effort: this is bookkeeping about a failure, so it must not
+                // turn ONE page's compose error into an aborted tick for every
+                // other page (the same trap the run-row write had). If it doesn't
+                // land, the page simply stays dirty and retries next tick — the
+                // old behaviour, no worse.
+                let attempts = match record_compose_backoff(store, &worker, doc.id).await {
+                    Ok(a) => Some(a),
+                    Err(be) => {
+                        tracing::warn!(document = %doc.slug, error = %be, "could not record compose backoff");
+                        None
+                    }
+                };
+                tracing::error!(
+                    document = %doc.slug,
+                    attempts = attempts.unwrap_or(-1),
+                    error = %e,
+                    "compose failed; page stays dirty and backs off"
+                );
                 stats.failed += 1;
             }
         }
