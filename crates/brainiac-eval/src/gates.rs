@@ -21,6 +21,7 @@ use crate::report::RetrievalReport;
 const OVERALL_NDCG_DELTA: f64 = 0.01;
 const STRATUM_NDCG_DELTA: f64 = 0.02;
 const TEMPORAL_RANK1_DELTA: f64 = 0.02;
+const NEGATIVE_EMPTY_DELTA: f64 = 0.02;
 /// Thesis proxy: graph expansion must keep the cross-team stratum at least
 /// this far above pure-semantic retrieval. §3.2 phrases it as "flat-vector
 /// baseline + 5 pts"; the flat baseline isn't recomputed per run, so the
@@ -49,6 +50,15 @@ pub struct Baseline {
     pub overall_ndcg_at_10: f64,
     pub per_stratum_ndcg_at_10: BTreeMap<String, f64>,
     pub temporal_rank1_accuracy: f64,
+    /// Refusal behavior: the fraction of negative (out-of-scope) queries that
+    /// correctly returned zero hits. The per-query diagnostics already flag a
+    /// negative query that returns hits as a violation (`pass=false`), but until
+    /// this landed no gate consumed that signal — the artifact said "fail" while
+    /// CI said "pass". Absent in pre-refusal baselines → defaults to 0.0, which is
+    /// also every committed baseline's current value, so this starts as a ratchet:
+    /// harmless today, and it locks in any refusal quality that gets re-baselined.
+    #[serde(default)]
+    pub negative_empty_rate: f64,
 }
 
 impl Baseline {
@@ -67,6 +77,7 @@ impl Baseline {
                 .filter_map(|(k, v)| v.ndcg_at_10.map(|n| (k.clone(), n)))
                 .collect(),
             temporal_rank1_accuracy: report.temporal_rank1_accuracy,
+            negative_empty_rate: report.negative_empty_rate,
         })
     }
 }
@@ -124,6 +135,17 @@ pub fn regression_failures(report: &RetrievalReport, baseline: &Baseline) -> Vec
         fails.push(format!(
             "temporal rank-1 accuracy regressed: {:.3} < baseline {:.3} − {:.2}",
             report.temporal_rank1_accuracy, baseline.temporal_rank1_accuracy, TEMPORAL_RANK1_DELTA
+        ));
+    }
+
+    // Refusal behavior. The per-query diagnostics already mark a negative query
+    // that returns hits as a violation, but nothing consumed it — a build could
+    // ship green while the artifact recorded failures. Gate it against the
+    // baseline so refusal can never silently regress.
+    if report.negative_empty_rate < baseline.negative_empty_rate - NEGATIVE_EMPTY_DELTA {
+        fails.push(format!(
+            "refusal behavior regressed: negative-query empty rate {:.3} < baseline {:.3} − {:.2}",
+            report.negative_empty_rate, baseline.negative_empty_rate, NEGATIVE_EMPTY_DELTA
         ));
     }
 
@@ -222,6 +244,46 @@ mod tests {
         let fails = regression_failures(&bad, &baseline());
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("overall NDCG@10 regressed"));
+    }
+
+    #[test]
+    fn refusal_regression_is_a_breach() {
+        let strata = [("semantic", 0.422), ("cross_team_graph", 0.772)];
+        // A baseline re-committed after refusal behavior actually existed.
+        let mut good = report(0.685, &strata, 0.786);
+        good.negative_empty_rate = 0.9;
+        let base = Baseline::from_report(&good).expect("baseline");
+
+        // Same retrieval scores, but the engine stopped refusing out-of-scope
+        // queries. The per-query diagnostics already flag this; the gate must too.
+        let mut regressed = report(0.685, &strata, 0.786);
+        regressed.negative_empty_rate = 0.4;
+        let fails = regression_failures(&regressed, &base);
+        assert!(
+            fails.iter().any(|f| f.contains("refusal behavior regressed")),
+            "{fails:?}"
+        );
+
+        // Within delta still passes.
+        let mut ok = report(0.685, &strata, 0.786);
+        ok.negative_empty_rate = 0.89;
+        assert!(regression_failures(&ok, &base).is_empty());
+    }
+
+    #[test]
+    fn pre_refusal_baseline_json_defaults_to_zero() {
+        // The committed baseline predates the refusal gate and has no
+        // negative_empty_rate — it must still deserialize (defaulting to 0.0, the
+        // current measured value) rather than failing every run.
+        let json = r#"{
+            "embedding_model": "deterministic-bow-v1",
+            "fixture_version": "v1",
+            "overall_ndcg_at_10": 0.68,
+            "per_stratum_ndcg_at_10": {"semantic": 0.42},
+            "temporal_rank1_accuracy": 0.78
+        }"#;
+        let b: Baseline = serde_json::from_str(json).expect("legacy baseline parses");
+        assert_eq!(b.negative_empty_rate, 0.0);
     }
 
     #[test]
