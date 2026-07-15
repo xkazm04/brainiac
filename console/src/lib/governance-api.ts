@@ -167,16 +167,6 @@ export async function feedbackQueue(cfg: ApiConfig, limit = 50): Promise<Flagged
   return out.flagged;
 }
 
-// ── shared formatting ───────────────────────────────────────────────────
-
-/** Compact age like the Observatory's: 12m / 3.4h / 2.1d. */
-export function formatAge(secs: number): string {
-  if (secs <= 0) return "just now";
-  if (secs < 3600) return `${Math.round(secs / 60)}m`;
-  if (secs < 86400) return `${(secs / 3600).toFixed(1)}h`;
-  return `${(secs / 86400).toFixed(1)}d`;
-}
-
 /**
  * Answer the open claims against a memory. `reverified` extends its validity
  * window, `deprecated` ends it now, `dismissed` leaves the memory standing —

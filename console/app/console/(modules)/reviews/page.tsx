@@ -1,9 +1,9 @@
 import ApiOffline from "@/components/ApiOffline";
 import { band, FONT_DISPLAY, FONT_MONO, GOLD, LABEL, MAGENTA } from "@/design/theme";
 import { configFromEnv } from "@/lib/api";
+import { formatAge } from "@/lib/format";
 import {
   contradictionQueue,
-  formatAge,
   promotionQueue,
   type ContradictionStatus,
   type PromotionQueueItem,

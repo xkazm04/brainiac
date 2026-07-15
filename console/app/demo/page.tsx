@@ -1,37 +1,54 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 
-import Observatory from "@/observatory/Observatory";
+import { DEMO_DISPUTES } from "../console/(modules)/disputes/disputes-data";
+import { DEMO_CORTEX } from "../console/(modules)/graph/cortex-data";
+import { DEMO_ARCHIVE } from "../console/(modules)/memories/archive-data";
+
+import { DEMO_DIVERGENCES } from "@/divergence/divergence-data";
+import { DEMO_HEALTH } from "@/health/health-data";
 import { DEMO_OBSERVATORY } from "@/observatory/observatory-data";
-import { FONT_MONO, GOLD, LABEL } from "@/design/theme";
+
+import DemoConsole from "./DemoConsole";
+import { DEMO_CONTRADICTIONS, DEMO_PROMOTIONS } from "./demo-reviews-data";
+import Loading from "./loading";
 
 export const metadata: Metadata = {
   title: "Brainiac — the demo org",
   description:
-    "Walk a governed knowledge base end to end on a synthetic org: the review gate, contradictions, the canonical graph, the archive, and a knowledge-health score.",
+    "Walk a governed knowledge base end to end on a synthetic org: the review gate, contradictions, the canonical graph, the archive, a knowledge-health score, and the standards board.",
 };
 
-export default function DemoOverviewPage() {
+/*
+ * The tour's only route. It exists as a server component for one reason: it is
+ * where the fixtures are read. DEMO_DISPUTES lives behind `import "server-only"`,
+ * so it can be loaded here and handed down, but never imported by the client
+ * shell — which is why DemoConsole takes its data as props.
+ *
+ * Every fixture carries live:false. That flag, not the absence of a session, is
+ * what makes this subtree safe: each component degrades on it — synthesizing
+ * drill-in detail client-side instead of calling a gated /api route, and
+ * disabling its write controls. No API token is ever used under /demo.
+ *
+ * The Suspense boundary is required: DemoConsole reads the active module from
+ * the query string on its first render (useSearchParams), so a deep link paints
+ * the right module instead of flinching through the overview.
+ */
+export default function DemoPage() {
   return (
-    <div>
-      <section className="mx-auto max-w-7xl px-6 pt-8">
-        <div className={LABEL} style={{ color: GOLD }}>
-          the overview
-        </div>
-        <h1 className="mt-2 max-w-3xl text-3xl font-semibold leading-tight tracking-tight text-white md:text-4xl">
-          This is what your organization&apos;s memory looks like once someone is
-          accountable for it.
-        </h1>
-        <p
-          className={`${FONT_MONO} mt-4 max-w-2xl text-sm leading-relaxed`}
-          style={{ color: "rgba(233,237,255,0.55)" }}
-        >
-          Every number below was produced by the real pipeline — capture → extract →
-          resolve → contradict → promote — running on a fixture org. The tabs above walk
-          the same surfaces an operator uses. Plug in your own teams and the wall goes
-          live.
-        </p>
-      </section>
-      <Observatory data={DEMO_OBSERVATORY} />
-    </div>
+    <Suspense fallback={<Loading />}>
+      <DemoConsole
+        data={{
+          observatory: DEMO_OBSERVATORY,
+          promotions: DEMO_PROMOTIONS,
+          contradictions: DEMO_CONTRADICTIONS,
+          disputes: DEMO_DISPUTES,
+          cortex: DEMO_CORTEX,
+          archive: DEMO_ARCHIVE,
+          health: DEMO_HEALTH,
+          divergences: DEMO_DIVERGENCES,
+        }}
+      />
+    </Suspense>
   );
 }

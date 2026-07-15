@@ -13,7 +13,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion, useScroll, useSpring } from "framer-motion";
 
-import { CANONICAL_DEMO, CONTRADICTION, QUEUE } from "../design/demo-data";
+import { CANONICAL_DEMO } from "../design/demo-data";
 import { PRODUCT_ROUTES } from "../design/routes";
 import {
   band,
@@ -25,6 +25,7 @@ import {
   LABEL,
   MAGENTA,
 } from "../design/theme";
+import StationModule from "./StationModules";
 
 export interface LiveStats {
   pendingPromotions: number;
@@ -255,6 +256,10 @@ export default function Home({
       ? live.teams.slice(0, 3).map((t) => t.name).join(", ")
       : "payments, platform, data";
 
+  // Each station's `artifact` is the caption under its module figure. In live
+  // mode it is the only place on this page that speaks about the reader's real
+  // org — the figure above it is always the example. So in demo mode the caption
+  // must not merely restate the figure: it says the thing the figure cannot draw.
   const STATIONS = [
     {
       n: "01",
@@ -270,10 +275,11 @@ export default function Home({
               .join("   ")
           : live
             ? `${live.totalMemories} memories captured across the org`
-            : QUEUE[0].content,
+            : "each proposal carries its provenance — the session it came from, the model that extracted it, the policy rule that routed it here.",
       tone: GOLD,
       wave: "in" as const,
-      href: isPublic ? "/demo/reviews" : "/console/reviews",
+      module: "gate" as const,
+      href: isPublic ? "/demo?m=reviews" : "/console/reviews",
       cta: isPublic ? "see the review queue" : "open the review queue",
     },
     {
@@ -284,10 +290,11 @@ export default function Home({
         ? live.openContradictions > 0
           ? `${plural(live.openContradictions, "open contradiction")} in the review queue · each with a suggested resolution`
           : "0 open contradictions — every source currently in phase"
-        : `− ${CONTRADICTION.a}   + ${CONTRADICTION.b}`,
+        : "the scan finds the seam; a named human closes it. the loser is superseded, never deleted.",
       tone: MAGENTA,
       wave: "anti" as const,
-      href: isPublic ? "/demo/disputes" : "/console/reviews",
+      module: "contradiction" as const,
+      href: isPublic ? "/demo?m=disputes" : "/console/reviews",
       cta: isPublic ? "see a contradiction" : "resolve contradictions",
     },
     {
@@ -300,10 +307,11 @@ export default function Home({
         ? live.topCanonical
           ? `${live.topCanonical.name} ⇐ bound across ${plural(live.topCanonical.teams, "team")} · constructive`
           : `${plural(live.canonicalCount, "canonical node")} · constructive`
-        : `${CANONICAL_DEMO.name} ⇐ ${CANONICAL_DEMO.aliases.map((a) => a.team).join(" + ")} · constructive`,
+        : "one node, three dialects — a query in any of them finds it, and permission decides who sees it.",
       tone: "#f6ecd0",
       wave: "locked" as const,
-      href: isPublic ? "/demo/graph" : "/console/graph",
+      module: "cortex" as const,
+      href: isPublic ? "/demo?m=graph" : "/console/graph",
       cta: "explore the graph",
     },
     // ── the second movement: what the field computes that no session can ──
@@ -316,10 +324,11 @@ export default function Home({
           ? live.divergence.top
             ? `${live.divergence.top.practice} · ${live.divergence.top.impact} impact → one recommended standard`
             : "0 divergences — every shared practice in tune"
-          : "service retry policy · platform 2 s / 3 attempts vs payments 30 s + jitter → one recommended standard",
+          : "adjudicated by qwen-max on a scheduled sweep: it proposes the standard, a platform lead ratifies it.",
       tone: band("theta", 74),
       wave: "beat" as const,
-      href: isPublic ? "/demo/divergence" : "/console/divergence",
+      module: "divergence" as const,
+      href: isPublic ? "/demo?m=divergence" : "/console/divergence",
       cta: isPublic ? "see the standards board" : "open the standards board",
     },
     {
@@ -329,9 +338,10 @@ export default function Home({
       artifact:
         live && live.docsPages !== null
           ? `${plural(live.docsPages, "page")} composed from the canonical graph · recompiled on change`
-          : "std-retry ⇐ composed from the canonical graph · recompiled on change",
+          : "every sentence traces back to the canonical memory it was compiled from — there is no unsourced line.",
       tone: band("delta", 74),
       wave: "composed" as const,
+      module: "page" as const,
       href: isPublic ? "/kb" : "/console/docs",
       cta: isPublic ? "browse the knowledge base" : "read the pages",
     },
@@ -346,10 +356,11 @@ export default function Home({
                 ? ` — capped by ${plural(live.health.crossTeamContradictions, "cross-team contradiction")}`
                 : " — no cross-team contradictions in the field"
             }`
-          : "61 · Watch — capped by 1 cross-team contradiction",
+          : "the score is a gate, not a dashboard — publishing to the company wiki pauses while it sits below threshold.",
       tone: band("alpha"),
       wave: "trace" as const,
-      href: isPublic ? "/demo/health" : "/console/health",
+      module: "health" as const,
+      href: isPublic ? "/demo?m=health" : "/console/health",
       cta: "read the health report",
     },
   ];
@@ -536,9 +547,11 @@ export default function Home({
               <p className={`${FONT_MONO} mt-4 max-w-md text-sm leading-relaxed text-[#e9edff]/55`}>
                 {s.body}
               </p>
-              <div className={`${FONT_MONO} mt-5 rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm leading-relaxed text-[#e9edff]/70`}>
-                {s.artifact}
-              </div>
+              {/* The station's module, minimized: a working figure of the very
+                  surface the CTA below opens. `artifact` — the line that used to
+                  be the whole artifact, and is still the only place live numbers
+                  are told — is now its caption. */}
+              <StationModule kind={s.module} tone={s.tone} caption={s.artifact} />
               <Link
                 href={s.href}
                 className={`${FONT_MONO} mt-4 inline-block text-xs uppercase tracking-[0.18em] underline decoration-dotted underline-offset-4 transition hover:text-[#f3c74f]`}

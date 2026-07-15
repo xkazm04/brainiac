@@ -13,6 +13,61 @@
       "icon": null,
       "contexts": [
         {
+          "name": "Server: Docs + Sweeps + OpenAPI",
+          "description": "Document publishing/editing endpoints, background sweep operations, and OpenAPI spec generation, with pg integration tests.",
+          "businessFeature": "Server: Docs + Sweeps + OpenAPI",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/docs.rs",
+            "crates/brainiac-server/src/sweeps.rs",
+            "crates/brainiac-server/src/openapi.rs",
+            "crates/brainiac-server/tests/docs_pg.rs",
+            "crates/brainiac-server/tests/doc_edit_pg.rs",
+            "crates/brainiac-server/tests/publish_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Server: MCP Agent Surface",
+          "description": "MCP stdio agent surface (memory_search/context/add + entity_lookup), authenticated as the developer's personal token so RLS applies per tool call.",
+          "businessFeature": "Server: MCP Agent Surface",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/mcp.rs",
+            "crates/brainiac-server/tests/mcp_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Server: REST HTTP + Auth + Entrypoint",
+          "description": "REST memory API on :8600 + bearer-token->principal auth + server entrypoint/wiring and graceful shutdown.",
+          "businessFeature": "Server: REST HTTP + Auth + Entrypoint",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/http.rs",
+            "crates/brainiac-server/src/auth.rs",
+            "crates/brainiac-server/src/lib.rs",
+            "crates/brainiac-server/src/main.rs",
+            "crates/brainiac-server/tests/http_smoke.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Server: Governance Console API",
+          "description": "Governance console REST API: approve/reject promotions, resolve contradictions, entity graph + governance-health analytics powering the Next.js console.",
+          "businessFeature": "Server: Governance Console API",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/console.rs",
+            "crates/brainiac-server/tests/console_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
           "name": "Governance Console API",
           "description": "Maintainers approve/reject knowledge promotions, resolve contradictions, and read the entity graph and governance-health analytics that power the Next.js console.",
           "businessFeature": "Governance Console API",
@@ -72,6 +127,62 @@
       "icon": null,
       "contexts": [
         {
+          "name": "Gateway: BYOM Model + Resilience + Health/Redact",
+          "description": "BYOM model gateway (Qwen/DashScope + deterministic mock), resilience (retry/circuit-breaker), health, and secret redaction.",
+          "businessFeature": "Gateway: BYOM Model + Resilience + Health/Redact",
+          "category": "gateway",
+          "filePaths": [
+            "crates/brainiac-gateway/src/lib.rs",
+            "crates/brainiac-gateway/src/resilience.rs",
+            "crates/brainiac-core/src/health.rs",
+            "crates/brainiac-core/src/redact.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Pipeline: Divergence + Reembed + Integration Tests",
+          "description": "Divergence detection + embedding reembed (model-change backfill) plus the pipeline integration tests.",
+          "businessFeature": "Pipeline: Divergence + Reembed + Integration Tests",
+          "category": "pipeline",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/divergence.rs",
+            "crates/brainiac-pipeline/src/reembed.rs",
+            "crates/brainiac-pipeline/tests/reembed_pg.rs",
+            "crates/brainiac-pipeline/tests/pipeline_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Pipeline: Worker + Compose + Ingest",
+          "description": "Background worker draining the ingest queue + document composition (the anti-rot compose loop) writing memories with provenance under governance.",
+          "businessFeature": "Pipeline: Worker + Compose + Ingest",
+          "category": "pipeline",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/worker.rs",
+            "crates/brainiac-pipeline/src/compose.rs",
+            "crates/brainiac-pipeline/tests/compose_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Pipeline: Extract + Resolve + Contradict + Policy",
+          "description": "Knowledge extraction pipeline core: extract candidates from transcripts, resolve entities, detect contradictions, apply promotion policy.",
+          "businessFeature": "Pipeline: Extract + Resolve + Contradict + Policy",
+          "category": "pipeline",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/extract.rs",
+            "crates/brainiac-pipeline/src/resolve.rs",
+            "crates/brainiac-pipeline/src/contradict.rs",
+            "crates/brainiac-pipeline/src/policy.rs",
+            "crates/brainiac-pipeline/src/lib.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
           "name": "BYOM Model Gateway",
           "description": "Bring-your-own-model provider trait with Qwen/DashScope (OpenAI-compatible) and a deterministic mock provider; records per-call token usage so orgs pay with their own keys.",
           "businessFeature": "BYOM Model Gateway",
@@ -104,9 +215,7 @@
             "crates/brainiac-pipeline/src/extract.rs",
             "crates/brainiac-pipeline/src/resolve.rs",
             "crates/brainiac-pipeline/src/contradict.rs",
-            "crates/brainiac-pipeline/src/policy.rs",
-            "crates/brainiac-pipeline/src/reembed.rs",
-            "crates/brainiac-pipeline/tests/reembed_pg.rs"
+            "crates/brainiac-pipeline/src/policy.rs"
           ],
           "target": null,
           "apiRoutes": []
@@ -121,6 +230,76 @@
       "icon": null,
       "contexts": [
         {
+          "name": "Core: Fusion + Temporal + Metrics + Scoring + Rerank",
+          "description": "Core retrieval math: score fusion, temporal as-of logic, quality metrics, scoring, and reranking.",
+          "businessFeature": "Core: Fusion + Temporal + Metrics + Scoring + Rerank",
+          "category": "core",
+          "filePaths": [
+            "crates/brainiac-core/src/fusion.rs",
+            "crates/brainiac-core/src/temporal.rs",
+            "crates/brainiac-core/src/metrics.rs",
+            "crates/brainiac-core/src/scoring.rs",
+            "crates/brainiac-core/src/rerank.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Core: Domain Types + Embeddings",
+          "description": "Core domain vocabulary (memories, principals, statuses, visibility) + the embedding abstraction used by every crate.",
+          "businessFeature": "Core: Domain Types + Embeddings",
+          "category": "core",
+          "filePaths": [
+            "crates/brainiac-core/src/types.rs",
+            "crates/brainiac-core/src/lib.rs",
+            "crates/brainiac-core/src/embed.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Store: Documents + Feedback + Publishing + Tokens",
+          "description": "Newer store modules: documents (published pages), feedback, publishing state, and API tokens.",
+          "businessFeature": "Store: Documents + Feedback + Publishing + Tokens",
+          "category": "store",
+          "filePaths": [
+            "crates/brainiac-store/src/documents.rs",
+            "crates/brainiac-store/src/feedback.rs",
+            "crates/brainiac-store/src/publishing.rs",
+            "crates/brainiac-store/src/tokens.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Store: Orgs + Entities + Governance",
+          "description": "Store repositories for orgs/teams/members, canonical entities + merges, and governance records under the caller's RLS transaction.",
+          "businessFeature": "Store: Orgs + Entities + Governance",
+          "category": "store",
+          "filePaths": [
+            "crates/brainiac-store/src/orgs.rs",
+            "crates/brainiac-store/src/entities.rs",
+            "crates/brainiac-store/src/governance.rs",
+            "crates/brainiac-store/src/lib.rs",
+            "crates/brainiac-store/tests/store_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Store: Memories + Hybrid Retrieval + Queue",
+          "description": "Memory persistence + hybrid (vector+lexical) permission-aware retrieval with pgvector, plus ingest-queue store ops.",
+          "businessFeature": "Store: Memories + Hybrid Retrieval + Queue",
+          "category": "store",
+          "filePaths": [
+            "crates/brainiac-store/src/memories.rs",
+            "crates/brainiac-store/src/retrieval.rs",
+            "crates/brainiac-store/src/queue.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
           "name": "Core Domain Types & Embeddings",
           "description": "Shared domain vocabulary (memories, principals, statuses), embedding abstraction, retrieval score fusion, temporal as-of logic, and quality metrics used by every crate.",
           "businessFeature": "Core Domain Types & Embeddings",
@@ -131,9 +310,7 @@
             "crates/brainiac-core/src/embed.rs",
             "crates/brainiac-core/src/fusion.rs",
             "crates/brainiac-core/src/temporal.rs",
-            "crates/brainiac-core/src/metrics.rs",
-            "crates/brainiac-core/src/scoring.rs",
-            "crates/brainiac-core/src/rerank.rs"
+            "crates/brainiac-core/src/metrics.rs"
           ],
           "target": null,
           "apiRoutes": []
@@ -189,6 +366,59 @@
       "icon": null,
       "contexts": [
         {
+          "name": "Eval: Docs/Contradiction/Extraction/Resolution/Pipeline Profiles",
+          "description": "Eval profiles: docs, contradiction, extraction, resolution, and pipeline quality profiles + their pg tests.",
+          "businessFeature": "Eval: Docs/Contradiction/Extraction/Resolution/Pipeline Profiles",
+          "category": "eval",
+          "filePaths": [
+            "crates/brainiac-eval/src/docs_profile.rs",
+            "crates/brainiac-eval/src/contradiction_profile.rs",
+            "crates/brainiac-eval/src/extraction_profile.rs",
+            "crates/brainiac-eval/src/resolution_profile.rs",
+            "crates/brainiac-eval/src/pipeline_profile.rs",
+            "crates/brainiac-eval/tests/contradiction_pg.rs",
+            "crates/brainiac-eval/tests/resolution_pg.rs",
+            "crates/brainiac-eval/tests/pipeline_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Eval: Harness Core + Retrieval/Grid Profiles",
+          "description": "Eval harness core: seed the synthetic org, run retrieval/grid profiles, apply quality gates, emit comparable JSON reports.",
+          "businessFeature": "Eval: Harness Core + Retrieval/Grid Profiles",
+          "category": "eval",
+          "filePaths": [
+            "crates/brainiac-eval/src/lib.rs",
+            "crates/brainiac-eval/src/report.rs",
+            "crates/brainiac-eval/src/retrieval_profile.rs",
+            "crates/brainiac-eval/src/seed.rs",
+            "crates/brainiac-eval/src/gates.rs",
+            "crates/brainiac-eval/src/grid.rs",
+            "crates/brainiac-eval/tests/retrieval_pg.rs",
+            "crates/brainiac-eval/tests/grid_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Fixtures: Golden Loader + Validate + Schema",
+          "description": "Golden fixture loader: load/validate/assign deterministic IDs to the versioned Meridian corpus.",
+          "businessFeature": "Fixtures: Golden Loader + Validate + Schema",
+          "category": "eval",
+          "filePaths": [
+            "crates/brainiac-fixtures/src/lib.rs",
+            "crates/brainiac-fixtures/src/loader.rs",
+            "crates/brainiac-fixtures/src/schema.rs",
+            "crates/brainiac-fixtures/src/validate.rs",
+            "crates/brainiac-fixtures/src/ids.rs",
+            "crates/brainiac-fixtures/src/export.rs",
+            "crates/brainiac-fixtures/tests/load_v1.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
           "name": "Architecture Docs & Workspace Config",
           "description": "Product and system documentation (architecture, eval methodology, plan, embeddings research) plus the Cargo workspace manifest — the source of truth for how Brainiac is built and measured.",
           "businessFeature": "Architecture Docs & Workspace Config",
@@ -197,7 +427,6 @@
             "docs/ARCHITECTURE.md",
             "docs/EVAL.md",
             "docs/PLAN.md",
-            "docs/KB-PLAN.md",
             "docs/research/embeddings.md",
             "Cargo.toml",
             "README.md"
@@ -258,15 +487,7 @@
             "crates/brainiac-eval/src/report.rs",
             "crates/brainiac-eval/src/retrieval_profile.rs",
             "crates/brainiac-eval/src/seed.rs",
-            "crates/brainiac-eval/tests/retrieval_pg.rs",
-            "crates/brainiac-eval/src/resolution_profile.rs",
-            "crates/brainiac-eval/tests/resolution_pg.rs",
-            "crates/brainiac-eval/src/pipeline_profile.rs",
-            "crates/brainiac-eval/src/contradiction_profile.rs",
-            "crates/brainiac-eval/src/grid.rs",
-            "crates/brainiac-eval/tests/pipeline_pg.rs",
-            "crates/brainiac-eval/tests/contradiction_pg.rs",
-            "crates/brainiac-eval/tests/grid_pg.rs"
+            "crates/brainiac-eval/tests/retrieval_pg.rs"
           ],
           "target": null,
           "apiRoutes": []
@@ -280,6 +501,161 @@
       "color": "#EC4899",
       "icon": null,
       "contexts": [
+        {
+          "name": "Console: Health + Analytics + Observatory + Ops",
+          "description": "Health + Analytics + Observatory + Divergence + Ops (sweep control) dashboards.",
+          "businessFeature": "Console: Health + Analytics + Observatory + Ops",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/health/page.tsx",
+            "console/app/console/(modules)/health/loading.tsx",
+            "console/app/console/(modules)/analytics/page.tsx",
+            "console/app/console/(modules)/analytics/loading.tsx",
+            "console/app/console/(modules)/analytics/error.tsx",
+            "console/app/console/(modules)/divergence/page.tsx",
+            "console/app/console/(modules)/divergence/loading.tsx",
+            "console/src/health/KnowledgeHealth.tsx",
+            "console/src/health/health-data.ts",
+            "console/src/health/age.ts",
+            "console/src/health/age.test.ts",
+            "console/src/observatory/Observatory.tsx",
+            "console/src/observatory/observatory-data.ts",
+            "console/src/divergence/PracticeDivergence.tsx",
+            "console/src/divergence/divergence-data.ts",
+            "console/src/ops/SweepControl.tsx",
+            "console/src/ops/sweep-actions.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Docs Reader + Editor",
+          "description": "Docs Reader + Editor: read/edit published knowledge documents via server actions; markdown rendering.",
+          "businessFeature": "Console: Docs Reader + Editor",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/docs/page.tsx",
+            "console/app/console/(modules)/docs/loading.tsx",
+            "console/app/console/(modules)/docs/[slug]/page.tsx",
+            "console/app/console/(modules)/docs/[slug]/actions.ts",
+            "console/src/docs/DocReader.tsx",
+            "console/src/docs/DocPage.tsx",
+            "console/src/docs/DocIndex.tsx",
+            "console/src/docs/SectionEditor.tsx",
+            "console/src/docs/ApproveRevision.tsx",
+            "console/src/docs/docs-demo.ts",
+            "console/src/docs/edit-copy.ts",
+            "console/src/docs/facets.ts",
+            "console/src/docs/markdown.ts",
+            "console/src/docs/edit-copy.test.ts",
+            "console/src/docs/markdown.test.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Memory Archive + Inspector",
+          "description": "Memory Archive + Inspector: browse memories and inspect one memory's detail/provenance.",
+          "businessFeature": "Console: Memory Archive + Inspector",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/memories/Archive.tsx",
+            "console/app/console/(modules)/memories/MemoryInspector.tsx",
+            "console/app/console/(modules)/memories/archive-data.ts",
+            "console/app/console/(modules)/memories/useMemoryDetail.ts",
+            "console/app/console/(modules)/memories/page.tsx",
+            "console/app/console/(modules)/memories/loading.tsx",
+            "console/app/console/(modules)/memories/error.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: API Keys Management",
+          "description": "API Keys Management: create/list/preview/revoke the org's API keys.",
+          "businessFeature": "Console: API Keys Management",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/keys/KeyShared.tsx",
+            "console/app/console/(modules)/keys/Keys.tsx",
+            "console/app/console/(modules)/keys/keys-data.ts",
+            "console/app/console/(modules)/keys/page.tsx",
+            "console/app/console/(modules)/keys/loading.tsx",
+            "console/app/console/(modules)/keys/error.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Ingest Monitor",
+          "description": "Ingest Monitor: submit sources into the ingest queue and watch the live processing feed.",
+          "businessFeature": "Console: Ingest Monitor",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/ingest/IngestMonitor.tsx",
+            "console/app/console/(modules)/ingest/SubmitBox.tsx",
+            "console/app/console/(modules)/ingest/ingest-data.ts",
+            "console/app/console/(modules)/ingest/useIngestFeed.ts",
+            "console/app/console/(modules)/ingest/page.tsx",
+            "console/app/console/(modules)/ingest/loading.tsx",
+            "console/app/console/(modules)/ingest/error.tsx",
+            "console/app/console/(modules)/ingest/views/ManifestView.tsx",
+            "console/app/console/(modules)/ingest/views/AirlockView.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Knowledge Graph Explorer",
+          "description": "Knowledge Graph Explorer: entity graph (CortexMap + StarChart/DepthOfField views) with canonical hubs + evidence.",
+          "businessFeature": "Console: Knowledge Graph Explorer",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/graph/CortexMap.tsx",
+            "console/app/console/(modules)/graph/DetailSections.tsx",
+            "console/app/console/(modules)/graph/cortex-data.ts",
+            "console/app/console/(modules)/graph/useCanonicalDetail.ts",
+            "console/app/console/(modules)/graph/page.tsx",
+            "console/app/console/(modules)/graph/loading.tsx",
+            "console/app/console/(modules)/graph/error.tsx",
+            "console/app/console/(modules)/graph/views/StarChartView.tsx",
+            "console/app/console/(modules)/graph/views/DepthOfFieldView.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Disputes Bench",
+          "description": "Disputes Bench: maintainers adjudicate contradictions (resolve/coexist/dismiss) via server actions.",
+          "businessFeature": "Console: Disputes Bench",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/disputes/DisputeBench.tsx",
+            "console/app/console/(modules)/disputes/DecisionBar.tsx",
+            "console/app/console/(modules)/disputes/disputes-data.ts",
+            "console/app/console/(modules)/disputes/actions.ts",
+            "console/app/console/(modules)/disputes/page.tsx",
+            "console/app/console/(modules)/disputes/loading.tsx",
+            "console/app/console/(modules)/disputes/error.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Promotion Review Queue",
+          "description": "Promotion Review Queue: maintainers approve/reject pending promotions via server actions (the governance gate).",
+          "businessFeature": "Console: Promotion Review Queue",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/(modules)/reviews/page.tsx",
+            "console/app/console/(modules)/reviews/actions.ts",
+            "console/app/console/(modules)/reviews/review-buttons.tsx",
+            "console/app/console/(modules)/reviews/loading.tsx",
+            "console/app/console/(modules)/reviews/error.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
         {
           "name": "Analytics Observatory & Knowledge Graph",
           "description": "Governance-health analytics dashboards (Mission Control and Transmission variants) and the entity knowledge-graph explorer with canonical hubs and evidence pointers.",
@@ -309,64 +685,18 @@
           "apiRoutes": []
         },
         {
-          "name": "Pitch & Public Landing",
-          "description": "The public root (\"/\"): the review-gate hero field, the empty-quadrant competitor map, the benchmark-theater critique, the measured eval/UAT evidence, and the published list of cases where Brainiac loses. Example data only — it never calls the API.",
-          "businessFeature": "Pitch & Public Landing",
-          "category": "ui",
-          "filePaths": [
-            "console/app/page.tsx",
-            "console/app/pitch/page.tsx",
-            "console/src/pitch/Pitch.tsx",
-            "console/src/pitch/GateField.tsx",
-            "console/src/pitch/pitch-data.ts"
-          ],
-          "target": null,
-          "apiRoutes": []
-        },
-        {
-          "name": "Console Shell, Home & Access Gate",
-          "description": "The two-row operator chrome (display-only mini-dashboard on top, A-Z navigation below), the console home (wave field) which doubles as the PUBLIC landing at \"/\" in its example-data variant, and the passcode gate keeping every real-data surface off the public internet.",
-          "businessFeature": "Console Shell, Home & Access Gate",
+          "name": "Console Shell & Home",
+          "description": "The governance console's app shell, landing/home experience, offline-API fallback, and the shared design theme and demo data that give the console its look.",
+          "businessFeature": "Console Shell & Home",
           "category": "ui",
           "filePaths": [
             "console/app/layout.tsx",
-            "console/app/console/page.tsx",
+            "console/app/page.tsx",
             "console/app/chrome.tsx",
-            "console/middleware.ts",
-            "console/app/login/page.tsx",
-            "console/app/login/actions.ts",
-            "console/src/lib/auth.ts",
             "console/src/home/Home.tsx",
             "console/src/components/ApiOffline.tsx",
             "console/src/design/theme.ts",
-            "console/src/design/demo-data.ts",
-            "console/src/design/routes.ts",
-            "console/src/lib/demo-fallback.ts",
-            "console/src/lib/demo-fallback.test.ts",
-            "console/src/components/Skeleton.tsx",
-            "console/src/components/RouteError.tsx",
-            "console/app/page.tsx",
-            "console/app/pitch/page.tsx",
-            "console/src/components/NavDashboard.tsx"
-          ],
-          "target": null,
-          "apiRoutes": []
-        },
-        {
-          "name": "Public Demo Showcase",
-          "description": "The /demo subtree: a public, sign-in-free walk through the console surfaces (overview, the review gate, disputes, graph, archive, health) rendered by the REAL operator components on DEMO_* fixtures. Every fixture carries live:false, which is what makes it safe — components synthesize drill-in detail locally and disable write controls, and no API token is ever used.",
-          "businessFeature": "Public Demo Showcase",
-          "category": "ui",
-          "filePaths": [
-            "console/app/demo/layout.tsx",
-            "console/app/demo/demo-shell.tsx",
-            "console/app/demo/page.tsx",
-            "console/app/demo/reviews/page.tsx",
-            "console/app/demo/reviews/demo-reviews-data.ts",
-            "console/app/demo/disputes/page.tsx",
-            "console/app/demo/graph/page.tsx",
-            "console/app/demo/memories/page.tsx",
-            "console/app/demo/health/page.tsx"
+            "console/src/design/demo-data.ts"
           ],
           "target": null,
           "apiRoutes": []
@@ -380,6 +710,101 @@
       "color": "#6366F1",
       "icon": null,
       "contexts": [
+        {
+          "name": "Console: Demo Mode + Login",
+          "description": "Demo mode (public, no-backend) + login (passcode/session auth).",
+          "businessFeature": "Console: Demo Mode + Login",
+          "category": "ui",
+          "filePaths": [
+            "console/app/demo/DemoConsole.tsx",
+            "console/app/demo/ReviewGate.tsx",
+            "console/app/demo/demo-reviews-data.ts",
+            "console/app/demo/demo-shell.tsx",
+            "console/app/demo/page.tsx",
+            "console/app/demo/layout.tsx",
+            "console/app/demo/loading.tsx",
+            "console/app/login/page.tsx",
+            "console/app/login/actions.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Next.js API Routes",
+          "description": "Next.js BFF API route handlers: status, keys, ingest, memory-by-id, graph-canonical proxying to :8600.",
+          "businessFeature": "Console: Next.js API Routes",
+          "category": "api",
+          "filePaths": [
+            "console/app/api/status/route.ts",
+            "console/app/api/keys/route.ts",
+            "console/app/api/keys/preview/route.ts",
+            "console/app/api/keys/[id]/revoke/route.ts",
+            "console/app/api/ingest/route.ts",
+            "console/app/api/ingest/feed/route.ts",
+            "console/app/api/memories/[id]/route.ts",
+            "console/app/api/graph/canonical/[id]/route.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: API Client + Types + Auth",
+          "description": "Typed API client to the Brainiac REST server (:8600), shared response types, auth helpers, demo-fallback.",
+          "businessFeature": "Console: API Client + Types + Auth",
+          "category": "lib",
+          "filePaths": [
+            "console/src/lib/api.ts",
+            "console/src/lib/types.ts",
+            "console/src/lib/auth.ts",
+            "console/src/lib/governance-api.ts",
+            "console/src/lib/format.ts",
+            "console/src/lib/demo-fallback.ts",
+            "console/src/lib/api.test.ts",
+            "console/src/lib/demo-fallback.test.ts",
+            "console/src/test/server-only-stub.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Home + Station Modules",
+          "description": "Console home/landing experience and the six-station module grid.",
+          "businessFeature": "Console: Home + Station Modules",
+          "category": "ui",
+          "filePaths": [
+            "console/src/home/Home.tsx",
+            "console/src/home/StationModules.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Shell + Nav + Design System",
+          "description": "Console app shell + navigation + design system (root/console layouts, chrome, theme, routes config, shared components).",
+          "businessFeature": "Console: Shell + Nav + Design System",
+          "category": "ui",
+          "filePaths": [
+            "console/app/layout.tsx",
+            "console/app/page.tsx",
+            "console/app/chrome.tsx",
+            "console/app/console/page.tsx",
+            "console/app/console/(modules)/layout.tsx",
+            "console/app/console/(modules)/template.tsx",
+            "console/src/design/routes.ts",
+            "console/src/design/theme.ts",
+            "console/src/design/demo-data.ts",
+            "console/src/components/NavDashboard.tsx",
+            "console/src/components/NavStatus.tsx",
+            "console/src/components/SectionRail.tsx",
+            "console/src/components/Divider.tsx",
+            "console/src/components/Skeleton.tsx",
+            "console/src/components/RouteError.tsx",
+            "console/src/components/DemoBanner.tsx",
+            "console/src/components/ApiOffline.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
         {
           "name": "Console Build & Test Config",
           "description": "Next.js, TypeScript, PostCSS, and Vitest configuration plus package manifest that build and test the console.",
@@ -411,44 +836,187 @@
           "apiRoutes": []
         }
       ]
+    },
+    {
+      "name": "Server: Publishing",
+      "domain": null,
+      "type": null,
+      "color": "#8B5CF6",
+      "icon": "Send",
+      "contexts": [
+        {
+          "name": "Publish: Render + Confluence + Git",
+          "description": "Publish crate: render knowledge documents and publish them to Confluence (HTTP API) and Git.",
+          "businessFeature": "Publish: Render + Confluence + Git",
+          "category": "publish",
+          "filePaths": [
+            "crates/brainiac-publish/src/lib.rs",
+            "crates/brainiac-publish/src/render.rs",
+            "crates/brainiac-publish/src/confluence.rs",
+            "crates/brainiac-publish/src/git.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
+    },
+    {
+      "name": "Console: Marketing & Explainers",
+      "domain": null,
+      "type": null,
+      "color": "#EC4899",
+      "icon": "Megaphone",
+      "contexts": [
+        {
+          "name": "Console: Pitch / Marketing",
+          "description": "Pitch/marketing pages: data-driven diagrams and static narrative content.",
+          "businessFeature": "Console: Pitch / Marketing",
+          "category": "ui",
+          "filePaths": [
+            "console/app/pitch/page.tsx",
+            "console/app/pitch/layout.tsx",
+            "console/src/pitch/Pitch.tsx",
+            "console/src/pitch/diagrams.tsx",
+            "console/src/pitch/pitch-data.ts",
+            "console/src/pitch/LedgerField.tsx",
+            "console/src/pitch/PitchNav.tsx",
+            "console/src/pitch/hero-types.ts",
+            "console/src/pitch/sections/RetreatAutopsy.tsx",
+            "console/src/pitch/sections/EvidenceMatrix.tsx",
+            "console/src/pitch/sections/LimitsBalanceSheet.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Knowledge Base Explainer",
+          "description": "Knowledge Base explainer (/kb): illustrated concept page with math-driven SVG diagrams.",
+          "businessFeature": "Console: Knowledge Base Explainer",
+          "category": "ui",
+          "filePaths": [
+            "console/app/kb/page.tsx",
+            "console/app/kb/layout.tsx",
+            "console/src/kb/KnowledgeBase.tsx",
+            "console/src/kb/illustrations.tsx",
+            "console/src/kb/ProjectionDiagram.tsx",
+            "console/src/kb/RotCurve.tsx",
+            "console/src/kb/kb-data.ts",
+            "console/src/kb/kb-data.test.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
+        }
+      ]
     }
   ],
   "ungrouped": [],
-  "relationships": [],
+  "relationships": [
+    {
+      "source": "Server: Agent & API Surface",
+      "target": "Server: Storage & Retrieval",
+      "type": "depends_on"
+    },
+    {
+      "source": "Server: Agent & API Surface",
+      "target": "Server: Knowledge Pipeline & Model Gateway",
+      "type": "triggers"
+    },
+    {
+      "source": "Server: Knowledge Pipeline & Model Gateway",
+      "target": "Server: Storage & Retrieval",
+      "type": "depends_on"
+    },
+    {
+      "source": "Server: Storage & Retrieval",
+      "target": "Server: Eval Harness & Meridian Fixtures",
+      "type": "uses"
+    },
+    {
+      "source": "Server: Knowledge Pipeline & Model Gateway",
+      "target": "Server: Eval Harness & Meridian Fixtures",
+      "type": "calls"
+    },
+    {
+      "source": "Console: Governance Workbench",
+      "target": "Console: API Client & Platform",
+      "type": "uses"
+    },
+    {
+      "source": "Server: Agent & API Surface",
+      "target": "Console: API Client & Platform",
+      "type": "calls"
+    }
+  ],
   "index": [
+    "Server: Agent & API Surface › Server: Docs + Sweeps + OpenAPI [api] — 6 files",
+    "Server: Agent & API Surface › Server: MCP Agent Surface [api] — 2 files",
+    "Server: Agent & API Surface › Server: REST HTTP + Auth + Entrypoint [api] — 5 files",
+    "Server: Agent & API Surface › Server: Governance Console API [api] — 2 files",
     "Server: Agent & API Surface › Governance Console API [api] — 2 files",
     "Server: Agent & API Surface › MCP Agent Surface [api] — 2 files",
     "Server: Agent & API Surface › REST Memory API & Auth [api] — 5 files",
+    "Server: Knowledge Pipeline & Model Gateway › Gateway: BYOM Model + Resilience + Health/Redact [gateway] — 4 files",
+    "Server: Knowledge Pipeline & Model Gateway › Pipeline: Divergence + Reembed + Integration Tests [pipeline] — 4 files",
+    "Server: Knowledge Pipeline & Model Gateway › Pipeline: Worker + Compose + Ingest [pipeline] — 3 files",
+    "Server: Knowledge Pipeline & Model Gateway › Pipeline: Extract + Resolve + Contradict + Policy [pipeline] — 5 files",
     "Server: Knowledge Pipeline & Model Gateway › BYOM Model Gateway [lib] — 1 files",
     "Server: Knowledge Pipeline & Model Gateway › Pipeline Worker & Ingest Queue [lib] — 3 files",
-    "Server: Knowledge Pipeline & Model Gateway › Knowledge Extraction & Resolution [lib] — 6 files",
-    "Server: Storage & Retrieval › Core Domain Types & Embeddings [lib] — 8 files",
+    "Server: Knowledge Pipeline & Model Gateway › Knowledge Extraction & Resolution [lib] — 4 files",
+    "Server: Storage & Retrieval › Core: Fusion + Temporal + Metrics + Scoring + Rerank [core] — 5 files",
+    "Server: Storage & Retrieval › Core: Domain Types + Embeddings [core] — 3 files",
+    "Server: Storage & Retrieval › Store: Documents + Feedback + Publishing + Tokens [store] — 4 files",
+    "Server: Storage & Retrieval › Store: Orgs + Entities + Governance [store] — 5 files",
+    "Server: Storage & Retrieval › Store: Memories + Hybrid Retrieval + Queue [store] — 3 files",
+    "Server: Storage & Retrieval › Core Domain Types & Embeddings [lib] — 6 files",
     "Server: Storage & Retrieval › Database Schema & Migrations [data] — 3 files",
     "Server: Storage & Retrieval › Org, Entity & Governance Store [data] — 5 files",
     "Server: Storage & Retrieval › Memory Store & Hybrid Retrieval [data] — 3 files",
-    "Server: Eval Harness & Meridian Fixtures › Architecture Docs & Workspace Config [config] — 7 files",
+    "Server: Eval Harness & Meridian Fixtures › Eval: Docs/Contradiction/Extraction/Resolution/Pipeline Profiles [eval] — 8 files",
+    "Server: Eval Harness & Meridian Fixtures › Eval: Harness Core + Retrieval/Grid Profiles [eval] — 8 files",
+    "Server: Eval Harness & Meridian Fixtures › Fixtures: Golden Loader + Validate + Schema [eval] — 7 files",
+    "Server: Eval Harness & Meridian Fixtures › Architecture Docs & Workspace Config [config] — 6 files",
     "Server: Eval Harness & Meridian Fixtures › Meridian Fixture Corpus [data] — 17 files",
     "Server: Eval Harness & Meridian Fixtures › Golden Fixture Loader [lib] — 6 files",
-    "Server: Eval Harness & Meridian Fixtures › Meridian Eval Harness [test] — 13 files",
+    "Server: Eval Harness & Meridian Fixtures › Meridian Eval Harness [test] — 5 files",
+    "Console: Governance Workbench › Console: Health + Analytics + Observatory + Ops [ui] — 17 files",
+    "Console: Governance Workbench › Console: Docs Reader + Editor [ui] — 15 files",
+    "Console: Governance Workbench › Console: Memory Archive + Inspector [ui] — 7 files",
+    "Console: Governance Workbench › Console: API Keys Management [ui] — 6 files",
+    "Console: Governance Workbench › Console: Ingest Monitor [ui] — 9 files",
+    "Console: Governance Workbench › Console: Knowledge Graph Explorer [ui] — 9 files",
+    "Console: Governance Workbench › Console: Disputes Bench [ui] — 7 files",
+    "Console: Governance Workbench › Console: Promotion Review Queue [ui] — 5 files",
     "Console: Governance Workbench › Analytics Observatory & Knowledge Graph [ui] — 5 files",
     "Console: Governance Workbench › Promotion Review Queue [ui] — 3 files",
-    "Console: Governance Workbench › Pitch & Public Landing [ui] — 5 files",
-    "Console: Governance Workbench › Console Shell, Home & Access Gate [ui] — 19 files",
-    "Console: Governance Workbench › Public Demo Showcase [ui] — 9 files",
+    "Console: Governance Workbench › Console Shell & Home [ui] — 7 files",
+    "Console: API Client & Platform › Console: Demo Mode + Login [ui] — 9 files",
+    "Console: API Client & Platform › Console: Next.js API Routes [api] — 8 files",
+    "Console: API Client & Platform › Console: API Client + Types + Auth [lib] — 9 files",
+    "Console: API Client & Platform › Console: Home + Station Modules [ui] — 2 files",
+    "Console: API Client & Platform › Console: Shell + Nav + Design System [ui] — 17 files",
     "Console: API Client & Platform › Console Build & Test Config [config] — 6 files",
-    "Console: API Client & Platform › Brainiac API Client & Types [lib] — 4 files"
+    "Console: API Client & Platform › Brainiac API Client & Types [lib] — 4 files",
+    "Server: Publishing › Publish: Render + Confluence + Git [publish] — 4 files",
+    "Console: Marketing & Explainers › Console: Pitch / Marketing [ui] — 11 files",
+    "Console: Marketing & Explainers › Console: Knowledge Base Explainer [ui] — 8 files"
   ],
   "summary": {
-    "totalGroups": 6,
-    "totalContexts": 21,
-    "totalFiles": 132,
+    "totalGroups": 8,
+    "totalContexts": 51,
+    "totalFiles": 310,
     "categories": {
-      "api": 3,
-      "lib": 6,
+      "api": 8,
+      "gateway": 1,
+      "pipeline": 3,
+      "lib": 7,
+      "core": 2,
+      "store": 3,
       "data": 4,
+      "eval": 3,
       "config": 2,
       "test": 1,
-      "ui": 4
+      "ui": 16,
+      "publish": 1
     },
     "domains": {
       "feature": 4,
@@ -457,11 +1025,11 @@
     }
   },
   "audit": {
-    "ok": true,
-    "tier": "medium",
-    "warnings": 0
+    "ok": false,
+    "tier": "large",
+    "warnings": 42
   },
   "instructions": "Context map for Brainiac. Each group is a business domain (domain field); each context is a feature with its files (filePaths) + a technical category. Read this to learn which files belong to which feature BEFORE editing. When you change a context's files, update them here (or run Vibeman's refresh) to keep this fresh.",
-  "generatedAt": "2026-07-10T19:34:48.643Z",
-  "revision": "8a56c62e6351"
+  "generatedAt": "2026-07-14T20:37:32.118Z",
+  "revision": "d86aac4d3172"
 }
