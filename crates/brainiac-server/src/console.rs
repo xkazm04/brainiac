@@ -450,6 +450,7 @@ pub(crate) struct ResolveContradictionResponse {
         (status = 400, description = "Unknown resolution, or supersede without a valid winner_memory_id"),
         (status = 403, description = "Supersede requires a maintainer of the losing memory's team"),
         (status = 404, description = "Contradiction not found / not open, or the losing memory is not visible"),
+        (status = 409, description = "Lost a concurrent resolve, or the supersession could not be applied — nothing was resolved"),
     )
 )]
 pub(crate) async fn resolve_contradiction(
@@ -461,8 +462,16 @@ pub(crate) async fn resolve_contradiction(
     let principal = auth_of(&state, &headers, "write").await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
+    // `FOR UPDATE` is the serialization point, exactly as in
+    // actionable_promotion: two maintainers resolving the same dispute both
+    // used to pass this read and both write, so the ledger recorded only the
+    // last writer while the first one's supersession side-effects had already
+    // landed. The loser of the race now blocks here, and — because READ
+    // COMMITTED re-evaluates the WHERE against the committed row once the lock
+    // is released — sees `status <> 'open'` and 404s before it can act.
     let row = sqlx::query(
-        "SELECT memory_a, memory_b FROM contradictions WHERE id = $1 AND status = 'open'",
+        "SELECT memory_a, memory_b FROM contradictions WHERE id = $1 AND status = 'open'
+         FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -490,15 +499,16 @@ pub(crate) async fn resolve_contradiction(
             let loser = if winner == a { b } else { a };
             // Supersession mutates the corpus — gate on the losing memory's
             // owning-team maintainer, under the caller's RLS view.
-            let loser_row = sqlx::query("SELECT team_id FROM memories WHERE id = $1")
-                .bind(loser)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(internal)?
-                .ok_or((
-                    StatusCode::NOT_FOUND,
-                    "losing memory is not visible to you".into(),
-                ))?;
+            let loser_row =
+                sqlx::query("SELECT team_id, superseded_by FROM memories WHERE id = $1")
+                    .bind(loser)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(internal)?
+                    .ok_or((
+                        StatusCode::NOT_FOUND,
+                        "losing memory is not visible to you".into(),
+                    ))?;
             if !is_maintainer(&mut tx, &principal, loser_row.get("team_id")).await? {
                 return Err((
                     StatusCode::FORBIDDEN,
@@ -510,16 +520,48 @@ pub(crate) async fn resolve_contradiction(
             // sets superseded_by, AND records the transition in the
             // promotions audit log — the inline SQL this replaces skipped
             // the audit row.
-            brainiac_store::governance::apply_supersession(
-                &mut tx,
-                principal.org_id,
-                loser,
-                winner,
-                Some(principal.user_id),
-                "contradiction_supersede",
-            )
-            .await
-            .map_err(internal)?;
+            //
+            // `apply_supersession` is idempotent and reports `false` whenever it
+            // applied nothing — but `false` conflates two very different worlds,
+            // and the caller must not treat them alike:
+            //
+            //   * the loser already points at THIS winner — the outcome the
+            //     reviewer is asking for already holds. Nothing to apply, and
+            //     nothing wrong: record `resolved_supersede` and close the
+            //     dispute. Refusing here would strand such a dispute open
+            //     forever, un-resolvable by the one verdict that fits it.
+            //   * the loser points at a DIFFERENT winner (or is out of scope) —
+            //     the request contradicts the corpus. Refuse.
+            //
+            // Deciding this from the loser's own `superseded_by` (read above,
+            // under the same row lock) keeps the distinction here rather than
+            // widening the store's bool into a status enum.
+            let already: Option<Uuid> = loser_row.get("superseded_by");
+            if already != Some(winner) {
+                // Discarding this bool was the original defect: a dispute was
+                // logged `resolved_supersede` while the corpus was untouched.
+                // Returning before the commit rolls the transaction back, so the
+                // contradiction stays open and honestly re-reviewable.
+                let applied = brainiac_store::governance::apply_supersession(
+                    &mut tx,
+                    principal.org_id,
+                    loser,
+                    winner,
+                    Some(principal.user_id),
+                    "contradiction_supersede",
+                )
+                .await
+                .map_err(internal)?;
+                if !applied {
+                    return Err((
+                        StatusCode::CONFLICT,
+                        "supersession could not be applied — the losing memory is already \
+                         superseded by a different memory, or is out of scope; nothing was resolved"
+                            .into(),
+                    )
+                        .into());
+                }
+            }
             "resolved_supersede"
         }
         "coexist" => "resolved_coexist",
@@ -533,11 +575,17 @@ pub(crate) async fn resolve_contradiction(
         }
     };
 
-    sqlx::query(
+    // Self-guarding transition, mirroring review_promotion: re-assert
+    // `status = 'open'` so a dispute already resolved by a concurrent request
+    // updates 0 rows rather than overwriting the recorded resolver. With the
+    // `FOR UPDATE` above this should be unreachable — it is the belt to that
+    // lock's braces, and the thing that makes the guarantee hold even if the
+    // read is ever refactored.
+    let updated = sqlx::query(
         "UPDATE contradictions
          SET status = $2, resolution_note = COALESCE($3, resolution_note),
              resolved_by = $4, resolved_at = now()
-         WHERE id = $1",
+         WHERE id = $1 AND status = 'open'",
     )
     .bind(id)
     .bind(status)
@@ -545,7 +593,15 @@ pub(crate) async fn resolve_contradiction(
     .bind(principal.user_id)
     .execute(&mut *tx)
     .await
-    .map_err(internal)?;
+    .map_err(internal)?
+    .rows_affected();
+    if updated == 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            "contradiction was already resolved".into(),
+        )
+            .into());
+    }
     tx.commit().await.map_err(internal)?;
     Ok(Json(ResolveContradictionResponse {
         contradiction_id: id,

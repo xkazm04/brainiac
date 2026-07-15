@@ -1401,6 +1401,9 @@
           },
           "404": {
             "description": "Contradiction not found / not open, or the losing memory is not visible"
+          },
+          "409": {
+            "description": "Lost a concurrent resolve, or the supersession could not be applied — nothing was resolved"
           }
         }
       }

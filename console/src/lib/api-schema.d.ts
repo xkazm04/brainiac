@@ -3424,6 +3424,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Lost a concurrent resolve, or the supersession could not be applied — nothing was resolved */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     feedback_queue: {
