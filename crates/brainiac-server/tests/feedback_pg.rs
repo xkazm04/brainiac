@@ -252,11 +252,69 @@ async fn dispute_resolution_gates_and_no_ops() {
     );
 
     // `total` must describe the whole feed, not the page window.
+    let full_total = body["total"].as_i64().expect("total");
     assert_eq!(
-        body["total"].as_i64().expect("total"),
+        full_total,
         events.len() as i64,
         "total must count the same set the page draws from"
     );
+
+    // ── paging + filters must agree with `total` ──────────────────────────
+    // A one-row page must still report the FULL backlog, or a client rendering
+    // the array length as the count reports "1" for an org with hundreds.
+    let r = http
+        .get(format!("{base}/v1/audit?limit=1"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("audit page");
+    let page: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(page["events"].as_array().expect("events").len(), 1);
+    assert_eq!(
+        page["total"].as_i64().expect("total"),
+        full_total,
+        "total must describe the feed, not the page window"
+    );
+
+    // The kind filter narrows the feed AND its total — a filter whose total kept
+    // counting the unfiltered set would misreport the very backlog it explains.
+    let r = http
+        .get(format!(
+            "{base}/v1/audit?kind=feedback_resolution&limit=200"
+        ))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("audit filtered");
+    let filtered: serde_json::Value = r.json().await.expect("json");
+    let f_events = filtered["events"].as_array().expect("events");
+    assert!(
+        !f_events.is_empty(),
+        "the dispute decision must survive its own filter"
+    );
+    assert!(
+        f_events.iter().all(|e| e["kind"] == "feedback_resolution"),
+        "the filter must actually filter: {filtered}"
+    );
+    assert_eq!(
+        filtered["total"].as_i64().expect("total"),
+        f_events.len() as i64,
+        "a filtered total must count the filtered set"
+    );
+    assert!(
+        filtered["total"].as_i64().expect("total") < full_total,
+        "the filtered feed must be a strict subset of the whole"
+    );
+
+    // An unknown kind is a 400, not a silently empty ledger — an auditor must
+    // never read a typo as "no such decisions were ever made".
+    let r = http
+        .get(format!("{base}/v1/audit?kind=nonsense"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("audit bad kind");
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
 
     // ── The team gate still holds, and invisibility is a 404 (no oracle) ───
     let team_mem = seed_disputed(

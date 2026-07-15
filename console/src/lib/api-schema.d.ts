@@ -2458,6 +2458,8 @@ export interface operations {
                 limit?: number;
                 /** @description Page offset (default 0) */
                 offset?: number;
+                /** @description Narrow to one action kind: promotion_review | contradiction_resolution | feedback_resolution */
+                kind?: string;
             };
             header?: never;
             path?: never;
@@ -2473,6 +2475,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuditResponse"];
                 };
+            };
+            /** @description Unknown kind filter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -185,6 +185,15 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Narrow to one action kind: promotion_review | contradiction_resolution | feedback_resolution",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -197,6 +206,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Unknown kind filter"
           }
         }
       }

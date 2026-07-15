@@ -1154,7 +1154,19 @@ pub(crate) async fn memory_reverify(
 pub(crate) struct AuditQuery {
     limit: Option<i64>,
     offset: Option<i64>,
+    /// Narrow to one kind of governance action. Applied in SQL, so `total`
+    /// describes the FILTERED feed — a filter whose total still counted the
+    /// unfiltered set would misreport the backlog it is meant to explain.
+    kind: Option<String>,
 }
+
+/// The governance actions `/v1/audit` unions, and the accepted `kind` filter
+/// values. Kept beside the SQL that produces them so the two cannot drift.
+pub(crate) const AUDIT_KINDS: [&str; 3] = [
+    "promotion_review",
+    "contradiction_resolution",
+    "feedback_resolution",
+];
 
 /// One governance action. `kind` is `promotion_review` |
 /// `contradiction_resolution` | `feedback_resolution`; `memory_b` is only set
@@ -1201,21 +1213,34 @@ pub(crate) struct AuditResponse {
     params(
         ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
         ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+        ("kind" = Option<String>, Query, description = "Narrow to one action kind: promotion_review | contradiction_resolution | feedback_resolution"),
     ),
-    responses((status = 200, description = "Audit feed page", body = AuditResponse))
+    responses(
+        (status = 200, description = "Audit feed page", body = AuditResponse),
+        (status = 400, description = "Unknown kind filter"),
+    )
 )]
 pub(crate) async fn audit(
     State(state): State<Arc<AppState>>,
     Query(q): Query<AuditQuery>,
     headers: HeaderMap,
 ) -> Result<Json<AuditResponse>, HttpError> {
+    if let Some(kind) = q.kind.as_deref() {
+        if !AUDIT_KINDS.contains(&kind) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unknown kind `{kind}` ({})", AUDIT_KINDS.join("|")),
+            )
+                .into());
+        }
+    }
     let principal = principal_of(&state, &headers).await?;
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    // The governance feed is a UNION of reviewed promotions + resolved
-    // contradictions; keep the source SQL in one place so the page and its
-    // total can never describe different sets.
+    // The governance feed is a UNION of reviewed promotions, resolved
+    // contradictions and answered disputes; keep the source SQL in one place so
+    // the page and its total can never describe different sets.
     const AUDIT_FROM: &str = "FROM (
             SELECT 'promotion_review' AS kind, p.id, p.memory_id,
                    NULL::uuid AS memory_b,
@@ -1255,15 +1280,27 @@ pub(crate) async fn audit(
             WHERE f.resolved_at IS NOT NULL
             GROUP BY f.memory_id, f.resolution, f.resolved_by, f.resolved_at
          ) audit";
+    // The kind filter rides on BOTH queries — a NULL bind means "no filter", so
+    // there is exactly one predicate and `total` always counts the same set the
+    // page is drawn from. `total` is the whole (filtered) feed, never the page
+    // length: a client showing `events.length` as the backlog would report "50"
+    // forever.
+    const AUDIT_WHERE: &str = "WHERE ($3::text IS NULL OR kind = $3)";
     let rows = sqlx::query(&format!(
-        "SELECT * {AUDIT_FROM} ORDER BY at DESC LIMIT $1 OFFSET $2"
+        "SELECT * {AUDIT_FROM} {AUDIT_WHERE} ORDER BY at DESC LIMIT $1 OFFSET $2"
     ))
     .bind(limit)
     .bind(offset)
+    .bind(q.kind.as_deref())
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
-    let total: i64 = sqlx::query(&format!("SELECT count(*) AS n {AUDIT_FROM}"))
+    // $1/$2 are unused here but kept in the bind order so the two queries share
+    // one predicate string.
+    let total: i64 = sqlx::query(&format!("SELECT count(*) AS n {AUDIT_FROM} {AUDIT_WHERE}"))
+        .bind(limit)
+        .bind(offset)
+        .bind(q.kind.as_deref())
         .fetch_one(&mut *tx)
         .await
         .map_err(internal)?
