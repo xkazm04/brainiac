@@ -20,15 +20,6 @@ use brainiac_store::memories::NewMemory;
 use brainiac_store::Store;
 use uuid::Uuid;
 
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
-
 struct Ctx {
     store: Store,
     org_id: Uuid,
@@ -169,7 +160,8 @@ async fn a_team_page_is_invisible_to_a_non_member() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
     team_page(&ctx).await;
 
@@ -215,7 +207,7 @@ async fn mcp_doc_get_serves_published_pages_and_refuses_unsigned_drafts() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
     team_page(&ctx).await;
 
@@ -360,7 +352,7 @@ async fn entity_pages_scaffold_only_where_knowledge_actually_crosses_teams() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     let p = brainiac_pipeline::pipeline_principal(ctx.org_id);
@@ -449,6 +441,7 @@ async fn entity_pages_scaffold_only_where_knowledge_actually_crosses_teams() {
                 visibility: Visibility::Org,
                 status: MemoryStatus::Canonical,
                 kind: MemoryKind::Fact,
+                title: None,
                 content: content.clone(),
                 lifecycle: Lifecycle::Shipped,
                 detail_md: None,

@@ -20,24 +20,18 @@ fn uuid(n: u8) -> Uuid {
     Uuid::from_bytes([n; 16])
 }
 
-// Tests share one database: serialize them so truncate/seed phases never
-// interleave (cargo runs test fns in parallel by default).
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
 struct Ctx {
     store: Store,
     admin: sqlx::PgPool,
 }
 
 async fn setup() -> Option<(Ctx, tokio::sync::MutexGuard<'static, ()>)> {
-    let guard = DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
     let Some(url) = database_url() else {
         eprintln!("SKIP: DATABASE_URL not set — store integration tests need Postgres");
         return None;
     };
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin pool");
     // Idempotent replay: wipe tenant data (order-insensitive via CASCADE).
@@ -110,6 +104,7 @@ async fn seed(ctx: &Ctx) {
             visibility: vis,
             status: MemoryStatus::Canonical,
             kind: MemoryKind::Fact,
+            title: None,
             lifecycle: Default::default(),
             detail_md: None,
             content: content.to_string(),
@@ -285,6 +280,7 @@ async fn identifier_query_ranks_exact_match_first() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         lifecycle: Default::default(),
         detail_md: None,
         content: content.to_string(),
@@ -370,6 +366,7 @@ async fn stage5_reranker_reorders_survivors() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         lifecycle: Default::default(),
         detail_md: None,
         content: content.to_string(),
@@ -485,6 +482,7 @@ async fn ensure_version_auto_creates_hnsw_index_for_new_dim() {
             visibility: Visibility::Org,
             status: MemoryStatus::Canonical,
             kind: MemoryKind::Fact,
+            title: None,
             lifecycle: Default::default(),
             detail_md: None,
             content: content.to_string(),
@@ -563,6 +561,7 @@ async fn czech_fts_honors_language_config() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         lifecycle: Default::default(),
         detail_md: None,
         content: "nasazení nové platební služby do produkčního prostředí vyžaduje schválení".into(),
@@ -739,6 +738,7 @@ async fn graph_surfaced_hit_scores_and_carries_anchors() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         lifecycle: Default::default(),
         detail_md: None,
         content: content.to_string(),
@@ -1176,6 +1176,7 @@ async fn fresh_memory_outranks_stale_near_duplicate() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         lifecycle: Default::default(),
         detail_md: None,
         content: content.to_string(),
@@ -1243,18 +1244,17 @@ async fn fresh_memory_outranks_stale_near_duplicate() {
     let order: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
     let pos_fresh = order.iter().position(|id| *id == uuid(171));
     let pos_stale = order.iter().position(|id| *id == uuid(170));
-    assert!(
-        pos_fresh.is_some() && pos_stale.is_some(),
-        "both near-duplicates should surface, got {order:?}"
-    );
+    let (Some(pos_fresh), Some(pos_stale)) = (pos_fresh, pos_stale) else {
+        panic!("both near-duplicates should surface, got {order:?}");
+    };
     assert!(
         pos_fresh < pos_stale,
         "fresh memory must outrank the stale near-duplicate at equal relevance: \
          fresh@{pos_fresh:?} stale@{pos_stale:?}"
     );
     // The recency edge stays tiebreak-scale: the blended scores are a hair apart.
-    let s_fresh = hits[pos_fresh.unwrap()].score;
-    let s_stale = hits[pos_stale.unwrap()].score;
+    let s_fresh = hits[pos_fresh].score;
+    let s_stale = hits[pos_stale].score;
     assert!(
         s_fresh > s_stale && (s_fresh - s_stale) < 0.01,
         "recency is a nudge, not a landslide: {s_fresh} vs {s_stale}"
@@ -1383,4 +1383,117 @@ async fn feedback_claims_queue_and_resolution() {
     );
 
     let _ = &ctx.admin;
+}
+
+/// The raw-TTL sweep (migration 0024): a raw memory past the TTL flips to
+/// `rejected` — dropped from every retrieval path but preserved — and leaves a
+/// `promotions` audit row naming the sweep as the actor. Younger raw memories
+/// and old-but-reviewed memories are untouched, and a second pass finds nothing
+/// (idempotent).
+#[tokio::test]
+async fn raw_ttl_sweep_expires_only_neglected_raw_and_leaves_an_audit_trail() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    let p = pay_dev();
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let mk = |id: u8, status: MemoryStatus, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status,
+        kind: MemoryKind::Fact,
+        title: None,
+        lifecycle: Default::default(),
+        detail_md: None,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: Some(0.9),
+        provenance_id: None,
+    };
+    memories::insert(
+        c,
+        &mk(230, MemoryStatus::Raw, "old raw — declined by neglect"),
+    )
+    .await
+    .expect("old raw");
+    memories::insert(
+        c,
+        &mk(231, MemoryStatus::Raw, "young raw — genuinely pending"),
+    )
+    .await
+    .expect("young raw");
+    memories::insert(
+        c,
+        &mk(
+            232,
+            MemoryStatus::Canonical,
+            "old canonical — age is not neglect once reviewed",
+        ),
+    )
+    .await
+    .expect("old canonical");
+    tx.commit().await.expect("commit");
+
+    // Age the old pair past the TTL. created_at is not caller-writable, so this
+    // goes through the admin pool — the same pool the sweep scheduler runs on.
+    sqlx::query("UPDATE memories SET created_at = now() - interval '40 days' WHERE id = ANY($1)")
+        .bind(vec![uuid(230), uuid(232)])
+        .execute(&ctx.admin)
+        .await
+        .expect("age");
+
+    let (expired, orgs_touched) = memories::expire_stale_raw(&ctx.admin, 30)
+        .await
+        .expect("sweep");
+    assert_eq!(
+        (expired, orgs_touched),
+        (1, 1),
+        "exactly the old RAW memory expires — not the young raw, not the old canonical"
+    );
+
+    let statuses: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, status::text FROM memories WHERE id = ANY($1) ORDER BY id")
+            .bind(vec![uuid(230), uuid(231), uuid(232)])
+            .fetch_all(&ctx.admin)
+            .await
+            .expect("statuses");
+    let status_of = |id: Uuid| {
+        statuses
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, s)| s.as_str())
+            .unwrap_or("missing")
+    };
+    assert_eq!(status_of(uuid(230)), "rejected");
+    assert_eq!(status_of(uuid(231)), "raw");
+    assert_eq!(status_of(uuid(232)), "canonical");
+
+    // "Who decided this belief goes away" must have a named answer.
+    let audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM promotions
+         WHERE memory_id = $1 AND from_status = 'raw' AND to_status = 'rejected'
+           AND policy_decision = 'auto_rejected' AND policy_rule = 'raw_ttl_sweep'",
+    )
+    .bind(uuid(230))
+    .fetch_one(&ctx.admin)
+    .await
+    .expect("audit");
+    assert_eq!(audit, 1, "the expiry must leave exactly one audit row");
+
+    let (again, _) = memories::expire_stale_raw(&ctx.admin, 30)
+        .await
+        .expect("second sweep");
+    assert_eq!(
+        again, 0,
+        "a second pass finds nothing — rejected is terminal here"
+    );
 }

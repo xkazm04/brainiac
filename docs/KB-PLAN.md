@@ -114,8 +114,11 @@ Ordered roughly by leverage; none block the phase ladder.
 5. **Team-space Confluence mapping** (relaxes D5): per-team spaces with
    visibility mapping, only after the leak eval covers the mapping matrix.
 6. **Substrate trust workstream** (owned by UAT follow-ups, blocking KB3 GA):
-   extraction recall per provider, confidence calibration for auto-promotion,
-   raw-memory TTL sweep, review-SLO alerting.
+   extraction recall per provider, confidence calibration for auto-promotion.
+   ~~raw-memory TTL sweep~~ and ~~review-SLO alerting~~ shipped 2026-07-15
+   (see status log: `raw_ttl` + `alerts` sweeps, migration 0024, both OFF by
+   default); the eval side gained `--samples` mean gating the RATE_DELTA
+   comment promised.
 7. **Scoped/contractor visibility tier + cross-team observability role** (UAT
    structural gap): affects both retrieval and the publish visibility rule —
    design once, apply to both layers.
@@ -352,6 +355,32 @@ Ordered roughly by leverage; none block the phase ladder.
         the human's prose in the published revision. Measured propagation on one
         page: ~95ms with a mock composer.
       - Full Rust suite green (exit 0, serial).
+- [x] **Hygiene + substrate wave** (2026-07-15) — the backlog's operational tail.
+      - `brainiac_store::test_support::serial_guard`: one session-level Postgres
+        advisory lock on a dedicated single-connection pool, held for process
+        life, plus an in-process mutex — adopted by every `*_pg.rs` suite. Two
+        test binaries (two agent sessions, or local racing CI) can no longer
+        truncate the shared database out from under each other.
+      - `migrations/0024_raw_ttl_sweep.sql` + `memories::expire_stale_raw`: raw
+        memories past a TTL (default 30d, `BRAINIAC_RAW_TTL_DAYS`) flip to
+        `rejected` with a `promotions` audit row naming the sweep — "declined by
+        neglect" made explicit instead of served forever. Seeded OFF.
+      - `alerts` sweep: per-org breaches (review SLO, currency floor, cross-team
+        contradictions, pages dirty >24h) pushed to `BRAINIAC_ALERT_WEBHOOK_URL`
+        (Slack-compatible `{"text": …}` + structured breaches). Reads the same
+        `compute_health_core` the dashboard renders. No webhook + breaches =
+        loud log + honest sweep detail, never a silent skip. Seeded OFF.
+      - Multi-sample eval: `eval --profile extraction|docs --samples N` resets
+        the tenant between runs, gates hard failures on EVERY sample (one leak
+        in one run of five is still a leak), and gates rates on the MEAN with a
+        `max(0.05, 0.15/√N)` band — the tightening the single-run RATE_DELTA
+        comment promised.
+      - CI: console job (tsc, vitest, build into `.next-build`); clippy clean at
+        `-D warnings` across the workspace; `docs/KNOWLEDGE-BASE.md` route drift
+        fixed (`/console?m=health`).
+      - Completed the concurrent session's memory-title plumbing (migration
+        0023): `title: None` across test initializers, lint fixes, sweep-count
+        pin in `console_pg` updated for 0024. Full pg suite green.
 
 ## The KB line is complete
 

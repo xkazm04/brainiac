@@ -12,15 +12,6 @@ use chrono::Utc;
 use sqlx::Row;
 use uuid::Uuid;
 
-/// Serialize against the other pg test binaries that truncate this shared DB.
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
-
 async fn seed_org(
     store: &Store,
     embedder: &dyn Embedder,
@@ -51,6 +42,7 @@ async fn seed_org(
                 visibility: Visibility::Org,
                 status: MemoryStatus::Canonical,
                 kind: MemoryKind::Fact,
+                title: None,
                 lifecycle: Default::default(),
                 detail_md: None,
                 content: content.to_string(),
@@ -95,7 +87,8 @@ async fn reembed_backfills_all_orgs_to_new_version() {
         eprintln!("SKIP: DATABASE_URL not set — reembed test needs Postgres");
         return;
     };
-    let _guard = db_guard().await;
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(

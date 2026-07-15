@@ -18,20 +18,10 @@ use brainiac_store::publishing::{self, PublishTarget};
 use brainiac_store::Store;
 use uuid::Uuid;
 
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
-
 struct Ctx {
     store: Store,
     org_id: Uuid,
     team_id: Uuid,
-    user_id: Uuid,
     /// Where the git target writes.
     out_dir: std::path::PathBuf,
     target_id: Uuid,
@@ -96,7 +86,6 @@ async fn setup(url: &str, kb_on: bool) -> Ctx {
         store,
         org_id,
         team_id,
-        user_id,
         out_dir,
         target_id,
     }
@@ -118,6 +107,7 @@ async fn healthy_corpus(ctx: &Ctx) {
                 visibility: Visibility::Org,
                 status: MemoryStatus::Canonical,
                 kind: MemoryKind::Fact,
+                title: None,
                 content: format!("fact number {i}"),
                 lifecycle: Lifecycle::Shipped,
                 detail_md: None,
@@ -186,7 +176,8 @@ async fn nothing_is_published_until_the_org_opts_in() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url, false).await; // KB layer OFF
     healthy_corpus(&ctx).await;
     published_page(&ctx, "retry-policy", Visibility::Org).await;
@@ -208,7 +199,7 @@ async fn only_org_visible_pages_leave_the_building() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url, true).await;
     healthy_corpus(&ctx).await;
     published_page(&ctx, "org-page", Visibility::Org).await;
@@ -242,7 +233,7 @@ async fn a_rotting_corpus_trips_the_breaker_and_pages_hold() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url, true).await;
     healthy_corpus(&ctx).await;
     published_page(&ctx, "retry-policy", Visibility::Org).await;
@@ -326,7 +317,7 @@ async fn publishing_the_same_revision_twice_is_a_no_op() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url, true).await;
     healthy_corpus(&ctx).await;
     let doc_id = published_page(&ctx, "retry-policy", Visibility::Org).await;

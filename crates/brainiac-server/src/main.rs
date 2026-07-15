@@ -102,6 +102,13 @@ enum Command {
         /// deliberate act — commit the diff with a reason.
         #[arg(long)]
         write_baseline: Option<String>,
+        /// Run the profile N times (tenant reset between runs) and gate on the
+        /// MEAN. Real-model extraction/composition is high-variance (recall
+        /// spanned 0.25–0.54 across identical single runs); the mean of N runs
+        /// tightens the honest regression band by ~1/√N. `extraction` and
+        /// `docs` profiles only; each sample costs a full real-model run.
+        #[arg(long, default_value_t = 1)]
+        samples: usize,
     },
     /// Fixture-corpus tooling (lint, schema export). Pure filesystem — no
     /// database needed.
@@ -207,6 +214,7 @@ async fn main() -> Result<()> {
             diagnostics,
             baseline,
             write_baseline,
+            samples,
         } => {
             eval(
                 &fixtures,
@@ -218,6 +226,7 @@ async fn main() -> Result<()> {
                 diagnostics.as_deref(),
                 baseline.as_deref(),
                 write_baseline.as_deref(),
+                samples.max(1),
             )
             .await
         }
@@ -731,15 +740,20 @@ async fn compose_sweep(
 /// Three of its findings are absolute build failures, not scores: a leaked
 /// forbidden memory, an altered pinned section, a page that failed to pick up a
 /// superseding belief. Those are the promises the wiki is sold on.
+#[allow(clippy::too_many_arguments)] // an eval entrypoint wired once from the CLI dispatch
 async fn eval_docs(
     store: &Store,
+    admin: &sqlx::PgPool,
     fx: &brainiac_fixtures::Fixtures,
     embedder: &dyn Embedder,
     out: Option<&str>,
     baseline_path: Option<&str>,
     write_baseline_path: Option<&str>,
+    samples: usize,
 ) -> Result<()> {
-    use brainiac_eval::docs_profile::{regression_failures, run, DocsBaseline};
+    use brainiac_eval::docs_profile::{
+        hard_failures, regression_failures, regression_failures_mean, run, DocsBaseline,
+    };
 
     let default: Arc<dyn brainiac_gateway::ChatProvider> =
         brainiac_gateway::QwenProvider::from_env()
@@ -751,7 +765,95 @@ async fn eval_docs(
             )?;
     let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
 
-    let report = run(store, fx, embedder, &providers).await?;
+    // Multi-sample: tenant reset between runs (seeding is INSERT-based, so a
+    // second run on a dirty tenant would collide on ids rather than resample).
+    // Hard gates apply to EVERY sample; only the soft rates are averaged.
+    let mut runs = Vec::with_capacity(samples);
+    for i in 0..samples {
+        if i > 0 {
+            reset_tenant(admin).await?;
+        }
+        let r = run(store, fx, embedder, &providers).await?;
+        tracing::info!(
+            sample = i + 1,
+            of = samples,
+            coverage = r.coverage,
+            hallucination_rate = r.hallucination_rate,
+            "docs sample"
+        );
+        let hard = hard_failures(&r);
+        if !hard.is_empty() {
+            eprintln!(
+                "DOCS HARD GATES FAILED on sample {} of {}:\n{}",
+                i + 1,
+                samples,
+                hard.join("\n")
+            );
+            std::process::exit(1);
+        }
+        runs.push(r);
+    }
+
+    if samples > 1 {
+        let n = runs.len() as f64;
+        let mean_cov = runs.iter().map(|r| r.coverage).sum::<f64>() / n;
+        let mean_hall = runs.iter().map(|r| r.hallucination_rate).sum::<f64>() / n;
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "samples": runs.len(),
+            "mean_coverage": mean_cov,
+            "mean_hallucination_rate": mean_hall,
+            "runs": runs,
+        }))?;
+        match out {
+            Some(path) => {
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, &json)?;
+                tracing::info!(path, "multi-sample docs report written");
+            }
+            None => println!("{json}"),
+        }
+        tracing::info!(
+            samples = runs.len(),
+            mean_coverage = mean_cov,
+            mean_hallucination = mean_hall,
+            "composition quality (mean of samples; hard gates held on every sample)"
+        );
+        if let Some(path) = write_baseline_path {
+            let mut baseline = DocsBaseline::from_report(&runs[0]);
+            baseline.coverage = mean_cov;
+            baseline.hallucination_rate = mean_hall;
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+            tracing::info!(
+                path,
+                "docs baseline recalibrated from {} samples",
+                runs.len()
+            );
+        }
+        if let Some(path) = baseline_path {
+            let baseline: DocsBaseline = serde_json::from_str(
+                &std::fs::read_to_string(path)
+                    .with_context(|| format!("reading baseline {path}"))?,
+            )
+            .context("parsing baseline")?;
+            let regressions = regression_failures_mean(runs.len(), mean_cov, mean_hall, &baseline);
+            if !regressions.is_empty() {
+                eprintln!(
+                    "DOCS GATES FAILED (mean, baseline {path}):\n{}",
+                    regressions.join("\n")
+                );
+                std::process::exit(1);
+            }
+            tracing::info!(path, "docs regression gates passed on the mean");
+        }
+        return Ok(());
+    }
+
+    let report = runs.pop().expect("at least one sample");
 
     let json = serde_json::to_string_pretty(&report)?;
     match out {
@@ -810,6 +912,7 @@ async fn eval_docs(
 /// LLM extraction quality, so it REQUIRES a real provider — it errors clearly
 /// without one rather than silently scoring a mock. Runs the extract stage on
 /// Qwen (per-stage overrides honoured), tags the report with the extract model.
+#[allow(clippy::too_many_arguments)] // an eval entrypoint wired once from the CLI dispatch
 async fn eval_extraction(
     store: &Store,
     admin: &sqlx::PgPool,
@@ -818,8 +921,11 @@ async fn eval_extraction(
     out: Option<&str>,
     baseline_path: Option<&str>,
     write_baseline_path: Option<&str>,
+    samples: usize,
 ) -> Result<()> {
-    use brainiac_eval::extraction_profile::{regression_failures, run, ExtractionBaseline};
+    use brainiac_eval::extraction_profile::{
+        aggregate, regression_failures, regression_failures_multi, run, ExtractionBaseline,
+    };
 
     let default: Arc<dyn brainiac_gateway::ChatProvider> = brainiac_gateway::QwenProvider::from_env()
         .map(|p| Arc::new(p) as Arc<dyn brainiac_gateway::ChatProvider>)
@@ -830,7 +936,79 @@ async fn eval_extraction(
         )?;
     let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
 
-    let report = run(store, admin, fx, embedder, &providers).await?;
+    // Multi-sample: tenant reset between runs, because extraction is idempotent
+    // per source — without the reset every sample after the first would dedupe
+    // to zero new memories and report perfect, meaningless stability.
+    let mut runs = Vec::with_capacity(samples);
+    for i in 0..samples {
+        if i > 0 {
+            reset_tenant(admin).await?;
+        }
+        let r = run(store, admin, fx, embedder, &providers).await?;
+        tracing::info!(
+            sample = i + 1,
+            of = samples,
+            recall = r.recall,
+            precision = r.precision,
+            "extraction sample"
+        );
+        runs.push(r);
+    }
+
+    if samples > 1 {
+        let agg = aggregate(runs);
+        let json = serde_json::to_string_pretty(&agg)?;
+        match out {
+            Some(path) => {
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, &json)?;
+                tracing::info!(path, "multi-sample extraction report written");
+            }
+            None => println!("{json}"),
+        }
+        tracing::info!(
+            samples = agg.samples,
+            mean_recall = agg.mean_recall,
+            mean_precision = agg.mean_precision,
+            recall_spread = format!("{:.2}–{:.2}", agg.min_recall, agg.max_recall),
+            gate_delta = agg.gate_delta,
+            "extraction quality (mean of samples)"
+        );
+        if let Some(path) = write_baseline_path {
+            let baseline = ExtractionBaseline::from_multi(&agg);
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+            tracing::info!(
+                path,
+                "extraction baseline recalibrated from {} samples",
+                agg.samples
+            );
+        }
+        if let Some(path) = baseline_path {
+            let baseline: ExtractionBaseline = serde_json::from_str(
+                &std::fs::read_to_string(path)
+                    .with_context(|| format!("reading baseline {path}"))?,
+            )
+            .context("parsing baseline")?;
+            let regressions = regression_failures_multi(&agg, &baseline);
+            if !regressions.is_empty() {
+                eprintln!(
+                    "REGRESSION GATES FAILED (mean of {} samples, baseline {path}):\n{}",
+                    agg.samples,
+                    regressions.join("\n")
+                );
+                std::process::exit(1);
+            }
+            tracing::info!(path, "extraction regression gates passed on the mean");
+        }
+        return Ok(());
+    }
+
+    let report = runs.pop().expect("at least one sample");
 
     let json = serde_json::to_string_pretty(&report)?;
     match out {
@@ -882,6 +1060,24 @@ async fn eval_extraction(
     Ok(())
 }
 
+/// Wipe the eval tenant back to empty — the reset between multi-sample runs.
+/// The extraction pipeline is idempotent per source (redelivery dedup), so
+/// WITHOUT this a second sample would extract nothing and report a perfect,
+/// meaningless zero-variance score.
+async fn reset_tenant(admin: &sqlx::PgPool) -> Result<()> {
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, canonical_entity_embeddings, entity_links,
+                  edges, contradictions, promotions, memories, canonical_entities, entities,
+                  provenance, sources, team_members, users, teams, orgs, pipeline_runs,
+                  document_dependencies, document_publications, document_revisions,
+                  document_sections, documents, publish_targets,
+                  queue.jobs, queue.archive CASCADE",
+    )
+    .execute(admin)
+    .await?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn eval(
     fixtures_dir: &str,
@@ -893,6 +1089,7 @@ async fn eval(
     diagnostics_out: Option<&str>,
     baseline_path: Option<&str>,
     write_baseline_path: Option<&str>,
+    samples: usize,
 ) -> Result<()> {
     anyhow::ensure!(
         matches!(
@@ -908,14 +1105,7 @@ async fn eval(
     // The queue tables are truncated too so the `pipeline` profile starts from
     // an empty ingest queue.
     let admin = sqlx::PgPool::connect(&url).await?;
-    sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, canonical_entity_embeddings, entity_links,
-                  edges, contradictions, promotions, memories, canonical_entities, entities,
-                  provenance, sources, team_members, users, teams, orgs, pipeline_runs,
-                  queue.jobs, queue.archive CASCADE",
-    )
-    .execute(&admin)
-    .await?;
+    reset_tenant(&admin).await?;
 
     let store = Store::connect(&url).await?;
     let fx = brainiac_fixtures::load(fixtures_dir).context("loading fixtures")?;
@@ -957,11 +1147,13 @@ async fn eval(
     if profile == "docs" {
         return eval_docs(
             &store,
+            &admin,
             &fx,
             embedder.as_ref(),
             out,
             baseline_path,
             write_baseline_path,
+            samples,
         )
         .await;
     }
@@ -975,6 +1167,7 @@ async fn eval(
             out,
             baseline_path,
             write_baseline_path,
+            samples,
         )
         .await;
     }

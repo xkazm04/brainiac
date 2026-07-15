@@ -28,6 +28,8 @@ async fn mcp_handshake_and_tools() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(

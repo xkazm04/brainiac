@@ -1641,6 +1641,12 @@ export interface components {
             team: string;
             /** Format: uuid */
             team_id: string;
+            /**
+             * @description A short label for the claim. `None` for anything captured before
+             *     migration 0023, and for anything the extractor wrote (it does not
+             *     produce one yet) — readers fall back to `content`.
+             */
+            title?: string | null;
             valid_from?: string | null;
             valid_to?: string | null;
             visibility: string;
@@ -2132,7 +2138,7 @@ export interface components {
             cadence_secs: number;
             /** @description Whether the scheduler runs this sweep on its cadence. */
             enabled: boolean;
-            /** @description 'divergence' | 'health_snapshot'. */
+            /** @description 'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts'. */
             kind: string;
             /** @description Human summary of the last run ("7 clusters, 1 divergences") or its error. */
             last_detail?: string | null;
@@ -3033,7 +3039,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Sweep kind: divergence | health_snapshot */
+                /** @description Sweep kind: divergence | health_snapshot | raw_ttl | alerts */
                 kind: string;
             };
             cookie?: never;
@@ -3067,7 +3073,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Sweep kind: divergence | health_snapshot */
+                /** @description Sweep kind: divergence | health_snapshot | raw_ttl | alerts */
                 kind: string;
             };
             cookie?: never;

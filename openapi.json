@@ -927,7 +927,7 @@
           {
             "name": "kind",
             "in": "path",
-            "description": "Sweep kind: divergence | health_snapshot",
+            "description": "Sweep kind: divergence | health_snapshot | raw_ttl | alerts",
             "required": true,
             "schema": {
               "type": "string"
@@ -972,7 +972,7 @@
           {
             "name": "kind",
             "in": "path",
-            "description": "Sweep kind: divergence | health_snapshot",
+            "description": "Sweep kind: divergence | health_snapshot | raw_ttl | alerts",
             "required": true,
             "schema": {
               "type": "string"
@@ -3836,6 +3836,13 @@
             "type": "string",
             "format": "uuid"
           },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short label for the claim. `None` for anything captured before\nmigration 0023, and for anything the extractor wrote (it does not\nproduce one yet) — readers fall back to `content`."
+          },
           "valid_from": {
             "type": [
               "string",
@@ -5146,7 +5153,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "'divergence' | 'health_snapshot'."
+            "description": "'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts'."
           },
           "last_detail": {
             "type": [

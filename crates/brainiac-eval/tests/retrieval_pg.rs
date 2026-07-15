@@ -12,17 +12,6 @@ use brainiac_eval::gates::{regression_failures, Baseline};
 use brainiac_eval::{retrieval_profile, seed};
 use brainiac_store::Store;
 
-/// These tests share one database (truncate + seed), so serialize them —
-/// cargo runs test fns in parallel by default.
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
-
 async fn truncate(admin: &sqlx::PgPool) {
     sqlx::query(
         "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
@@ -40,7 +29,8 @@ async fn retrieval_profile_end_to_end() {
         eprintln!("SKIP: DATABASE_URL not set — eval integration test needs Postgres");
         return;
     };
-    let _guard = db_guard().await;
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
 
     // Fresh tenant slate (admin connection; the store role can't TRUNCATE).
@@ -163,7 +153,7 @@ async fn reranker_axis_tags_and_gates() {
         eprintln!("SKIP: DATABASE_URL not set — reranker eval test needs Postgres");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate(&admin).await;

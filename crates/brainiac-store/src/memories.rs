@@ -19,6 +19,10 @@ pub struct NewMemory {
     pub status: MemoryStatus,
     pub kind: MemoryKind,
     pub content: String,
+    /// A short label for the claim — what the archive anchors a row on.
+    /// `None` is normal: the extractor does not write one yet, and readers fall
+    /// back to `content` (migration 0023).
+    pub title: Option<String>,
     /// KB-PLAN D2. Callers with no signal use [`Lifecycle::default`] (shipped).
     pub lifecycle: Lifecycle,
     /// KB-PLAN D3. `None` unless the source carried structure worth preserving.
@@ -41,9 +45,9 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     sqlx::query(
         "INSERT INTO memories
             (id, org_id, team_id, owner_user_id, visibility, status, kind,
-             content, lifecycle, detail_md, language, valid_from, valid_to,
+             content, title, lifecycle, detail_md, language, valid_from, valid_to,
              superseded_by, confidence, provenance_id)
-         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
     )
     .bind(m.id)
     .bind(m.org_id)
@@ -53,6 +57,7 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     .bind(m.status.as_str())
     .bind(m.kind.as_str())
     .bind(&m.content)
+    .bind(&m.title)
     .bind(m.lifecycle.as_str())
     .bind(&m.detail_md)
     .bind(&m.language)
@@ -64,6 +69,62 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Expire RAW memories older than `ttl_days` to `rejected` — the raw-TTL sweep
+/// (UAT P0.3). Cross-org by design: runs on the RLS-bypassing admin pool from
+/// the sweep scheduler, exactly like the other operator sweeps.
+///
+/// Why `rejected` and not deletion: rejected drops the row from every retrieval
+/// path (the one standing exclusion) while preserving it for audit — and each
+/// expiry leaves a `promotions` row naming this sweep, so "who decided this
+/// belief goes away" has the same answer shape as every other status change:
+/// nobody-in-particular is never the answer, a named actor is, and here the
+/// actor is the org's own configured janitor.
+///
+/// Why raw memories matter at all: default retrieval excludes only `rejected`,
+/// so an unreviewed raw belief is SERVED — with implied authority — for as long
+/// as it exists. Auto-capture creates them faster than humans review them; past
+/// the TTL the honest reading of "nobody has looked at this in a month" is not
+/// "pending", it is "declined by neglect", and the corpus should say so.
+///
+/// Returns (memories expired, orgs touched).
+pub async fn expire_stale_raw(pool: &sqlx::PgPool, ttl_days: i64) -> Result<(u64, u64)> {
+    let mut tx = pool.begin().await?;
+    let rows = sqlx::query(
+        "WITH doomed AS (
+             SELECT id, org_id FROM memories
+             WHERE status = 'raw'
+               AND deleted_at IS NULL
+               AND created_at < now() - make_interval(days => $1::int)
+             FOR UPDATE SKIP LOCKED
+         ),
+         expired AS (
+             UPDATE memories m
+             SET status = 'rejected'::memory_status, updated_at = now()
+             FROM doomed d WHERE m.id = d.id
+             RETURNING m.id, m.org_id
+         ),
+         audited AS (
+             INSERT INTO promotions
+                 (id, org_id, memory_id, from_status, to_status,
+                  policy_decision, policy_rule, reviewed_at)
+             SELECT gen_random_uuid(), e.org_id, e.id,
+                    'raw'::memory_status, 'rejected'::memory_status,
+                    'auto_rejected', 'raw_ttl_sweep', now()
+             FROM expired e
+             RETURNING 1
+         )
+         SELECT count(*) AS expired, count(DISTINCT org_id) AS orgs FROM expired",
+    )
+    .bind(ttl_days)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok((
+        rows.get::<i64, _>("expired") as u64,
+        rows.get::<i64, _>("orgs") as u64,
+    ))
 }
 
 pub async fn ensure_embedding_version(

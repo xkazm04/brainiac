@@ -2,6 +2,7 @@
 //! binary (main.rs) wires these into serve/worker/eval subcommands; tests
 //! boot the same router directly.
 
+pub mod alerts;
 pub mod auth;
 pub mod console;
 pub mod docs;

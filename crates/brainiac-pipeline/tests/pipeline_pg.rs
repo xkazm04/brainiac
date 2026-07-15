@@ -14,18 +14,6 @@ use brainiac_store::Store;
 use serde_json::json;
 use uuid::Uuid;
 
-/// These tests share one database (truncate + seed), so serialize them —
-/// cargo runs test fns in parallel by default, which would let one test's
-/// TRUNCATE tear down another's seed mid-run.
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
-
 fn gold_extraction_json(fx: &Fixtures, transcript_id: &str) -> String {
     let t = fx
         .transcripts
@@ -116,7 +104,8 @@ async fn full_pipeline_over_seed_transcripts() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -444,7 +433,7 @@ async fn failed_job_records_a_failed_run_row() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate_all(&admin).await;
@@ -551,7 +540,7 @@ async fn supersession_serves_only_the_winner() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -602,6 +591,7 @@ async fn supersession_serves_only_the_winner() {
         visibility: Visibility::Org,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         lifecycle: Default::default(),
         detail_md: None,
         content: content.to_string(),
@@ -731,7 +721,7 @@ async fn alias_capture_and_resolution() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -929,7 +919,7 @@ async fn reprocessing_source_is_idempotent() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate_all(&admin).await;
@@ -1036,7 +1026,7 @@ async fn malformed_extraction_repairs_once() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate_all(&admin).await;
@@ -1119,7 +1109,7 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate_all(&admin).await;
@@ -1230,7 +1220,7 @@ async fn long_transcript_captures_head_and_tail() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate_all(&admin).await;
@@ -1361,7 +1351,7 @@ async fn extraction_firewall_types_entities_and_relations() {
         eprintln!("SKIP: DATABASE_URL not set — extraction firewall test needs Postgres");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -1531,7 +1521,7 @@ async fn batch_jobs_process_concurrently() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     truncate_all(&admin).await;

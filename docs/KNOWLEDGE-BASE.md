@@ -110,7 +110,8 @@ shipped — `0015`.)
 
 ## 5. Health-gated publishing (built — KB3 — and switched off)
 
-The Knowledge Health composite is **live today** at `/health`: a score with four
+The Knowledge Health composite is **live today** at `/console?m=health` (the old
+`/health` path redirects): a score with four
 pillars — consistency, currency, liquidity, governance — over the real corpus.
 
 It is now also an **actuator**. Before any *external* publish, the currency and
@@ -208,7 +209,7 @@ its status log, not an independent claim.
 
 | Phase | What it is | Status |
 |---|---|---|
-| **KB0** — substrate | Memory `lifecycle` facet + `detail_md` (migration `0015`) end-to-end: core types, extraction prompt + facet firewall, store, retrieval, fixtures/gold. Knowledge Health console page at `/health`. | **shipped** (2026-07-14) — extraction eval gate passed on real qwen-max: recall 0.381 / precision 0.727 vs a 0.417 / 0.806 baseline, inside the gate. One noisy sample: it shows no *detectable* regression, it does not prove the facets are free. |
+| **KB0** — substrate | Memory `lifecycle` facet + `detail_md` (migration `0015`) end-to-end: core types, extraction prompt + facet firewall, store, retrieval, fixtures/gold. Knowledge Health console page at `/console?m=health`. | **shipped** (2026-07-14) — extraction eval gate passed on real qwen-max: recall 0.381 / precision 0.727 vs a 0.417 / 0.806 baseline, inside the gate. One noisy sample: it shows no *detectable* regression, it does not prove the facets are free. |
 | **KB1** — document layer core | `documents` / `document_sections` / `document_revisions` / `document_dependencies` + RLS; the compose worker; dirty-marking; `[m:uuid]` citations; diff + auto-publish policy. | **shipped** (2026-07-14) — the `docs` eval profile passed on real qwen-max: coverage 1.0, hallucination 0.0, and **zero** leaks, pin violations, staleness failures and auto-published hallucinations. Those four are build failures, not scores. |
 | **KB2** — read surfaces | Console page reader (markdown sanitized *by construction* — the renderer has no raw-HTML node kind), per-claim provenance chips, revision history, MCP `doc_get` / `doc_search` (read-only: agents propose memories, never pages), entity-page auto-scaffolding at ≥4 org memories across ≥2 teams. | **shipped** (2026-07-14). Deterministic mermaid entity-neighborhood: still deferred. |
 | **KB3** — publishing | `Publisher` trait, Git target, Confluence adapter (PAT, one-way, banner + backlinks), `kb:read` / `kb:publish` token scopes + org capability flag, health circuit breaker wired as an actuator. | **built, not enabled** (2026-07-14). Off by default; see the sequencing rule at the top. |

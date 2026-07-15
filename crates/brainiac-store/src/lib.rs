@@ -20,6 +20,7 @@ pub mod orgs;
 pub mod publishing;
 pub mod queue;
 pub mod retrieval;
+pub mod test_support;
 pub mod tokens;
 
 use anyhow::{Context, Result};

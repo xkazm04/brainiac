@@ -1634,23 +1634,25 @@ fn grade_of(score: i64) -> &'static str {
 /// behind it, RLS-scoped to the caller's org. Shared by the live report (GET) and
 /// the trend snapshot writer (POST) so the number a leader watches and the number
 /// recorded to history are computed one way, never two.
-struct HealthCore {
-    total: i64,
-    stale: i64,
-    org_wide: i64,
-    team_only: i64,
-    siloed: i64,
-    open_contra: i64,
-    cross_contra: i64,
-    canon: i64,
-    cross_entities: i64,
-    backlog: i64,
-    oldest: i64,
-    consistency: i64,
-    currency: i64,
-    liquidity: i64,
-    governance: i64,
-    score: i64,
+// pub(crate): the alert sweep (crate::alerts) evaluates the same org-true
+// numbers this report renders — one computation, two consumers, no drift.
+pub(crate) struct HealthCore {
+    pub(crate) total: i64,
+    pub(crate) stale: i64,
+    pub(crate) org_wide: i64,
+    pub(crate) team_only: i64,
+    pub(crate) siloed: i64,
+    pub(crate) open_contra: i64,
+    pub(crate) cross_contra: i64,
+    pub(crate) canon: i64,
+    pub(crate) cross_entities: i64,
+    pub(crate) backlog: i64,
+    pub(crate) oldest: i64,
+    pub(crate) consistency: i64,
+    pub(crate) currency: i64,
+    pub(crate) liquidity: i64,
+    pub(crate) governance: i64,
+    pub(crate) score: i64,
 }
 
 /// Compute the health pillars + signals.
@@ -1662,7 +1664,7 @@ struct HealthCore {
 /// scoping each query to one org, and it sees that org's TRUE totals (every
 /// visibility), independent of any viewer's vantage. The `$1 IS NULL OR …`
 /// shape lets one query serve both callers.
-async fn compute_health_core(
+pub(crate) async fn compute_health_core(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org_filter: Option<Uuid>,
 ) -> Result<HealthCore, HttpError> {
@@ -2551,6 +2553,10 @@ fn default_list_limit() -> i64 {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct MemoryRow {
     pub id: Uuid,
+    /// A short label for the claim. `None` for anything captured before
+    /// migration 0023, and for anything the extractor wrote (it does not
+    /// produce one yet) — readers fall back to `content`.
+    pub title: Option<String>,
     pub content: String,
     pub kind: String,
     pub status: String,
@@ -2577,6 +2583,7 @@ fn memory_row(r: &sqlx::postgres::PgRow) -> MemoryRow {
     };
     MemoryRow {
         id: r.get("id"),
+        title: r.get("title"),
         content: r.get("content"),
         kind: r.get("kind"),
         status: r.get("status"),
@@ -2635,7 +2642,7 @@ pub(crate) async fn memories_list(
                  AND (m.valid_to IS NULL OR m.valid_to > $4)))";
 
     let rows = sqlx::query(&format!(
-        "SELECT m.id, m.content, m.kind, m.status::text AS status,
+        "SELECT m.id, m.title, m.content, m.kind, m.status::text AS status,
                 m.visibility::text AS visibility, t.name AS team, m.team_id,
                 m.valid_from, m.valid_to, m.superseded_by, m.created_at, m.confidence
          FROM memories m JOIN teams t ON t.id = m.team_id
@@ -2745,7 +2752,7 @@ pub(crate) async fn memory_detail(
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
     let row = sqlx::query(
-        "SELECT m.id, m.content, m.kind, m.status::text AS status,
+        "SELECT m.id, m.title, m.content, m.kind, m.status::text AS status,
                 m.visibility::text AS visibility, t.name AS team, m.team_id,
                 m.valid_from, m.valid_to, m.superseded_by, m.created_at, m.confidence,
                 pv.actor_kind, pv.actor_id, pv.model_ref,

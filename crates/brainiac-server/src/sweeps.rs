@@ -59,7 +59,7 @@ fn clip_detail(s: &str) -> String {
 
 #[derive(Serialize, ToSchema)]
 pub struct SweepSchedule {
-    /// 'divergence' | 'health_snapshot'.
+    /// 'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts'.
     pub kind: String,
     /// Whether the scheduler runs this sweep on its cadence.
     pub enabled: bool,
@@ -144,7 +144,7 @@ pub(crate) async fn sweeps_list(
     put,
     path = "/v1/ops/sweeps/{kind}",
     tag = "ops",
-    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot")),
+    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot | raw_ttl | alerts")),
     request_body = UpdateSweepBody,
     description = "Enable/disable a sweep or retune its cadence. Enabling schedules it to run on the next scheduler tick. Admin scope.",
     responses(
@@ -195,7 +195,7 @@ pub(crate) async fn sweep_update(
     post,
     path = "/v1/ops/sweeps/{kind}/run",
     tag = "ops",
-    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot")),
+    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot | raw_ttl | alerts")),
     description = "Trigger a one-shot run now — marks the sweep due so the worker picks it up within ~20s. Works whether or not the sweep is enabled. Admin scope.",
     responses(
         (status = 200, description = "Run queued", body = RunSweepResponse),
@@ -273,6 +273,24 @@ async fn execute(admin: PgPool, provider: Arc<dyn ChatProvider>, kind: String) {
         "health_snapshot" => crate::console::snapshot_all_orgs(&admin)
             .await
             .map(|(_, detail)| detail),
+        // Raw memories nobody reviewed within the TTL are expired to `rejected`
+        // (dropped from retrieval, kept for audit) — "declined by neglect",
+        // recorded as such. TTL: BRAINIAC_RAW_TTL_DAYS, default 30.
+        "raw_ttl" => {
+            let ttl_days = std::env::var("BRAINIAC_RAW_TTL_DAYS")
+                .ok()
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .filter(|d| *d > 0)
+                .unwrap_or(30);
+            brainiac_store::memories::expire_stale_raw(&admin, ttl_days)
+                .await
+                .map(|(expired, orgs)| {
+                    format!("{expired} raw memories expired across {orgs} orgs (ttl {ttl_days}d)")
+                })
+        }
+        // Evaluate every org's health breaches and push them to the operator
+        // webhook — the sweep that makes "nothing went red" impossible.
+        "alerts" => crate::alerts::alert_sweep(&admin).await,
         other => Err(anyhow::anyhow!("unknown sweep kind '{other}'")),
     };
     let ms = start.elapsed().as_millis() as i64;

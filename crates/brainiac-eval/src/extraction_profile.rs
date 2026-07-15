@@ -165,6 +165,110 @@ pub fn regression_failures(r: &ExtractionReport, b: &ExtractionBaseline) -> Vec<
     f
 }
 
+// ── multi-sample: the "right long-term fix" the RATE_DELTA comment promised ──
+
+/// N runs of the profile, aggregated. Real qwen-max extraction is irreducibly
+/// high-variance (recall spanned 0.25–0.54 across identical configs), so a
+/// single run is a noisy sample and the honest single-run band is a wide 0.15.
+/// The mean of N runs shrinks that noise by ~1/√N, which lets the gate tighten
+/// without false alarms — the difference between "we can't tell" and "we can".
+#[derive(Debug, Clone, Serialize)]
+pub struct MultiSampleReport {
+    pub samples: usize,
+    pub embedding_model: String,
+    pub provider: String,
+    pub fixture_version: String,
+    pub mean_recall: f64,
+    pub mean_precision: f64,
+    pub mean_micro_f1: f64,
+    pub min_recall: f64,
+    pub max_recall: f64,
+    /// The regression band the mean was gated with: max(0.05, 0.15/√N).
+    pub gate_delta: f64,
+    /// Every run in full — the per-transcript misses are still the actionable
+    /// output, and averaging must not hide them.
+    pub runs: Vec<ExtractionReport>,
+}
+
+/// The mean's regression band: the single-run band shrunk by √N, floored at
+/// 0.05 (below that we'd be gating on fixture-sized noise, not the model).
+pub fn mean_gate_delta(samples: usize) -> f64 {
+    (RATE_DELTA / (samples.max(1) as f64).sqrt()).max(0.05)
+}
+
+pub fn aggregate(runs: Vec<ExtractionReport>) -> MultiSampleReport {
+    let n = runs.len().max(1) as f64;
+    let mean = |f: fn(&ExtractionReport) -> f64| runs.iter().map(f).sum::<f64>() / n;
+    MultiSampleReport {
+        samples: runs.len(),
+        embedding_model: runs
+            .first()
+            .map(|r| r.embedding_model.clone())
+            .unwrap_or_default(),
+        provider: runs.first().map(|r| r.provider.clone()).unwrap_or_default(),
+        fixture_version: runs
+            .first()
+            .map(|r| r.fixture_version.clone())
+            .unwrap_or_default(),
+        mean_recall: mean(|r| r.recall),
+        mean_precision: mean(|r| r.precision),
+        mean_micro_f1: mean(|r| r.micro_f1),
+        min_recall: runs.iter().map(|r| r.recall).fold(f64::INFINITY, f64::min),
+        max_recall: runs.iter().map(|r| r.recall).fold(0.0, f64::max),
+        gate_delta: mean_gate_delta(runs.len()),
+        runs,
+    }
+}
+
+/// Gate the MEANS against the committed baseline with the √N-tightened band.
+/// Same config-mismatch refusal as the single-run gate.
+pub fn regression_failures_multi(agg: &MultiSampleReport, b: &ExtractionBaseline) -> Vec<String> {
+    let mut f = Vec::new();
+    if agg.embedding_model != b.embedding_model || agg.provider != b.provider {
+        f.push(format!(
+            "config mismatch: run={}/{} baseline={}/{} — recalibrate instead of comparing across configs",
+            agg.provider, agg.embedding_model, b.provider, b.embedding_model
+        ));
+        return f;
+    }
+    let d = agg.gate_delta;
+    if agg.mean_recall < b.recall - d {
+        f.push(format!(
+            "mean recall over {} samples regressed: {:.3} < baseline {:.3} − {:.3}",
+            agg.samples, agg.mean_recall, b.recall, d
+        ));
+    }
+    if agg.mean_precision < b.precision - d {
+        f.push(format!(
+            "mean precision over {} samples regressed: {:.3} < baseline {:.3} − {:.3}",
+            agg.samples, agg.mean_precision, b.precision, d
+        ));
+    }
+    if agg.mean_micro_f1 < b.micro_f1 - d {
+        f.push(format!(
+            "mean micro-F1 over {} samples regressed: {:.3} < baseline {:.3} − {:.3}",
+            agg.samples, agg.mean_micro_f1, b.micro_f1, d
+        ));
+    }
+    f
+}
+
+impl ExtractionBaseline {
+    /// Recalibrate from a multi-sample aggregate: the baseline stores the MEANS,
+    /// so future single runs compare a sample to a mean (wide band) and future
+    /// multi-sample runs compare mean to mean (tight band).
+    pub fn from_multi(agg: &MultiSampleReport) -> Self {
+        Self {
+            embedding_model: agg.embedding_model.clone(),
+            provider: agg.provider.clone(),
+            fixture_version: agg.fixture_version.clone(),
+            recall: agg.mean_recall,
+            precision: agg.mean_precision,
+            micro_f1: agg.mean_micro_f1,
+        }
+    }
+}
+
 fn cosine(a: &[f32], b: &[f32]) -> f64 {
     let mut dot = 0.0f64;
     let mut na = 0.0f64;

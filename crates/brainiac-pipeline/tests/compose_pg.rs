@@ -30,15 +30,6 @@ use brainiac_store::Store;
 use std::sync::Arc;
 use uuid::Uuid;
 
-static DB_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn db_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    DB_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
-
 /// A composer that behaves like a well-behaved model: it cites every memory it
 /// was handed, and nothing else. Quality/hallucination behaviour of a REAL model
 /// is the `docs` eval profile's job (EVAL §2.6); these tests pin the plumbing and
@@ -137,6 +128,7 @@ fn memory(
         visibility,
         status: MemoryStatus::Canonical,
         kind: MemoryKind::Fact,
+        title: None,
         content: content.into(),
         lifecycle: Lifecycle::Shipped,
         detail_md: detail_md.map(|d| d.into()),
@@ -260,7 +252,8 @@ async fn org_page_cannot_see_team_private_memory() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     // Two memories about the same topic: one the org shares, one team-private.
@@ -331,7 +324,7 @@ async fn contradiction_resolution_propagates_to_the_page() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     let old = Uuid::new_v4();
@@ -427,7 +420,7 @@ async fn pinned_sections_survive_regeneration_byte_identical() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     const PINNED: &str = "Owned by payments. Ping #pay-oncall before changing anything here.";
@@ -496,7 +489,7 @@ async fn first_revision_needs_a_human_then_additive_recompose_auto_publishes() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     let a = Uuid::new_v4();
@@ -571,7 +564,7 @@ async fn detail_md_reaches_the_page_verbatim() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     const ARTIFACT: &str = "```yaml\nretry:\n  max_backoff: 30s\n  jitter: full\n```";
@@ -618,7 +611,7 @@ async fn an_inventing_model_cannot_auto_publish() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
-    let _guard = db_guard().await;
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     let ctx = setup(&url).await;
 
     let m = Uuid::new_v4();

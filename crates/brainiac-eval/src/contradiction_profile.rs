@@ -534,6 +534,7 @@ async fn seed_case(
                 visibility: Visibility::Org,
                 status: MemoryStatus::parse(&m.status).unwrap_or(MemoryStatus::Canonical),
                 kind: MemoryKind::parse(&m.kind).unwrap_or(MemoryKind::Fact),
+                title: m.title.clone(),
                 content: m.content.clone(),
                 lifecycle: brainiac_core::Lifecycle::parse(&m.lifecycle).unwrap_or_default(),
                 detail_md: m.detail_md.clone(),

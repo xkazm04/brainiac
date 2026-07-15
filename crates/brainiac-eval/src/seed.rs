@@ -133,6 +133,7 @@ pub async fn seed_gold(store: &Store, fx: &Fixtures, embedder: &dyn Embedder) ->
                 visibility: Visibility::parse(&m.visibility).unwrap_or(Visibility::Private),
                 status: MemoryStatus::parse(&m.status).unwrap_or(MemoryStatus::Canonical),
                 kind: MemoryKind::parse(&m.kind).unwrap_or(MemoryKind::Fact),
+                title: m.title.clone(),
                 content: m.content.clone(),
                 lifecycle: brainiac_core::Lifecycle::parse(&m.lifecycle).unwrap_or_default(),
                 detail_md: m.detail_md.clone(),

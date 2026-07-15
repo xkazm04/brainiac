@@ -30,6 +30,7 @@ NEVER extract small talk, speculation, or ideas that were explicitly rejected in
 Respond with ONLY a JSON object:
 {\"memories\":[{
   \"kind\":\"fact|decision|pattern|pitfall|howto\",
+  \"title\":\"a short label, <= 80 chars, no trailing period\",
   \"content\":\"one self-contained natural-language statement\",
   \"lifecycle\":\"shipped|in_flight|proposed\",
   \"detail_md\":\"optional: the verbatim code/config/table the statement summarizes\",
@@ -49,7 +50,11 @@ is not yet in production — \"in_flight\" = decided and underway, \"proposed\" 
 not started. Never guess.
 detail_md: omit unless the transcript contains the literal artifact the statement is
 about (a code block, config snippet, or table) — copy it verbatim into a markdown
-block. Never write prose here and never invent an artifact; content stays the claim.";
+block. Never write prose here and never invent an artifact; content stays the claim.
+title: how a person would refer to this claim in a list — name the thing and what
+about it (\"psp-gateway retry cap\", not \"Retry\" and not the whole sentence). It is a
+label, NOT a summary: content must still stand alone without it, because an agent is
+served the claim without the row it was listed in.";
 
 /// Lenient array deserializer for extractor output. Real BYOM providers (Qwen
 /// among them) intermittently emit a nested array field as a JSON-ENCODED STRING
@@ -90,6 +95,11 @@ struct ExtractionOutput {
 #[derive(Debug, Deserialize)]
 struct ExtractedMemory {
     kind: String,
+    /// A short label for the row (migration 0023). Optional at every layer: a
+    /// provider that ignores the instruction, or an older prompt, must not cost
+    /// us the memory — the archive falls back to `content`.
+    #[serde(default)]
+    title: Option<String>,
     content: String,
     /// KB-PLAN D2. Absent/unparseable → [`Lifecycle::default`] (shipped): the
     /// facet is a bonus signal, never a reason to drop a memory.
@@ -144,6 +154,29 @@ fn default_entity_kind() -> String {
 /// misusing the field, and an unbounded body would bloat every page that cites
 /// the memory. Truncated (never dropped) — a clipped code block still helps.
 const MAX_DETAIL_CHARS: usize = 2_000;
+
+/// Hard ceiling on a title. MUST stay <= the `memories_title_len` check in
+/// migration 0023: the database rejects a longer one, and a rejected insert
+/// loses the whole memory over a cosmetic field.
+const MAX_TITLE_CHARS: usize = 120;
+
+/// Sanitize an extractor-proposed title.
+///
+/// Trims, drops empties, strips a trailing period (it is a label, not a
+/// sentence, and models add one anyway), and truncates on a CHARACTER boundary —
+/// `&str[..n]` panics mid-codepoint, and this corpus has a Czech slice.
+///
+/// Truncation is a last resort rather than the norm: the prompt asks for <= 80,
+/// so a title long enough to hit 120 is a model ignoring the instruction. Better
+/// a clipped label than a dropped memory.
+fn clean_title(raw: Option<&str>) -> Option<String> {
+    let t = raw?.trim().trim_end_matches('.').trim();
+    if t.is_empty() {
+        return None;
+    }
+    let out: String = t.chars().take(MAX_TITLE_CHARS).collect();
+    Some(out)
+}
 
 /// Sanitize an extractor-proposed `detail_md` (KB-PLAN D3): trim, drop empties,
 /// run the SAME secret firewall as `content` (a credential is no less durable
@@ -603,6 +636,7 @@ pub async fn run_extract(
                     visibility,
                     status: MemoryStatus::Raw,
                     kind,
+                    title: clean_title(m.title.as_deref()),
                     content: content.clone(),
                     lifecycle,
                     detail_md,
@@ -699,6 +733,49 @@ pub async fn run_extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── titles (migration 0023) ─────────────────────────────────────────────
+
+    #[test]
+    fn title_is_optional_and_absence_is_not_a_failure() {
+        // The shape every V1-prompt provider still emits, and the shape a
+        // provider that ignores the instruction emits. Neither may cost us the
+        // memory — the archive falls back to `content`.
+        let raw = r#"{"memories":[{"kind":"fact","content":"the ledger holds the authoritative balance"}]}"#;
+        let out: ExtractionOutput = serde_json::from_str(raw).expect("title-less output parses");
+        assert_eq!(out.memories.len(), 1);
+        assert_eq!(clean_title(out.memories[0].title.as_deref()), None);
+    }
+
+    #[test]
+    fn title_loses_its_trailing_period_and_padding() {
+        // Models write a title like a sentence. It is a label.
+        assert_eq!(
+            clean_title(Some("  psp-gateway retry cap.  ")),
+            Some("psp-gateway retry cap".to_string())
+        );
+        assert_eq!(clean_title(Some("   ")), None);
+        assert_eq!(clean_title(Some("")), None);
+    }
+
+    #[test]
+    fn title_is_clamped_to_the_database_constraint() {
+        // migration 0023 rejects > 120 chars, and a rejected INSERT loses the
+        // whole memory over a cosmetic field. The clamp is the boundary's job.
+        let long = "a".repeat(400);
+        let got = clean_title(Some(&long)).expect("a non-empty title survives the clamp");
+        assert_eq!(got.chars().count(), MAX_TITLE_CHARS);
+    }
+
+    #[test]
+    fn title_truncates_on_a_character_boundary() {
+        // The corpus has a Czech slice, and `&s[..n]` panics mid-codepoint.
+        // Truncation must count CHARACTERS, not bytes.
+        let czech = "ě".repeat(200);
+        let got = clean_title(Some(&czech)).expect("a non-empty title survives the clamp");
+        assert_eq!(got.chars().count(), MAX_TITLE_CHARS);
+        assert!(got.chars().all(|c| c == 'ě'));
+    }
 
     // ── KB0 facets (KB-PLAN D2/D3) ──────────────────────────────────────────
 

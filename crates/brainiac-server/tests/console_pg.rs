@@ -13,6 +13,8 @@ async fn console_reviews_graph_analytics() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
@@ -623,7 +625,7 @@ async fn console_reviews_graph_analytics() {
     .await
     .expect("reset sweeps");
 
-    // List: both seeded sweeps, disabled and never run.
+    // List: every seeded sweep, disabled and never run.
     let r = http
         .get(format!("{base}/v1/ops/sweeps"))
         .bearer_auth("tok_pay_lead")
@@ -633,18 +635,19 @@ async fn console_reviews_graph_analytics() {
     assert!(r.status().is_success());
     let body: serde_json::Value = r.json().await.expect("json");
     let sweeps = body["sweeps"].as_array().expect("sweeps");
-    assert_eq!(sweeps.len(), 2, "two seeded sweeps: {body}");
+    assert_eq!(sweeps.len(), 4, "four seeded sweeps (0007, 0024): {body}");
     assert!(
         sweeps
             .iter()
             .all(|s| s["enabled"] == false && s["last_status"].is_null()),
         "seeded sweeps start disabled and unrun: {body}"
     );
-    assert!(
-        sweeps.iter().any(|s| s["kind"] == "divergence")
-            && sweeps.iter().any(|s| s["kind"] == "health_snapshot"),
-        "both known sweep kinds present: {body}"
-    );
+    for kind in ["divergence", "health_snapshot", "raw_ttl", "alerts"] {
+        assert!(
+            sweeps.iter().any(|s| s["kind"] == kind),
+            "sweep kind {kind} present: {body}"
+        );
+    }
 
     // Enable divergence at an hourly cadence → it arms next_run_at.
     let r = http

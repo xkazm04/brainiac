@@ -28,6 +28,8 @@ async fn pipeline_profile_end_to_end() {
         eprintln!("SKIP: DATABASE_URL not set — pipeline eval test needs Postgres");
         return;
     };
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
 
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");

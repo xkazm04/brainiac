@@ -94,6 +94,10 @@ pub struct MemoryFx {
     #[serde(default = "default_status")]
     pub status: String,
     pub kind: String,
+    /// A short label for the archive's row (migration 0023). Optional: the
+    /// hand-authored v1 corpus predates it and falls back to `content`.
+    #[serde(default)]
+    pub title: Option<String>,
     pub content: String,
     /// KB-PLAN D2 — omit for shipped reality (the overwhelming default).
     #[serde(default = "default_lifecycle")]

@@ -122,12 +122,11 @@ impl DocsBaseline {
     }
 }
 
-/// Hard gates first (they are absolute), then the soft rate comparison.
-/// Empty = pass.
-pub fn regression_failures(r: &DocsReport, b: &DocsBaseline) -> Vec<String> {
+/// The absolute gates alone — no baseline needed, no tolerance offered. Split
+/// out so a multi-sample run can apply them to EVERY sample: one leak in one
+/// run out of five is still a leak, and averaging must never dilute it.
+pub fn hard_failures(r: &DocsReport) -> Vec<String> {
     let mut f = Vec::new();
-
-    // ── absolute gates: no baseline, no tolerance, no negotiation ────────
     for leak in &r.leaks {
         f.push(format!(
             "LEAK (build failure): forbidden memory {} reached page {} via {} (sim {:.2})",
@@ -152,6 +151,13 @@ pub fn regression_failures(r: &DocsReport, b: &DocsBaseline) -> Vec<String> {
             r.auto_published_hallucinations
         ));
     }
+    f
+}
+
+/// Hard gates first (they are absolute), then the soft rate comparison.
+/// Empty = pass.
+pub fn regression_failures(r: &DocsReport, b: &DocsBaseline) -> Vec<String> {
+    let mut f = hard_failures(r);
 
     // ── soft rates: config-matched comparison against the committed baseline ─
     if r.embedding_model != b.embedding_model || r.provider != b.provider {
@@ -172,6 +178,32 @@ pub fn regression_failures(r: &DocsReport, b: &DocsBaseline) -> Vec<String> {
         f.push(format!(
             "hallucination rate regressed: {:.3} > baseline {:.3} + {:.2}",
             r.hallucination_rate, b.hallucination_rate, RATE_DELTA
+        ));
+    }
+    f
+}
+
+/// Multi-sample soft gate: means compared with the √N-tightened band (floored
+/// at 0.05). Hard gates are NOT here — they run per sample via
+/// [`hard_failures`], because one leak in one run of five is still a leak.
+pub fn regression_failures_mean(
+    samples: usize,
+    mean_coverage: f64,
+    mean_hallucination: f64,
+    b: &DocsBaseline,
+) -> Vec<String> {
+    let mut f = Vec::new();
+    let d = (RATE_DELTA / (samples.max(1) as f64).sqrt()).max(0.05);
+    if mean_coverage < b.coverage - d {
+        f.push(format!(
+            "mean coverage over {samples} samples regressed: {mean_coverage:.3} < baseline {:.3} − {d:.3}",
+            b.coverage
+        ));
+    }
+    if mean_hallucination > b.hallucination_rate + d {
+        f.push(format!(
+            "mean hallucination over {samples} samples regressed: {mean_hallucination:.3} > baseline {:.3} + {d:.3}",
+            b.hallucination_rate
         ));
     }
     f
