@@ -220,7 +220,7 @@ pub async fn open_claim_count(conn: &mut PgConnection, memory_id: Uuid) -> Resul
 }
 
 /// Close every open claim against a memory with the maintainer's answer, and
-/// the rationale behind it (`note`, 0025 — kept apart from the reporter's own
+/// the rationale behind it (`note`, 0026 — kept apart from the reporter's own
 /// `note`, which is the claim being answered). Returns how many claims were
 /// closed (0 = nothing was open).
 ///
