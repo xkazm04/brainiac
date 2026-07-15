@@ -45,6 +45,15 @@ const MAX_NOTE_CHARS: usize = 2_000;
 /// Bounded excerpt of a source's raw text returned by `memory_provenance` — a
 /// citation handle, never the whole (possibly huge) transcript.
 const SOURCE_EXCERPT_CHARS: usize = 500;
+/// Max bytes in a single JSON-RPC frame (one stdio line).
+///
+/// The per-field caps above are enforced AFTER the line is parsed, so without a
+/// bound at the transport a caller could stream an unbounded line — simply never
+/// sending a newline — and OOM the process before any cap ran. The hardening note
+/// above promises "a runaway caller can never hand us an unbounded blob to embed,
+/// store, or scan"; that promise needs a limit here, not just on the fields. 1 MB
+/// comfortably fits MAX_CONTENT_CHARS (8k) plus JSON-RPC overhead.
+const MAX_FRAME_BYTES: u64 = 1_000_000;
 
 /// A JSON-RPC-level error (maps to an `error` object with a spec code). Distinct
 /// from a *tool* error, which is a successful response carrying `isError: true`.
@@ -186,21 +195,45 @@ impl McpState {
 /// (unparseable line, write hiccup) never take the session down — the loop logs
 /// and continues; only a broken/closed stdout ends it, cleanly.
 pub async fn serve_stdio(state: Arc<McpState>) -> Result<()> {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
-    let mut lines = BufReader::new(stdin).lines();
+    let mut reader = BufReader::new(stdin);
     tracing::info!("brainiac MCP server on stdio");
+    let mut buf: Vec<u8> = Vec::new();
     loop {
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) => break, // clean EOF on stdin
+        buf.clear();
+        // Bounded read: `lines()`/`read_until` would buffer an unbounded frame.
+        let n = match (&mut reader)
+            .take(MAX_FRAME_BYTES)
+            .read_until(b'\n', &mut buf)
+            .await
+        {
+            Ok(n) => n,
             Err(e) => {
                 // A read fault means the peer is gone; end the session cleanly.
                 tracing::warn!(error = %e, "stdin read error; ending MCP session");
                 break;
             }
         };
+        if n == 0 {
+            break; // clean EOF on stdin
+        }
+        // Hit the cap without a terminator ⇒ the peer is streaming an unbounded
+        // frame. Resyncing would mean draining the rest of it, which is equally
+        // unbounded, so a frame-size violation ends the session rather than being
+        // treated as a recoverable frame fault. (No newline but UNDER the cap is
+        // just EOF on a final line — that one is processed normally.)
+        if !buf.ends_with(b"\n") && n as u64 >= MAX_FRAME_BYTES {
+            tracing::warn!(
+                limit = MAX_FRAME_BYTES,
+                "MCP frame exceeded the size cap with no newline; ending session"
+            );
+            break;
+        }
+        let line = String::from_utf8_lossy(&buf)
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
         let Some(response) = process_line(&state, &line).await else {
             continue; // blank line or notification — no reply
         };
