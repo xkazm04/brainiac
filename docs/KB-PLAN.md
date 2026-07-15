@@ -122,6 +122,11 @@ Ordered roughly by leverage; none block the phase ladder.
    visibility mapping, only after the leak eval covers the mapping matrix.
 6. **Substrate trust workstream** (owned by UAT follow-ups, blocking KB3 GA):
    extraction recall per provider, confidence calibration for auto-promotion.
+   *Calibration measurement shipped 2026-07-15*: the extraction eval now
+   reports precision per self-reported-confidence band (`calibration` in the
+   report; run with `--samples N` for stable bands). The auto-promotion LEVER
+   stays unbuilt until a real-provider run shows the bands actually separate —
+   flat bands mean confidence is noise and must not gate anything.
    ~~raw-memory TTL sweep~~ and ~~review-SLO alerting~~ shipped 2026-07-15
    (see status log: `raw_ttl` + `alerts` sweeps, migration 0024, both OFF by
    default); the eval side gained `--samples` mean gating the RATE_DELTA

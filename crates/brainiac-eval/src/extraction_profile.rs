@@ -65,6 +65,10 @@ pub struct ExtractionReport {
     /// Gold facts NO extracted memory covered — the recall failures, the thing
     /// the flywheel run cared about. Ordered worst-transcript first.
     pub misses: Vec<Miss>,
+    /// Precision by self-reported confidence band — the measurement that must
+    /// exist BEFORE confidence is allowed to gate auto-promotion. Flat bands =
+    /// confidence is noise; do not build the lever.
+    pub calibration: Vec<CalibrationBucket>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -286,10 +290,15 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
 }
 
 /// Greedy 1:1 matching of extracted → gold by descending similarity above the
-/// threshold. Returns (matched_pairs, per-gold best similarity). One extracted
-/// memory can satisfy at most one gold fact and vice versa, so padding the
-/// output with paraphrases of one fact cannot inflate recall across many.
-fn greedy_match(sims: &[Vec<f64>], n_extracted: usize, n_gold: usize) -> (usize, Vec<f64>) {
+/// threshold. Returns (matched_pairs, per-gold best similarity, per-extracted
+/// matched flags). One extracted memory can satisfy at most one gold fact and
+/// vice versa, so padding the output with paraphrases of one fact cannot
+/// inflate recall across many.
+fn greedy_match(
+    sims: &[Vec<f64>],
+    n_extracted: usize,
+    n_gold: usize,
+) -> (usize, Vec<f64>, Vec<bool>) {
     let mut best_for_gold = vec![0.0f64; n_gold];
     for (row, best) in sims.iter().zip(best_for_gold.iter_mut()) {
         // sims is indexed [gold][extracted]; track the closest extracted reached.
@@ -319,8 +328,36 @@ fn greedy_match(sims: &[Vec<f64>], n_extracted: usize, n_gold: usize) -> (usize,
             matched += 1;
         }
     }
-    (matched, best_for_gold)
+    (matched, best_for_gold, ext_used)
 }
+
+/// Precision within one band of self-reported confidence — the calibration
+/// measurement the auto-promotion lever is waiting on. A well-calibrated
+/// extractor's high-confidence band should have visibly higher precision than
+/// its low band; if the bands are flat, confidence is noise and MUST NOT gate
+/// promotion. This report answers that question with data instead of a hunch —
+/// the lever itself stays unbuilt until the answer says it would be safe.
+#[derive(Debug, Clone, Serialize)]
+pub struct CalibrationBucket {
+    /// `none` | `<0.5` | `0.5–0.7` | `0.7–0.9` | `>=0.9`
+    pub bucket: String,
+    pub extracted: usize,
+    /// How many of them matched a gold fact — precision numerator.
+    pub matched: usize,
+    pub precision: f64,
+}
+
+fn bucket_of(confidence: Option<f64>) -> &'static str {
+    match confidence {
+        None => "none",
+        Some(c) if c < 0.5 => "<0.5",
+        Some(c) if c < 0.7 => "0.5–0.7",
+        Some(c) if c < 0.9 => "0.7–0.9",
+        Some(_) => ">=0.9",
+    }
+}
+
+const BUCKET_ORDER: [&str; 5] = ["none", "<0.5", "0.5–0.7", "0.7–0.9", ">=0.9"];
 
 /// Run the extraction profile: seed sources, drain them through the REAL worker
 /// chain with `providers`, then score extracted memories vs gold by embedding
@@ -385,10 +422,10 @@ pub async fn run(
     }
 
     // ── read extracted memories, attributed to their source transcript ───
-    let mut extracted_by_source: std::collections::HashMap<Uuid, Vec<String>> =
+    let mut extracted_by_source: std::collections::HashMap<Uuid, Vec<(String, Option<f64>)>> =
         std::collections::HashMap::new();
     let rows = sqlx::query(
-        "SELECT s.id AS source_id, m.content
+        "SELECT s.id AS source_id, m.content, m.confidence
          FROM memories m
          JOIN provenance p ON p.id = m.provenance_id
          JOIN sources s ON s.id = p.source_id
@@ -402,13 +439,19 @@ pub async fn run(
         extracted_by_source
             .entry(r.get::<Uuid, _>("source_id"))
             .or_default()
-            .push(r.get::<String, _>("content"));
+            .push((
+                r.get::<String, _>("content"),
+                r.get::<Option<f64>, _>("confidence"),
+            ));
     }
 
     // ── score each transcript by embedding similarity ────────────────────
     let mut per_transcript = Vec::new();
     let mut misses = Vec::new();
     let (mut tot_gold, mut tot_extracted, mut tot_matched) = (0usize, 0usize, 0usize);
+    // bucket → (extracted, matched), accumulated across every transcript.
+    let mut cal: std::collections::HashMap<&'static str, (usize, usize)> =
+        std::collections::HashMap::new();
 
     for t in &fx.transcripts {
         let sid = stable_uuid(&t.id);
@@ -418,8 +461,8 @@ pub async fn run(
         tot_gold += golds.len();
         tot_extracted += extracted.len();
 
-        let (matched, best_for_gold) = if golds.is_empty() || extracted.is_empty() {
-            (0, vec![0.0; golds.len()])
+        let (matched, best_for_gold, ext_matched) = if golds.is_empty() || extracted.is_empty() {
+            (0, vec![0.0; golds.len()], vec![false; extracted.len()])
         } else {
             let gold_vecs = embedder
                 .embed_batch(
@@ -430,7 +473,12 @@ pub async fn run(
                 )
                 .await?;
             let ext_vecs = embedder
-                .embed_batch(&extracted.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .embed_batch(
+                    &extracted
+                        .iter()
+                        .map(|(s, _)| s.as_str())
+                        .collect::<Vec<_>>(),
+                )
                 .await?;
             // sims[gold][extracted]
             let sims: Vec<Vec<f64>> = gold_vecs
@@ -440,6 +488,13 @@ pub async fn run(
             greedy_match(&sims, extracted.len(), golds.len())
         };
         tot_matched += matched;
+        for ((_, confidence), hit) in extracted.iter().zip(ext_matched.iter()) {
+            let e = cal.entry(bucket_of(*confidence)).or_default();
+            e.0 += 1;
+            if *hit {
+                e.1 += 1;
+            }
+        }
 
         // Record the specific misses (gold facts nothing covered).
         for (g, best) in golds.iter().zip(best_for_gold.iter()) {
@@ -500,6 +555,18 @@ pub async fn run(
         spurious: tot_extracted.saturating_sub(tot_matched),
         per_transcript,
         misses,
+        calibration: BUCKET_ORDER
+            .iter()
+            .filter_map(|b| {
+                let (extracted, matched) = *cal.get(b)?;
+                Some(CalibrationBucket {
+                    bucket: (*b).to_string(),
+                    extracted,
+                    matched,
+                    precision: ratio(matched, extracted),
+                })
+            })
+            .collect(),
     })
 }
 
@@ -508,5 +575,40 @@ fn ratio(num: usize, den: usize) -> f64 {
         0.0
     } else {
         num as f64 / den as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confidence_bands_cover_the_whole_range_with_no_gaps() {
+        // A confidence that falls between bands would silently vanish from the
+        // calibration table — and a table with holes reads as "measured" when
+        // it is not.
+        assert_eq!(bucket_of(None), "none");
+        assert_eq!(bucket_of(Some(0.0)), "<0.5");
+        assert_eq!(bucket_of(Some(0.499)), "<0.5");
+        assert_eq!(bucket_of(Some(0.5)), "0.5–0.7");
+        assert_eq!(bucket_of(Some(0.699)), "0.5–0.7");
+        assert_eq!(bucket_of(Some(0.7)), "0.7–0.9");
+        assert_eq!(bucket_of(Some(0.9)), ">=0.9");
+        assert_eq!(bucket_of(Some(1.0)), ">=0.9");
+        // Every band the bucketer can emit has a place in the report's order.
+        for c in [None, Some(0.1), Some(0.6), Some(0.8), Some(0.95)] {
+            assert!(BUCKET_ORDER.contains(&bucket_of(c)));
+        }
+    }
+
+    #[test]
+    fn greedy_match_reports_which_extractions_earned_their_keep() {
+        // Two golds, three extractions: e0 matches g0, e2 matches g1, e1
+        // matches nothing. The per-extraction flags feed the calibration
+        // table, so they must name exactly the earners.
+        let sims = vec![vec![0.95, 0.10, 0.20], vec![0.15, 0.30, 0.88]];
+        let (matched, _, ext_matched) = greedy_match(&sims, 3, 2);
+        assert_eq!(matched, 2);
+        assert_eq!(ext_matched, vec![true, false, true]);
     }
 }
