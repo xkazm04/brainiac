@@ -215,7 +215,7 @@ fn prose_sentences(md: &str, pinned: &[String]) -> Vec<String> {
 }
 
 fn prose_sentences_raw(md: &str) -> Vec<String> {
-    let mut out = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     let mut in_fence = false;
     for line in md.lines() {
         let t = line.trim();
@@ -233,6 +233,21 @@ fn prose_sentences_raw(md: &str) -> Vec<String> {
         }
         for s in t.split_inclusive(['.', '!', '?']) {
             let s = s.trim();
+            if s.is_empty() {
+                continue;
+            }
+            // A fragment that is nothing but citation tokens belongs to the
+            // sentence it trails. "The cap is 30s. [m:abc]" otherwise splits into
+            // a claim with no `[m:` (counted UNCITED) plus an 8-char fragment that
+            // the length filter drops — so a correctly-cited page tripped the hard
+            // auto-published-hallucination gate purely on citation placement.
+            if strip_citations(s).trim().is_empty() {
+                if let Some(prev) = out.last_mut() {
+                    prev.push(' ');
+                    prev.push_str(s);
+                    continue;
+                }
+            }
             // A fragment with no letters is punctuation debris, not a claim.
             if s.len() > 15 && s.chars().any(|c| c.is_alphabetic()) {
                 out.push(s.to_string());
@@ -646,6 +661,26 @@ mod tests {
     #[test]
     fn empty_section_marker_is_not_a_claim() {
         assert!(prose_sentences("## H\n\n(no knowledge captured yet)\n", &[]).is_empty());
+    }
+
+    #[test]
+    fn a_citation_after_the_period_still_backs_its_sentence() {
+        // The false positive: "…30 seconds. [m:abc]" split into a claim with no
+        // `[m:` (counted uncited) and an 8-char citation fragment the length
+        // filter dropped — failing the HARD auto-published-hallucination gate on a
+        // page that was correctly cited.
+        let s = prose_sentences("## H\n\nThe refund retry cap is 30 seconds. [m:abc]\n", &[]);
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert!(
+            s[0].contains("[m:"),
+            "a trailing citation must attach to its claim: {s:?}"
+        );
+        // Multiple trailing citations, and the in-sentence form, both still work.
+        let multi = prose_sentences("The cap moved to 45 seconds. [m:a] [m:b]\n", &[]);
+        assert_eq!(multi.len(), 1, "{multi:?}");
+        assert!(multi[0].contains("[m:a]") && multi[0].contains("[m:b]"), "{multi:?}");
+        let inline = prose_sentences("The cap is 30 seconds [m:x] per the runbook.\n", &[]);
+        assert!(inline.iter().all(|s| s.contains("[m:")), "{inline:?}");
     }
 
     #[test]
