@@ -242,6 +242,41 @@ fn prose_sentences_raw(md: &str) -> Vec<String> {
     out
 }
 
+/// Every text segment the page RENDERS — the scan set for the leak gate.
+///
+/// Deliberately NOT `prose_sentences`. That set exists for the *hallucination*
+/// metric, where scaffolding must be excluded so the model is not charged for text
+/// it did not author. A breach detector has the opposite requirement: a forbidden
+/// fact is a leak whether it lands in a sentence, a `#` heading, a fenced code
+/// block, an `<sub>` evidence footer, or human-pinned prose. Reusing the prose set
+/// left every one of those as a silent evasion path past a gate the module calls
+/// "ZERO TOLERANCE … not a quality regression, it is a breach".
+///
+/// Fences are UNWRAPPED (keep the body, drop the ``` markers) rather than skipped;
+/// heading and `<sub>` markers are stripped but their text is kept.
+fn leak_scan_segments(md: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in md.lines() {
+        let t = line.trim();
+        if t.starts_with("```") || t.is_empty() || t == "(no knowledge captured yet)" {
+            continue;
+        }
+        let t = t.trim_start_matches('#').trim();
+        let t = t.strip_prefix("<sub>").unwrap_or(t);
+        let t = t.strip_suffix("</sub>").unwrap_or(t).trim();
+        if t.is_empty() {
+            continue;
+        }
+        for s in t.split_inclusive(['.', '!', '?']) {
+            let s = s.trim();
+            if s.len() > 15 && s.chars().any(|c| c.is_alphabetic()) {
+                out.push(s.to_string());
+            }
+        }
+    }
+    out
+}
+
 fn strip_citations(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -445,7 +480,21 @@ pub async fn run(
             }
         }
 
-        // ── leak gate: id in the closure, OR content paraphrased in prose ──
+        // ── leak gate: id in the closure, OR content paraphrased ANYWHERE ──
+        // Scan every segment the page renders — headings, fenced code, <sub>
+        // footers and pinned prose included. The hallucination sentence set
+        // (`sent_vecs`) deliberately drops all of those, so reusing it here left a
+        // forbidden fact restated in a heading or a config snippet completely
+        // invisible to a gate that is supposed to be zero-tolerance.
+        let leak_segments = leak_scan_segments(&md);
+        let leak_plain: Vec<String> = leak_segments.iter().map(|s| strip_citations(s)).collect();
+        let leak_vecs = if leak_plain.is_empty() {
+            Vec::new()
+        } else {
+            embedder
+                .embed_batch(&leak_plain.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                .await?
+        };
         for fm in &d.forbidden_memories {
             let fmid = stable_uuid(fm);
             if rev.composed_from.contains(&fmid) {
@@ -463,7 +512,7 @@ pub async fn run(
                 continue;
             };
             let gv = embedder.embed(&gold.content).await?;
-            let best = sent_vecs
+            let best = leak_vecs
                 .iter()
                 .map(|sv| cosine(&gv, sv))
                 .fold(0.0f64, f64::max);
@@ -471,7 +520,7 @@ pub async fn run(
                 report.leaks.push(Leak {
                     document: d.id.clone(),
                     memory: fm.clone(),
-                    via: "prose".into(),
+                    via: "rendered".into(),
                     similarity: best,
                 });
             }
@@ -597,6 +646,32 @@ mod tests {
     #[test]
     fn empty_section_marker_is_not_a_claim() {
         assert!(prose_sentences("## H\n\n(no knowledge captured yet)\n", &[]).is_empty());
+    }
+
+    #[test]
+    fn leak_scan_sees_what_the_prose_set_drops() {
+        // The evasion paths: a forbidden fact restated in a heading, inside a
+        // fenced code block, or in an <sub> footer. prose_sentences drops all of
+        // them (correctly — it exists to not blame the model for scaffolding), so
+        // the leak gate must NOT reuse it.
+        let md = "# The refund retry cap is 45 seconds\n\n\
+                  ```yaml\nretry_cap_seconds: 45 for the refund worker\n```\n\n\
+                  <sub>escalate to the payments on-call rotation first</sub>\n";
+        assert!(
+            prose_sentences(md, &[]).is_empty(),
+            "precondition: the prose set drops all of this"
+        );
+        let scan = leak_scan_segments(md);
+        let joined = scan.join(" | ");
+        assert!(joined.contains("refund retry cap"), "heading text: {joined}");
+        assert!(joined.contains("retry_cap_seconds"), "fence body: {joined}");
+        assert!(joined.contains("payments on-call"), "<sub> text: {joined}");
+    }
+
+    #[test]
+    fn leak_scan_still_ignores_fence_markers_and_filler() {
+        let scan = leak_scan_segments("```\n```\n\n(no knowledge captured yet)\n\n#\n");
+        assert!(scan.is_empty(), "{scan:?}");
     }
 
     #[test]
