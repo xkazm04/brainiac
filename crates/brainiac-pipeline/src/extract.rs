@@ -355,7 +355,11 @@ fn parse_extraction(text: &str) -> std::result::Result<ExtractionOutput, String>
         .and_then(|s| serde_json::from_str::<Vec<ExtractedMemory>>(s).ok())
         .map(|memories| ExtractionOutput { memories });
     match (obj_out, arr_out) {
-        (Some(o), Some(a)) => Ok(if a.memories.len() > o.memories.len() { a } else { o }),
+        (Some(o), Some(a)) => Ok(if a.memories.len() > o.memories.len() {
+            a
+        } else {
+            o
+        }),
         (Some(o), None) => Ok(o),
         // A recovered array counts on its own only when it is NON-EMPTY: an empty
         // array pulled out of an ambiguous wrapper ({"status":"ok","data":[]}) is
@@ -846,7 +850,10 @@ mod tests {
                 "reason should name the missing field, got: {err}"
             );
         }
-        assert!(parse_extraction(r#"{"memories":[]}"#).is_ok(), "real empty still ok");
+        assert!(
+            parse_extraction(r#"{"memories":[]}"#).is_ok(),
+            "real empty still ok"
+        );
     }
 
     #[test]

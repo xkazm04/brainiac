@@ -678,7 +678,10 @@ mod tests {
         // Multiple trailing citations, and the in-sentence form, both still work.
         let multi = prose_sentences("The cap moved to 45 seconds. [m:a] [m:b]\n", &[]);
         assert_eq!(multi.len(), 1, "{multi:?}");
-        assert!(multi[0].contains("[m:a]") && multi[0].contains("[m:b]"), "{multi:?}");
+        assert!(
+            multi[0].contains("[m:a]") && multi[0].contains("[m:b]"),
+            "{multi:?}"
+        );
         let inline = prose_sentences("The cap is 30 seconds [m:x] per the runbook.\n", &[]);
         assert!(inline.iter().all(|s| s.contains("[m:")), "{inline:?}");
     }
@@ -698,7 +701,10 @@ mod tests {
         );
         let scan = leak_scan_segments(md);
         let joined = scan.join(" | ");
-        assert!(joined.contains("refund retry cap"), "heading text: {joined}");
+        assert!(
+            joined.contains("refund retry cap"),
+            "heading text: {joined}"
+        );
         assert!(joined.contains("retry_cap_seconds"), "fence body: {joined}");
         assert!(joined.contains("payments on-call"), "<sub> text: {joined}");
     }

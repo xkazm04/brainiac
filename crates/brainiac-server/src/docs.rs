@@ -458,7 +458,8 @@ pub(crate) async fn doc_edit(
         if !saved {
             return Err((
                 StatusCode::CONFLICT,
-                "this section changed since you loaded it — reload and reapply your edit".to_string(),
+                "this section changed since you loaded it — reload and reapply your edit"
+                    .to_string(),
             )
                 .into());
         }

@@ -260,7 +260,9 @@ mod tests {
         regressed.negative_empty_rate = 0.4;
         let fails = regression_failures(&regressed, &base);
         assert!(
-            fails.iter().any(|f| f.contains("refusal behavior regressed")),
+            fails
+                .iter()
+                .any(|f| f.contains("refusal behavior regressed")),
             "{fails:?}"
         );
 
