@@ -48,9 +48,12 @@ That is not a workaround; it is the model working as built:
   memory policy). Team pages stay invisible.
 
 **What implementation remains**: provisioning affordance only — a documented
-"observer" preset when issuing tokens/memberships (console UI + docs), plus a
-fixture user `user-observer` with QA/leak coverage so the posture is pinned by
-eval rather than by this paragraph. No migration, no policy change.
+"observer" preset when issuing tokens/memberships (console UI + docs). The
+eval side is done (2026-07-15): `user-observer` is a fixture user, the leak
+suite pins the posture (`leak-016..019`: one team-visible target per team plus
+a private one, zero tolerance), and `asking_as.team` is optional with the
+linter refusing a teamless asker declared on a teamed user. No migration, no
+policy change.
 
 ## 2. The contractor tier — real schema work, gated by eval
 

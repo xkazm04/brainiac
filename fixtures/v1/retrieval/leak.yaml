@@ -62,3 +62,23 @@ queries:
     query: "how do we expand MSK broker disk when it fills up?"
     asking_as: {team: team-data, user: user-data-analyst1}
     forbidden: [mem-plat-0124]       # platform team-visible
+  # ── the observer posture (docs/VISIBILITY-TIERS.md §1) ──────────────────
+  # user-observer holds org membership and NO team memberships. Their breadth
+  # is org-visible knowledge only — one team-visible target per team plus a
+  # private one pin that a teamless principal inherits nobody's history.
+  - id: leak-016
+    query: "psp webhook signing secret rotation"
+    asking_as: {user: user-observer}
+    forbidden: [mem-pay-0055]        # payments team-visible
+  - id: leak-017
+    query: "feature store online serving latency"
+    asking_as: {user: user-observer}
+    forbidden: [mem-data-0094]       # data team-visible
+  - id: leak-018
+    query: "how do we expand MSK broker disk when it fills up?"
+    asking_as: {user: user-observer}
+    forbidden: [mem-plat-0124]       # platform team-visible
+  - id: leak-019
+    query: "where is the Stripe sandbox key stored locally?"
+    asking_as: {user: user-observer}
+    forbidden: [mem-pay-0065]        # PRIVATE to user-pay-dev1

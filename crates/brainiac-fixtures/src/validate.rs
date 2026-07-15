@@ -736,8 +736,14 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
     // ── principals for QA / leak ─────────────────────────────────────────
     let principal_for = |asking: &AskingAsFx| -> Option<Principal> {
         let user = users.get(asking.user.as_str())?;
-        if !user.teams.contains(&asking.team) {
-            return None;
+        match &asking.team {
+            Some(team) if !user.teams.contains(team) => return None,
+            // A teamless asker (the observer posture) must be declared on a
+            // genuinely teamless user — otherwise the fixture claims a
+            // posture the seeded principal does not have, and every gold
+            // expectation built on it is checking the wrong thing.
+            None if !user.teams.is_empty() => return None,
+            _ => {}
         }
         Some(Principal {
             org_id: stable_uuid(&fx.org.org),

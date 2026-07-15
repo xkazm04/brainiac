@@ -18,14 +18,18 @@
       "type": "object",
       "properties": {
         "team": {
-          "type": "string"
+          "description": "Omitted = a TEAMLESS asker — the observer posture\n(docs/VISIBILITY-TIERS.md §1): org membership, no team memberships,\nso RLS resolves them to org-visible rows only. The linter requires the\nnamed user to actually be teamless, so the fixture cannot claim a\nposture the seeded principal does not have.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "user": {
           "type": "string"
         }
       },
       "required": [
-        "team",
         "user"
       ]
     },

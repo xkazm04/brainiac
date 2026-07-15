@@ -342,7 +342,13 @@ pub struct QaQueryFx {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct AskingAsFx {
-    pub team: String,
+    /// Omitted = a TEAMLESS asker — the observer posture
+    /// (docs/VISIBILITY-TIERS.md §1): org membership, no team memberships,
+    /// so RLS resolves them to org-visible rows only. The linter requires the
+    /// named user to actually be teamless, so the fixture cannot claim a
+    /// posture the seeded principal does not have.
+    #[serde(default)]
+    pub team: Option<String>,
     pub user: String,
 }
 

@@ -32,3 +32,11 @@ users:
     email: datalead@meridian.example
     teams: [team-data]
     role: maintainer
+  # The OBSERVER posture (docs/VISIBILITY-TIERS.md §1): org membership, no
+  # team memberships. Leadership/audit breadth is org-visible knowledge plus
+  # the org-true health aggregates — never any team's private history. The
+  # leak suite pins that this is what a teamless principal actually gets.
+  - id: user-observer
+    email: observer@meridian.example
+    teams: []
+    role: member
