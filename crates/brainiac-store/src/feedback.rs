@@ -202,6 +202,23 @@ pub async fn flagged_count(conn: &mut PgConnection) -> Result<i64> {
     Ok(row.get("n"))
 }
 
+/// How many claims against this memory are still open. Callers answering a
+/// dispute check this BEFORE mutating the corpus: zero open claims means there
+/// is nothing to answer (a concurrent maintainer already answered it), and a
+/// destructive resolution applied on top of that would be a decision nobody
+/// asked for, reported as a success. Serialize on the memory row (`FOR UPDATE`)
+/// before calling, or the count can go stale under you.
+pub async fn open_claim_count(conn: &mut PgConnection, memory_id: Uuid) -> Result<i64> {
+    let row = sqlx::query(
+        "SELECT count(*) AS n FROM memory_feedback
+         WHERE memory_id = $1 AND resolved_at IS NULL AND verdict IN ('wrong', 'outdated')",
+    )
+    .bind(memory_id)
+    .fetch_one(conn)
+    .await?;
+    Ok(row.get("n"))
+}
+
 /// Close every open claim against a memory with the maintainer's answer.
 /// Returns how many claims were closed (0 = nothing was open).
 pub async fn resolve_claims(

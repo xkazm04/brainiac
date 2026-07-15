@@ -533,16 +533,51 @@ pub async fn expiring(
     Ok(rows.iter().map(row_to_memory).collect())
 }
 
+/// Why an [`extend_validity`] call did not move the boundary. The old signature
+/// returned a bare `Option` and collapsed two materially different failures —
+/// "you cannot see this memory" and "this memory is superseded" — into one
+/// `None`, so callers could not tell a 404 from a 409 and reported both as
+/// success. Each case is now nameable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtendOutcome {
+    /// The window moved; carries the new boundary.
+    Extended(DateTime<Utc>),
+    /// The row is visible but carries `superseded_by` — supersessions are final,
+    /// so its window is frozen. A conflict, not a missing row.
+    Superseded,
+    /// No memory with this id resolves under the caller's RLS view. Callers must
+    /// answer this exactly as they answer a nonexistent id (no existence oracle).
+    NotFound,
+}
+
 /// Re-verify a memory: extend its validity window `days` from now (not from
 /// the old boundary, so a long-expired row doesn't come back pre-stale).
-/// Returns the new boundary, or None when the id doesn't resolve under the
-/// caller's RLS (or the row is superseded — supersessions are final).
+///
+/// The visibility SELECT is load-bearing, not a convenience read. `memories_read`
+/// (0001 + 0002) enforces the three-tier private/team/org model, but
+/// `memories_update` USING is only `org_id = current_setting('app.org_id')`.
+/// Updating first and inspecting after would therefore let a caller move
+/// `valid_to` on another user's private memory — a write to a row they cannot
+/// read. Gating the UPDATE behind a read-policy SELECT in the same transaction
+/// closes that for this path (see
+/// docs/harness/refactor-bughunt-2026-07-14/store-memories-retrieval-queue.md §2,
+/// which tracks the underlying policy asymmetry for the other writers).
 pub async fn extend_validity(
     conn: &mut PgConnection,
     id: Uuid,
     days: i64,
-) -> Result<Option<DateTime<Utc>>> {
-    let row = sqlx::query(
+) -> Result<ExtendOutcome> {
+    let Some(row) = sqlx::query("SELECT superseded_by FROM memories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?
+    else {
+        return Ok(ExtendOutcome::NotFound);
+    };
+    if row.get::<Option<Uuid>, _>("superseded_by").is_some() {
+        return Ok(ExtendOutcome::Superseded);
+    }
+    let updated = sqlx::query(
         "UPDATE memories
          SET valid_to = now() + make_interval(days => $2::int), updated_at = now()
          WHERE id = $1 AND superseded_by IS NULL
@@ -550,9 +585,15 @@ pub async fn extend_validity(
     )
     .bind(id)
     .bind(days)
-    .fetch_optional(conn)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok(row.map(|r| r.get("valid_to")))
+    // The only predicate the UPDATE adds over the SELECT is `superseded_by IS
+    // NULL`, so a 0-row update means it was superseded between the two
+    // statements — the same conflict, found a moment later.
+    Ok(match updated {
+        Some(r) => ExtendOutcome::Extended(r.get("valid_to")),
+        None => ExtendOutcome::Superseded,
+    })
 }
 
 /// pgvector text literal ("[1,2,3]") — bound as text and cast with ::vector,

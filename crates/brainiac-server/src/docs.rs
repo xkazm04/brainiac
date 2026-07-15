@@ -560,17 +560,4 @@ pub(crate) async fn doc_edit(
     }))
 }
 
-async fn is_any_maintainer(
-    conn: &mut sqlx::PgConnection,
-    principal: &brainiac_core::Principal,
-) -> Result<bool, HttpError> {
-    use sqlx::Row;
-    let row = sqlx::query(
-        "SELECT 1 AS ok FROM team_members WHERE user_id = $1 AND role = 'maintainer' LIMIT 1",
-    )
-    .bind(principal.user_id)
-    .fetch_optional(conn)
-    .await
-    .map_err(internal)?;
-    Ok(row.map(|r| r.get::<i32, _>("ok") == 1).unwrap_or(false))
-}
+use crate::console::is_any_maintainer;

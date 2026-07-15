@@ -3046,6 +3046,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Memory was superseded concurrently */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     sweeps_list: {
@@ -3498,7 +3505,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Caller is not a maintainer of the owning team */
+            /** @description Caller is not a maintainer of the owning team (or, for an org-wide memory, of any team) */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3507,6 +3514,13 @@ export interface operations {
             };
             /** @description Memory not found (or invisible under RLS) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Nothing to answer: the claims were already closed by a concurrent maintainer, or the memory's state forbids this resolution */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

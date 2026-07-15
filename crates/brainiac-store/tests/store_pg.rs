@@ -1124,10 +1124,13 @@ async fn ttl_expiring_queue_and_reverification() {
     );
 
     // Re-verify: window extends from NOW, not the old boundary.
-    let new_to = memories::extend_validity(&mut tx, uuid(102), 365)
-        .await
-        .expect("extend")
-        .expect("row updated");
+    let memories::ExtendOutcome::Extended(new_to) =
+        memories::extend_validity(&mut tx, uuid(102), 365)
+            .await
+            .expect("extend")
+    else {
+        panic!("row updated");
+    };
     assert!(new_to > chrono::Utc::now() + chrono::Duration::days(300));
     let after = memories::expiring(&mut tx, 30, 50).await.expect("expiring");
     assert!(
@@ -1141,9 +1144,11 @@ async fn ttl_expiring_queue_and_reverification() {
     let denied = memories::extend_validity(&mut tx, uuid(103), 365)
         .await
         .expect("query ok");
-    assert!(
-        denied.is_none(),
-        "invisible (private) memory must not extend"
+    assert_eq!(
+        denied,
+        memories::ExtendOutcome::NotFound,
+        "invisible (private) memory must not extend, and must be indistinguishable \
+         from a nonexistent one"
     );
 
     let _ = &ctx.admin;

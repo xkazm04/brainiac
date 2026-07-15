@@ -891,6 +891,9 @@
           },
           "404": {
             "description": "Memory not found, or superseded (supersessions are final)"
+          },
+          "409": {
+            "description": "Memory was superseded concurrently"
           }
         }
       }
@@ -1497,10 +1500,13 @@
             "description": "Unknown resolution"
           },
           "403": {
-            "description": "Caller is not a maintainer of the owning team"
+            "description": "Caller is not a maintainer of the owning team (or, for an org-wide memory, of any team)"
           },
           "404": {
             "description": "Memory not found (or invisible under RLS)"
+          },
+          "409": {
+            "description": "Nothing to answer: the claims were already closed by a concurrent maintainer, or the memory's state forbids this resolution"
           }
         }
       }

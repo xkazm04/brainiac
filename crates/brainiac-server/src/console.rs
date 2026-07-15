@@ -753,8 +753,9 @@ pub(crate) struct ResolveFeedbackResponse {
     responses(
         (status = 200, description = "Claims closed", body = ResolveFeedbackResponse),
         (status = 400, description = "Unknown resolution"),
-        (status = 403, description = "Caller is not a maintainer of the owning team"),
+        (status = 403, description = "Caller is not a maintainer of the owning team (or, for an org-wide memory, of any team)"),
         (status = 404, description = "Memory not found (or invisible under RLS)"),
+        (status = 409, description = "Nothing to answer: the claims were already closed by a concurrent maintainer, or the memory's state forbids this resolution"),
     )
 )]
 pub(crate) async fn resolve_feedback_claims(
@@ -777,47 +778,140 @@ pub(crate) async fn resolve_feedback_claims(
     let principal = auth_of(&state, &headers, "write").await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
+    // FOR UPDATE is the serialization point for this whole endpoint: every
+    // resolution path locks the same memory row first, so two maintainers
+    // answering the same dispute queue up instead of interleaving. The second
+    // one re-reads the row (and the claim count) as the first one left it and
+    // takes the 409 below, rather than applying a second decision on top of a
+    // corpus that already moved.
+    //
     // Invisible memory ⇒ 404, not 403 (no oracle) — same stance as promotions.
-    let row = sqlx::query("SELECT team_id, kind FROM memories WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&mut *tx)
+    let row = sqlx::query(
+        "SELECT team_id, kind, status::text AS status, superseded_by
+         FROM memories WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal)?
+    .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
+
+    // A memory with no team is org-wide, and deprecating it is the most
+    // destructive act on this endpoint — so a NULL team_id must mean a STRICTER
+    // gate, not the absence of one. Skipping the check here (the old behaviour)
+    // let any principal holding `write` permanently deprecate an org-level
+    // memory. `is_any_maintainer` is the stance docs.rs:312-315 already takes for
+    // org-wide pages.
+    let allowed = match row.get::<Option<Uuid>, _>("team_id") {
+        Some(team_id) => is_maintainer(&mut tx, &principal, team_id).await?,
+        None => is_any_maintainer(&mut tx, &principal).await?,
+    };
+    if !allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "answering feedback claims requires a maintainer of the owning team \
+             (org-wide memories: a maintainer of any team)"
+                .into(),
+        )
+            .into());
+    }
+
+    // Nothing open ⇒ nothing to answer. Checked BEFORE any mutation and under
+    // the row lock: `claims_closed: 0` used to render as a success while a
+    // destructive resolution was applied to a dispute someone else had already
+    // settled. A resolution with no claim behind it is a 409, not a 200.
+    if brainiac_store::feedback::open_claim_count(&mut tx, id)
         .await
         .map_err(internal)?
-        .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
-    if let Some(team_id) = row.get::<Option<Uuid>, _>("team_id") {
-        if !is_maintainer(&mut tx, &principal, team_id).await? {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "answering feedback claims requires a maintainer of the owning team".into(),
-            )
-                .into());
-        }
+        == 0
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "no open claims against this memory — it has already been answered".into(),
+        )
+            .into());
     }
+
+    let status: String = row.get("status");
+    let superseded = row.get::<Option<Uuid>, _>("superseded_by").is_some();
 
     let mut new_valid_to: Option<chrono::DateTime<chrono::Utc>> = None;
     match body.resolution.as_str() {
         "reverified" => {
+            // "Still true, extend it" is incoherent against a row the org has
+            // already retired: extend_validity guards only on `superseded_by`,
+            // so without this a reverify would push valid_to a year out on a
+            // deprecated memory and report 200. Refuse the state, don't record it.
+            if status == "deprecated" || superseded {
+                return Err((
+                    StatusCode::CONFLICT,
+                    format!(
+                        "cannot re-verify a {} memory — its window is closed; \
+                         answer with `deprecated` or `dismissed`",
+                        if superseded {
+                            "superseded"
+                        } else {
+                            "deprecated"
+                        }
+                    ),
+                )
+                    .into());
+            }
             let kind = brainiac_core::MemoryKind::parse(&row.get::<String, _>("kind"));
             let days = body
                 .days
                 .unwrap_or_else(|| kind.map_or(365, |k| i64::from(k.default_ttl_days())))
                 .clamp(1, 3650);
-            new_valid_to = brainiac_store::memories::extend_validity(&mut tx, id, days)
+            // Every outcome is now answered honestly. The old code assigned this
+            // to `new_valid_to` and never looked: a None came back as
+            // `200 {valid_to: null}` and the console rendered "validity window
+            // extended" over a memory nothing had happened to.
+            match brainiac_store::memories::extend_validity(&mut tx, id, days)
                 .await
-                .map_err(internal)?;
+                .map_err(internal)?
+            {
+                brainiac_store::memories::ExtendOutcome::Extended(at) => new_valid_to = Some(at),
+                brainiac_store::memories::ExtendOutcome::Superseded => {
+                    return Err((
+                        StatusCode::CONFLICT,
+                        "memory was superseded concurrently — supersessions are final".into(),
+                    )
+                        .into())
+                }
+                brainiac_store::memories::ExtendOutcome::NotFound => {
+                    return Err((StatusCode::NOT_FOUND, "memory not found".into()).into())
+                }
+            }
         }
         "deprecated" => {
             // The reporters were right: end the window now and drop it out of
             // retrieval, without inventing a supersessor it doesn't have.
-            sqlx::query(
+            // Already-deprecated is not "success" — it means someone got here
+            // first, and the claim count above says the dispute is still open,
+            // so this is a genuinely conflicting state rather than a replay.
+            if status == "deprecated" || superseded {
+                return Err((StatusCode::CONFLICT, "memory is already deprecated".into()).into());
+            }
+            let changed = sqlx::query(
                 "UPDATE memories
                  SET status = 'deprecated'::memory_status, valid_to = now(), updated_at = now()
-                 WHERE id = $1",
+                 WHERE id = $1 AND status <> 'deprecated'::memory_status",
             )
             .bind(id)
             .execute(&mut *tx)
             .await
-            .map_err(internal)?;
+            .map_err(internal)?
+            .rows_affected();
+            // 0 rows under a held lock means the UPDATE policy refused a row the
+            // SELECT policy showed us. Never commit the claim closure on top of a
+            // deprecation that did not happen.
+            if changed != 1 {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "memory could not be deprecated under your scope".into(),
+                )
+                    .into());
+            }
         }
         _ => {} // dismissed: the memory stands untouched
     }
@@ -826,6 +920,16 @@ pub(crate) async fn resolve_feedback_claims(
         brainiac_store::feedback::resolve_claims(&mut tx, id, principal.user_id, &body.resolution)
             .await
             .map_err(internal)?;
+    // The count was non-zero under this same lock a few statements ago; if it is
+    // zero now the lock did not hold and every guard above was decided on stale
+    // state. Roll back rather than report a decision we cannot stand behind.
+    if closed == 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            "claims were closed concurrently — nothing was applied".into(),
+        )
+            .into());
+    }
     tx.commit().await.map_err(internal)?;
     Ok(Json(ResolveFeedbackResponse {
         memory_id: id,
@@ -833,6 +937,23 @@ pub(crate) async fn resolve_feedback_claims(
         claims_closed: closed,
         valid_to: new_valid_to,
     }))
+}
+
+/// Is this principal a maintainer of ANY team in their org? The gate for
+/// org-wide (`team_id IS NULL`) resources, which have no owning team to check
+/// against — mirrors the stance docs.rs takes for org-wide pages.
+pub(crate) async fn is_any_maintainer(
+    conn: &mut PgConnection,
+    principal: &Principal,
+) -> Result<bool, HttpError> {
+    let row = sqlx::query(
+        "SELECT 1 AS ok FROM team_members WHERE user_id = $1 AND role = 'maintainer' LIMIT 1",
+    )
+    .bind(principal.user_id)
+    .fetch_optional(conn)
+    .await
+    .map_err(internal)?;
+    Ok(row.is_some())
 }
 
 // ── freshness lifecycle (TTL + re-verification) ─────────────────────────
@@ -938,6 +1059,7 @@ pub(crate) struct ReverifyResponse {
         (status = 200, description = "Memory re-verified", body = ReverifyResponse),
         (status = 403, description = "Caller is not a maintainer of the owning team"),
         (status = 404, description = "Memory not found, or superseded (supersessions are final)"),
+        (status = 409, description = "Memory was superseded concurrently"),
     )
 )]
 pub(crate) async fn memory_reverify(
@@ -973,10 +1095,24 @@ pub(crate) async fn memory_reverify(
         .and_then(|b| b.days)
         .unwrap_or(default_days)
         .clamp(1, 3650);
-    let new_valid_to = brainiac_store::memories::extend_validity(&mut tx, id, days)
+    let new_valid_to = match brainiac_store::memories::extend_validity(&mut tx, id, days)
         .await
         .map_err(internal)?
-        .ok_or((StatusCode::NOT_FOUND, "memory not found".into()))?;
+    {
+        brainiac_store::memories::ExtendOutcome::Extended(at) => at,
+        // The lead SELECT already filtered `superseded_by IS NULL`, so this is a
+        // concurrent supersession rather than the 404 the old bare `None` gave.
+        brainiac_store::memories::ExtendOutcome::Superseded => {
+            return Err((
+                StatusCode::CONFLICT,
+                "memory was superseded concurrently — supersessions are final".into(),
+            )
+                .into())
+        }
+        brainiac_store::memories::ExtendOutcome::NotFound => {
+            return Err((StatusCode::NOT_FOUND, "memory not found".into()).into())
+        }
+    };
     // Re-verifying answers any open feedback claims against this memory —
     // a maintainer who just confirmed it is true has, in fact, responded.
     let claims_closed =
