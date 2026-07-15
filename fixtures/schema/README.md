@@ -24,5 +24,7 @@ or map globs once in VS Code settings:
   "fixtures/schema/temporal.schema.json": "fixtures/v1/temporal/asof.yaml",
   "fixtures/schema/qa.schema.json": "fixtures/v1/retrieval/qa.yaml",
   "fixtures/schema/leak.schema.json": "fixtures/v1/retrieval/leak.yaml",
+  "fixtures/schema/documents.schema.json": "fixtures/v1/documents/pages.yaml",
+  "fixtures/schema/drift.schema.json": "fixtures/v1/drift/docs.yaml",
 }
 ```

@@ -20,6 +20,14 @@
         "content": {
           "type": "string"
         },
+        "detail_md": {
+          "description": "KB-PLAN D3 — the artifact the statement summarizes, when the gold\nmemory has one (composition gold uses these to check that pages render\nstructure instead of paraphrasing it away).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "entities": {
           "type": "array",
           "default": [],
@@ -36,6 +44,11 @@
         "language": {
           "type": "string",
           "default": "en"
+        },
+        "lifecycle": {
+          "description": "KB-PLAN D2 — omit for shipped reality (the overwhelming default).",
+          "type": "string",
+          "default": "shipped"
         },
         "owner": {
           "description": "Required when visibility == private.",
@@ -72,6 +85,14 @@
         },
         "team": {
           "type": "string"
+        },
+        "title": {
+          "description": "A short label for the archive's row (migration 0023). Optional: the\nhand-authored v1 corpus predates it and falls back to `content`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "valid_from": {
           "type": [

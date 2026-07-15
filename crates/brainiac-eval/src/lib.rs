@@ -19,6 +19,7 @@
 
 pub mod contradiction_profile;
 pub mod docs_profile;
+pub mod drift_profile;
 pub mod extraction_profile;
 pub mod gates;
 pub mod grid;
@@ -29,6 +30,7 @@ pub mod retrieval_profile;
 pub mod seed;
 
 pub use contradiction_profile::ContradictionReport;
+pub use drift_profile::DriftReport;
 pub use extraction_profile::ExtractionReport;
 pub use pipeline_profile::PipelineReport;
 pub use report::RetrievalReport;

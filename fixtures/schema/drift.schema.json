@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DriftFile",
+  "description": "The synthetic stale-docs corpus: human-authored documents whose claims are\nlabeled against the gold memory corpus. This is the instrument-calibration\ngold for cross-documentation intelligence (KB-PLAN follow-up #2) — the\ndrift detector must find the claims restating superseded beliefs WITHOUT\nattacking the fresh ones that share their vocabulary.",
+  "type": "object",
+  "properties": {
+    "docs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DriftDocFx"
+      }
+    }
+  },
+  "required": [
+    "docs"
+  ],
+  "$defs": {
+    "DriftDocFx": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "description": "The document markdown, as a human left it.",
+          "type": "string"
+        },
+        "gold": {
+          "description": "Every substantive claim in `body`, labeled. Fixture discipline: label\nthem ALL — an unlabeled claim the detector flags cannot be scored.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriftGoldFx"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "body",
+        "gold"
+      ]
+    },
+    "DriftGoldFx": {
+      "type": "object",
+      "properties": {
+        "claim": {
+          "description": "Substring locating the claim in `body` — must match exactly one of the\ndetector's split claims (the profile refuses the fixture otherwise).",
+          "type": "string"
+        },
+        "label": {
+          "description": "`drifted` (restates a superseded belief) | `aligned` (matches current\ncanon) | `unmatched` (the corpus knows nothing about it — a harvest\ncandidate, NOT drift).",
+          "type": "string"
+        },
+        "propose": {
+          "description": "For `drifted`: the fixture id of the CURRENT memory the detector should\npropose as the correction (the terminal of the supersession chain).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "claim",
+        "label"
+      ]
+    }
+  }
+}

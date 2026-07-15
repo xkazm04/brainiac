@@ -729,6 +729,23 @@ async fn compose_sweep(
             }
         }
 
+        // Standards pages (LIBRARY-PLAN L8): a stack whose adopted rules have
+        // earned a page gets one. Deliberately after the digest and before the
+        // compose tick, so a page scaffolded this pass renders in the same
+        // pass — a projection needs no model call, so there is nothing to
+        // spare it from.
+        let mut tx = store.worker_tx(&principal).await?;
+        match brainiac_pipeline::standards_page::scaffold_standards_pages(&mut tx, org_id, 5).await
+        {
+            Ok(created) => {
+                stats.scaffolded += created.len();
+                tx.commit().await?;
+            }
+            Err(e) => {
+                tracing::warn!(org = %org_id, error = %e, "standards-page scaffolding failed");
+            }
+        }
+
         let c = brainiac_pipeline::worker::compose_tick(
             store, providers, embedder, version, org_id, 20,
         )
@@ -1085,6 +1102,74 @@ async fn eval_extraction(
 /// The extraction pipeline is idempotent per source (redelivery dedup), so
 /// WITHOUT this a second sample would extract nothing and report a perfect,
 /// meaningless zero-variance score.
+/// The `drift` profile (Level 2 MVP): score the docs-drift detector against
+/// the synthetic stale-docs corpus. DB-free by design — the instrument under
+/// test is claim-vs-corpus classification, and the corpus fits in memory. The
+/// hard gate is the false alarm: a gold-aligned claim flagged as drift means
+/// the detector attacks correct docs, which makes the feature unshippable.
+async fn eval_drift(
+    fx: &brainiac_fixtures::Fixtures,
+    embedder: &dyn Embedder,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::drift_profile::{hard_failures, regression_failures, run, DriftBaseline};
+
+    let report = run(&fx.memories, &fx.drift, embedder).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "drift report written");
+        }
+        None => println!("{json}"),
+    }
+    tracing::info!(
+        gold_drifted = report.gold_drifted,
+        drift_recall = report.drift_recall,
+        drift_precision = report.drift_precision,
+        proposal_accuracy = report.proposal_accuracy,
+        false_alarms = report.false_alarms.len(),
+        "drift detection quality"
+    );
+
+    let hard = hard_failures(&report);
+    if !hard.is_empty() {
+        eprintln!("DRIFT HARD GATES FAILED:\n{}", hard.join("\n"));
+        std::process::exit(1);
+    }
+
+    if let Some(path) = write_baseline_path {
+        let baseline = DriftBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(path, "drift baseline recalibrated");
+    }
+    if let Some(path) = baseline_path {
+        let baseline: DriftBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "DRIFT GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "drift regression gates passed");
+    }
+    Ok(())
+}
+
 async fn reset_tenant(admin: &sqlx::PgPool) -> Result<()> {
     sqlx::query(
         "TRUNCATE memory_entities, memory_embeddings, canonical_entity_embeddings, entity_links,
@@ -1115,10 +1200,33 @@ async fn eval(
     anyhow::ensure!(
         matches!(
             profile,
-            "retrieval" | "resolution" | "pipeline" | "contradiction" | "extraction" | "docs"
+            "retrieval"
+                | "resolution"
+                | "pipeline"
+                | "contradiction"
+                | "extraction"
+                | "docs"
+                | "drift"
         ),
-        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|extraction|docs"
+        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|extraction|docs|drift"
     );
+
+    // The drift profile is deliberately DB-free — instrument calibration over
+    // the fixture corpus itself — so it dispatches before any database setup
+    // and runs anywhere the fixtures do.
+    if profile == "drift" {
+        let fx = brainiac_fixtures::load(fixtures_dir).context("loading fixtures")?;
+        let embedder = embedder_select(embedder_name)?;
+        return eval_drift(
+            &fx,
+            embedder.as_ref(),
+            out,
+            baseline_path,
+            write_baseline_path,
+        )
+        .await;
+    }
+
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
 

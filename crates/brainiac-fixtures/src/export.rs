@@ -50,6 +50,16 @@ fn schemas() -> Vec<(&'static str, &'static str, Schema)> {
             "retrieval/leak.yaml",
             schema_for!(LeakFile),
         ),
+        (
+            "documents.schema.json",
+            "documents/pages.yaml",
+            schema_for!(DocumentsFile),
+        ),
+        (
+            "drift.schema.json",
+            "drift/docs.yaml",
+            schema_for!(DriftFile),
+        ),
     ]
 }
 

@@ -24,6 +24,8 @@ pub struct Fixtures {
     /// Composition gold (EVAL §2.6). Absent in older fixture trees — an empty
     /// list simply means the `docs` profile has nothing to score.
     pub documents: DocumentsFile,
+    /// Docs-drift gold (Level 2). Same absence semantics as `documents`.
+    pub drift: DriftFile,
 }
 
 fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -95,6 +97,25 @@ pub fn load_unvalidated(root: impl AsRef<Path>) -> Result<Fixtures> {
                 );
             } else {
                 DocumentsFile { documents: vec![] }
+            }
+        },
+        drift: {
+            // Same vacuous-pass refusal as `documents/`: a present-but-empty
+            // drift directory means someone moved the gold, not that the tree
+            // has no drift profile.
+            let dir = root.join("drift");
+            let p = dir.join("docs.yaml");
+            if p.exists() {
+                read_yaml(&p)?
+            } else if dir.exists() {
+                bail!(
+                    "fixtures: {} exists but docs.yaml is missing — the drift profile \
+                     would score zero documents and report green. Restore the file, or \
+                     remove the directory if this tree has no drift gold.",
+                    dir.display()
+                );
+            } else {
+                DriftFile::default()
             }
         },
         root,

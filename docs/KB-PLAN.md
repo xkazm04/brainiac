@@ -107,6 +107,14 @@ Ordered roughly by leverage; none block the phase ladder.
    captured as extraction sources instead of overwritten — closes the D4
    one-way limitation). Prerequisite: extraction recall gate green; design
    its own eval fixtures first (a synthetic stale-docs corpus for Meridian).
+   *Eval-first prerequisite shipped 2026-07-15* (see status log): the
+   stale-docs corpus (`fixtures/v1/drift/docs.yaml`), the drift detector MVP,
+   and the `drift` eval profile with a zero-tolerance false-alarm gate;
+   deterministic baseline committed at recall/precision/proposal 1.0. Next
+   rungs, in order: a real-embedder calibration run (qwen `text-embedding-v4`
+   baseline), then the production integration — scanning real doc trees and
+   routing findings through the review gate as proposed supersessions — then
+   Confluence harvest.
 3. **Proactive digest** (UAT P1.5): ~~shipped 2026-07-15~~ exactly as the
    design note prescribed — `doc_kind: digest` + `window_days` on the binding,
    composed/reviewed/read through the existing pipeline (see status log).
@@ -464,6 +472,33 @@ Ordered roughly by leverage; none block the phase ladder.
         it already has. Pinned end-to-end in `docs_pg`: activity floor,
         idempotence, window filtering (40-day-old belief excluded), first-
         revision review, then window-roll → auto-published.
+- [x] **Level 2, rung one: docs-drift eval gold + detector MVP** (2026-07-15)
+      — the eval-first prerequisite follow-up #2 demanded, and nothing more.
+      - `fixtures/v1/drift/docs.yaml`: three synthetic human docs labeled
+        against the gold memory corpus — two stale (checkout v1, the 10s PSP
+        timeout, Jenkins deploys, the 2s retry standard) and one FRESH
+        honeypot whose claims share the stale beliefs' vocabulary. The linter
+        checks the gold (labels, proposals resolve, proposals not themselves
+        stale, claims locate in the body).
+      - `drift_profile`: split claims → embed → nearest CURRENT vs nearest
+        SUPERSEDED memory. Drift = close to a superseded belief AND
+        meaningfully closer to it than to any current one (margin 0.05 over
+        threshold 0.70); the proposal is the supersession chain's terminal.
+        Three verdicts by design: `unmatched` is a HARVEST candidate, never
+        drift — a detector that flags what it does not recognize teaches
+        authors to ignore it.
+      - HARD gate, zero tolerance: a gold-aligned claim flagged as drift.
+        Automation that attacks correct docs is worse than none. Soft gates on
+        recall/precision/proposal-accuracy vs a committed baseline (±0.10;
+        cross-embedder comparison refused).
+      - Deliberately DB-free (`eval --profile drift` needs no DATABASE_URL) —
+        the instrument is claim-vs-corpus classification; RLS enters at the
+        production-integration rung, not here.
+      - Measured: deterministic-bow baseline 1.0/1.0/1.0 with the margin doing
+        real work (the 10s-timeout claim scores 0.935 stale vs 0.73 fresh —
+        both above threshold; the margin decides). Unit tests pin the margin
+        honeypot, chain-terminal proposals, the harvest bucket, and the
+        false-alarm hard gate.
 
 ## The KB line is complete
 

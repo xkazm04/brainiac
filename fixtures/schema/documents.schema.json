@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DocumentsFile",
+  "type": "object",
+  "properties": {
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DocumentFx"
+      }
+    }
+  },
+  "required": [
+    "documents"
+  ],
+  "$defs": {
+    "BindingFx": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "kinds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "lifecycle": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "query": {
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "DocSectionFx": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BindingFx"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "heading": {
+          "type": "string"
+        },
+        "mode": {
+          "description": "composed | pinned",
+          "type": "string"
+        },
+        "must_cover": {
+          "description": "Claim gists the composed section must contain (semantically matched).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "must_mark_unshipped": {
+          "description": "The section's knowledge is not-yet-shipped, so the prose must SAY so\n(KB-PLAN D2) — a page that renders intent as current architecture is\nlying in the most common way a wiki lies.",
+          "type": "boolean",
+          "default": false
+        },
+        "pinned_content": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "heading",
+        "mode"
+      ]
+    },
+    "DocumentFx": {
+      "type": "object",
+      "properties": {
+        "doc_kind": {
+          "type": "string",
+          "default": "topic_page"
+        },
+        "forbidden_memories": {
+          "description": "Memories the page's audience is NOT entitled to. Surfacing one is a\nbuild failure — see the zero-tolerance gate in EVAL §2.6.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "must_cite": {
+          "type": "boolean",
+          "default": false
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DocSectionFx"
+          }
+        },
+        "slug": {
+          "type": "string"
+        },
+        "staleness_case": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StalenessCaseFx"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "team": {
+          "description": "Owning team (a team page's audience; recorded for org pages too).",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "visibility": {
+          "type": "string",
+          "default": "org"
+        }
+      },
+      "required": [
+        "id",
+        "slug",
+        "title",
+        "team",
+        "sections"
+      ]
+    },
+    "StalenessCaseFx": {
+      "type": "object",
+      "properties": {
+        "expect_dirty": {
+          "type": "boolean",
+          "default": false
+        },
+        "supersede": {
+          "$ref": "#/$defs/SupersedeFx"
+        }
+      },
+      "required": [
+        "supersede"
+      ]
+    },
+    "SupersedeFx": {
+      "type": "object",
+      "properties": {
+        "new": {
+          "type": "string"
+        },
+        "old": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "old",
+        "new"
+      ]
+    }
+  }
+}

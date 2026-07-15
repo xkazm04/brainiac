@@ -1,0 +1,7 @@
+{
+  "embedding_model": "deterministic-bow-v1",
+  "fixture_version": "v1",
+  "drift_recall": 1.0,
+  "drift_precision": 1.0,
+  "proposal_accuracy": 1.0
+}

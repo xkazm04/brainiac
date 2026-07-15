@@ -1,0 +1,79 @@
+# Docs-drift gold (Level 2, KB-PLAN follow-up #2) — the synthetic stale-docs
+# corpus for Meridian. Three human-authored documents scored against the gold
+# memory corpus in memories/gold.yaml:
+#
+# - Two STALE docs restating beliefs the corpus has since superseded (checkout
+#   v1, the 10s PSP timeout, Jenkins deploys, the 2s retry standard). The
+#   detector must flag exactly these claims and propose the terminal of each
+#   supersession chain.
+# - One FRESH doc — the honeypot. Its claims state CURRENT canon while sharing
+#   most of their vocabulary with the superseded beliefs ("checkout v1",
+#   "psp-gateway client timeout", "deploy-tools"). Flagging any of them is the
+#   hard-gate failure: automation that attacks correct docs teaches authors to
+#   dismiss it, and then they miss the real drift.
+#
+# Fixture discipline: every substantive claim in a body is labeled. `unmatched`
+# marks knowledge the corpus does not hold — a harvest candidate, never drift.
+docs:
+  - id: drift-doc-pay-onboarding
+    title: "Payments onboarding guide (last touched 2025-Q4)"
+    body: |
+      # Payments onboarding guide
+
+      ## Checkout
+      checkout v1 is the live checkout flow for all merchants.
+      New merchants complete KYC through the merchant portal wizard before their first settlement.
+
+      ## Integrations
+      the psp-gateway client timeout is 10 seconds.
+      the refund-worker retry cap is 30s with jitter, aligned to std-retry policy.
+    gold:
+      - claim: "checkout v1 is the live checkout flow for all merchants"
+        label: drifted
+        propose: mem-pay-0022
+      - claim: "New merchants complete KYC through the merchant portal wizard"
+        label: unmatched
+      - claim: "the psp-gateway client timeout is 10 seconds"
+        label: drifted
+        propose: mem-pay-0064
+      - claim: "refund-worker retry cap is 30s with jitter"
+        label: aligned
+
+  - id: drift-doc-plat-deploys
+    title: "Deploying a service (runbook, unowned)"
+    body: |
+      # Deploying a service
+
+      production deploys go through the Jenkins pipelines in deploy-tools.
+      the std-retry policy caps retries at 2 seconds with 3 attempts for all internal service calls.
+
+      ## Observability
+      otel-collector-config drops spans when the batch processor queue exceeds 5k, so raise send_batch_size before scaling ingest.
+      Release announcements are posted in the deploys channel every Thursday afternoon.
+    gold:
+      - claim: "production deploys go through the Jenkins pipelines in deploy-tools"
+        label: drifted
+        propose: mem-plat-0111
+      - claim: "the std-retry policy caps retries at 2 seconds with 3 attempts"
+        label: drifted
+        propose: mem-pay-0043
+      - claim: "otel-collector-config drops spans when the batch processor queue exceeds 5k"
+        label: aligned
+      - claim: "Release announcements are posted in the deploys channel"
+        label: unmatched
+
+  - id: drift-doc-pay-current
+    title: "Current state of payments (reviewed 2026-06)"
+    body: |
+      # Current state of payments
+
+      checkout v2 replaced checkout v1 as the live checkout flow, and the v1 endpoints are frozen.
+      the psp-gateway client timeout was raised to 30 seconds after the PSP incident review.
+      ArgoCD is the only supported production deploy path, and deploy-tools wraps the app-of-apps pattern.
+    gold:
+      - claim: "checkout v2 replaced checkout v1 as the live checkout flow"
+        label: aligned
+      - claim: "psp-gateway client timeout was raised to 30 seconds"
+        label: aligned
+      - claim: "ArgoCD is the only supported production deploy path"
+        label: aligned

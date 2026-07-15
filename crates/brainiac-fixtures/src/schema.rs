@@ -131,6 +131,44 @@ pub struct RelationFx {
     pub dst: String,
 }
 
+// ── drift/docs.yaml (Level 2 — docs-drift gold) ─────────────────────────
+
+/// The synthetic stale-docs corpus: human-authored documents whose claims are
+/// labeled against the gold memory corpus. This is the instrument-calibration
+/// gold for cross-documentation intelligence (KB-PLAN follow-up #2) — the
+/// drift detector must find the claims restating superseded beliefs WITHOUT
+/// attacking the fresh ones that share their vocabulary.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct DriftFile {
+    pub docs: Vec<DriftDocFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DriftDocFx {
+    pub id: String,
+    pub title: String,
+    /// The document markdown, as a human left it.
+    pub body: String,
+    /// Every substantive claim in `body`, labeled. Fixture discipline: label
+    /// them ALL — an unlabeled claim the detector flags cannot be scored.
+    pub gold: Vec<DriftGoldFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DriftGoldFx {
+    /// Substring locating the claim in `body` — must match exactly one of the
+    /// detector's split claims (the profile refuses the fixture otherwise).
+    pub claim: String,
+    /// `drifted` (restates a superseded belief) | `aligned` (matches current
+    /// canon) | `unmatched` (the corpus knows nothing about it — a harvest
+    /// candidate, NOT drift).
+    pub label: String,
+    /// For `drifted`: the fixture id of the CURRENT memory the detector should
+    /// propose as the correction (the terminal of the supersession chain).
+    #[serde(default)]
+    pub propose: Option<String>,
+}
+
 // ── documents/pages.yaml (EVAL.md §2.6 — composition gold) ──────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

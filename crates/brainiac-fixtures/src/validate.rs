@@ -82,6 +82,7 @@ const F_TEMPORAL: &str = "temporal/asof.yaml";
 const F_QA: &str = "retrieval/qa.yaml";
 const F_LEAK: &str = "retrieval/leak.yaml";
 const F_DOCUMENTS: &str = "documents/pages.yaml";
+const F_DRIFT: &str = "drift/docs.yaml";
 
 /// Flat-string view of [`lint`] — the loader's bail-on-invalid contract.
 pub fn validate(fx: &Fixtures) -> Vec<String> {
@@ -249,6 +250,77 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                     F_DOCUMENTS,
                     d.id.clone(),
                     format!("unknown section mode `{other}`"),
+                ),
+            }
+        }
+    }
+
+    // ── docs-drift gold (Level 2) ────────────────────────────────────────
+    // The `propose` pointer is this profile's leak-list equivalent: a typo'd id
+    // would make proposal accuracy score against a memory that does not exist.
+    check_unique(
+        fx.drift.docs.iter().map(|d| d.id.as_str()),
+        "drift doc",
+        F_DRIFT,
+        &mut e,
+    );
+    for d in &fx.drift.docs {
+        for (i, g) in d.gold.iter().enumerate() {
+            let item = format!("{}[{i}]", d.id);
+            if !d.body.contains(g.claim.as_str()) {
+                e.err(
+                    "drift-claim-missing",
+                    F_DRIFT,
+                    item.clone(),
+                    format!(
+                        "gold claim `{}` is not a substring of the doc body",
+                        g.claim
+                    ),
+                );
+            }
+            match g.label.as_str() {
+                "drifted" => match &g.propose {
+                    None => e.err(
+                        "drift-propose-missing",
+                        F_DRIFT,
+                        item,
+                        "a drifted claim must name the memory to propose".into(),
+                    ),
+                    Some(p) => {
+                        match memories.get(p.as_str()) {
+                            None => e.err(
+                                "drift-propose-unknown",
+                                F_DRIFT,
+                                item,
+                                format!("propose references unknown memory `{p}`"),
+                            ),
+                            // Proposing a superseded memory would send the doc
+                            // author from one stale belief to another.
+                            Some(m) if m.superseded_by.is_some() => e.err(
+                                "drift-propose-stale",
+                                F_DRIFT,
+                                item,
+                                format!("propose `{p}` is itself superseded"),
+                            ),
+                            Some(_) => {}
+                        }
+                    }
+                },
+                "aligned" | "unmatched" => {
+                    if g.propose.is_some() {
+                        e.err(
+                            "drift-propose-shape",
+                            F_DRIFT,
+                            item,
+                            format!("a `{}` claim must not carry a proposal", g.label),
+                        );
+                    }
+                }
+                other => e.err(
+                    "drift-label",
+                    F_DRIFT,
+                    item,
+                    format!("unknown label `{other}` (drifted | aligned | unmatched)"),
                 ),
             }
         }
