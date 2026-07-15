@@ -354,7 +354,7 @@ async fn serve(
     tracing::info!(%bind, with_worker, "brainiac REST listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            shutdown_signal().await;
             tracing::info!("shutdown signal received; draining");
             let _ = shutdown_tx.send(true);
         })
@@ -418,14 +418,49 @@ async fn worker(mock: bool) -> Result<()> {
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
-    // Standalone: own the ctrl_c → shutdown wiring the server otherwise provides.
+    // Standalone: own the signal → shutdown wiring the server otherwise provides.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        shutdown_signal().await;
         tracing::info!("shutdown signal received; draining");
         let _ = shutdown_tx.send(true);
     });
     worker_loop(store, embedder, mock, shutdown_rx).await
+}
+
+/// Resolve when the process is asked to stop — SIGINT **or** SIGTERM.
+///
+/// `tokio::signal::ctrl_c()` is SIGINT only, but every container orchestrator
+/// (Cloud Run, k8s, systemd `stop`) sends SIGTERM on deploy/scale-down and never
+/// SIGINT. A ctrl_c-only future therefore left the whole graceful-shutdown path as
+/// dead code in the primary deploy target: the process ran until the orchestrator's
+/// grace timer elapsed and was then SIGKILLed, dropping in-flight requests (a
+/// search, a token mint, a /v1/memories write mid-commit) on EVERY rollout — and
+/// `serve --with-worker` never reached `worker_handle.await`, so the worker was
+/// never told to finish its batch.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(e) => {
+                // Registering the handler failed: degrade to SIGINT rather than
+                // never shutting down at all.
+                tracing::warn!(error = %e, "cannot listen for SIGTERM; ctrl_c only");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 /// Adaptive idle polling bounds (Direction 1): when the queue is empty the loop
