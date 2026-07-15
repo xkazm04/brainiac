@@ -397,13 +397,28 @@ pub async fn for_entities(
     if entity_ids.is_empty() {
         return Ok(Vec::new());
     }
+    // Dedupe and rank are NESTED deliberately. `DISTINCT ON (m.id)` forces the
+    // ORDER BY to lead with `m.id`, which also orders the FINAL result set — so
+    // `… ORDER BY m.id, m.created_at DESC LIMIT $2` returned the N smallest UUIDs
+    // (and the trailing `created_at DESC` was dead: it only breaks ties within one
+    // m.id group, and there is exactly one row per id). Retrieval scores every
+    // graph extra with the identical `graph_relevance(anchor_strength)`, so this
+    // SELECTION is the whole result — an arbitrary, UUID-keyed pick for the
+    // headline "cross-team knowledge surfaces here" feature. With time-ordered
+    // (v7) UUIDs it deterministically returned the OLDEST, the opposite of intent.
+    //
+    // The inner query only dedupes the entity join fan-out; the outer one ranks
+    // and applies the cap, so the limit keeps the most recent.
     let rows = sqlx::query(&format!(
-        "SELECT DISTINCT ON (m.id) {cols}
-         FROM memories m
-         JOIN memory_entities me ON me.memory_id = m.id
-         WHERE me.entity_id = ANY($1)
-           AND m.status IN ('canonical', 'candidate')
-         ORDER BY m.id, m.created_at DESC
+        "SELECT * FROM (
+             SELECT DISTINCT ON (m.id) {cols}
+             FROM memories m
+             JOIN memory_entities me ON me.memory_id = m.id
+             WHERE me.entity_id = ANY($1)
+               AND m.status IN ('canonical', 'candidate')
+             ORDER BY m.id
+         ) s
+         ORDER BY s.created_at DESC
          LIMIT $2",
         cols = MEMORY_COLUMNS
             .split(',')
