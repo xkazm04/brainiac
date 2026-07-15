@@ -47,6 +47,26 @@ pub async fn resolve(pool: &PgPool, token_hash: &[u8]) -> Result<Option<Resolved
 /// Team memberships for a token's user, resolved at auth time so membership
 /// changes take effect immediately (unlike the static env stub).
 pub async fn team_ids_of(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<Vec<Uuid>> {
+    // Scope this lookup to the token's own org BEFORE querying.
+    //
+    // `team_members` is RLS'd on `current_setting('app.org_id')::uuid`, but this
+    // runs during auth resolution — BEFORE a principal exists, because it is what
+    // builds one — so no `scoped_tx` has set that GUC. Postgres does not treat an
+    // unset custom parameter as NULL: `current_setting` ERRORS with
+    // "unrecognized configuration parameter", which surfaced as a 500 on EVERY
+    // request made with a managed `brk_` token. Env bootstrap tokens resolve
+    // earlier and never reach here, which is why the whole managed-token surface
+    // could be broken without a single test noticing.
+    //
+    // Setting the GUC from `org_id` is not a widening: that value comes from the
+    // token's own row, which is the authority on which org the token belongs to.
+    // We are scoping the membership read to exactly the tenant the caller already
+    // proved they are.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('app.org_id', $1, true)")
+        .bind(org_id.to_string())
+        .execute(&mut *tx)
+        .await?;
     let rows = sqlx::query(
         "SELECT tm.team_id FROM team_members tm
          JOIN teams t ON t.id = tm.team_id
@@ -54,8 +74,9 @@ pub async fn team_ids_of(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<V
     )
     .bind(user_id)
     .bind(org_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(rows.iter().map(|r| r.get("team_id")).collect())
 }
 
