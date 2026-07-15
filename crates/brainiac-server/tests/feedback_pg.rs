@@ -90,6 +90,8 @@ async fn dispute_resolution_gates_and_no_ops() {
         eprintln!("SKIP: DATABASE_URL not set");
         return;
     };
+    // Cross-binary + in-process serialization: see brainiac_store::test_support.
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
