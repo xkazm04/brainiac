@@ -507,13 +507,6 @@
           "businessFeature": "Console: Health + Analytics + Observatory + Ops",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/health/page.tsx",
-            "console/app/console/(modules)/health/loading.tsx",
-            "console/app/console/(modules)/analytics/page.tsx",
-            "console/app/console/(modules)/analytics/loading.tsx",
-            "console/app/console/(modules)/analytics/error.tsx",
-            "console/app/console/(modules)/divergence/page.tsx",
-            "console/app/console/(modules)/divergence/loading.tsx",
             "console/src/health/KnowledgeHealth.tsx",
             "console/src/health/health-data.ts",
             "console/src/health/age.ts",
@@ -523,7 +516,13 @@
             "console/src/divergence/PracticeDivergence.tsx",
             "console/src/divergence/divergence-data.ts",
             "console/src/ops/SweepControl.tsx",
-            "console/src/ops/sweep-actions.ts"
+            "console/src/ops/sweep-actions.ts",
+            "console/app/console/modules/analytics/Module.tsx",
+            "console/app/console/modules/analytics/Skeleton.tsx",
+            "console/app/console/modules/health/Module.tsx",
+            "console/app/console/modules/health/Skeleton.tsx",
+            "console/app/console/modules/divergence/Module.tsx",
+            "console/app/console/modules/divergence/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
@@ -534,10 +533,6 @@
           "businessFeature": "Console: Docs Reader + Editor",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/docs/page.tsx",
-            "console/app/console/(modules)/docs/loading.tsx",
-            "console/app/console/(modules)/docs/[slug]/page.tsx",
-            "console/app/console/(modules)/docs/[slug]/actions.ts",
             "console/src/docs/DocReader.tsx",
             "console/src/docs/DocPage.tsx",
             "console/src/docs/DocIndex.tsx",
@@ -548,7 +543,9 @@
             "console/src/docs/facets.ts",
             "console/src/docs/markdown.ts",
             "console/src/docs/edit-copy.test.ts",
-            "console/src/docs/markdown.test.ts"
+            "console/src/docs/markdown.test.ts",
+            "console/app/console/modules/docs/Module.tsx",
+            "console/app/console/modules/docs/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
@@ -559,13 +556,12 @@
           "businessFeature": "Console: Memory Archive + Inspector",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/memories/Archive.tsx",
-            "console/app/console/(modules)/memories/MemoryInspector.tsx",
-            "console/app/console/(modules)/memories/archive-data.ts",
-            "console/app/console/(modules)/memories/useMemoryDetail.ts",
-            "console/app/console/(modules)/memories/page.tsx",
-            "console/app/console/(modules)/memories/loading.tsx",
-            "console/app/console/(modules)/memories/error.tsx"
+            "console/app/console/modules/memories/Archive.tsx",
+            "console/app/console/modules/memories/MemoryInspector.tsx",
+            "console/app/console/modules/memories/archive-data.ts",
+            "console/app/console/modules/memories/useMemoryDetail.ts",
+            "console/app/console/modules/memories/Module.tsx",
+            "console/app/console/modules/memories/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
@@ -576,12 +572,11 @@
           "businessFeature": "Console: API Keys Management",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/keys/KeyShared.tsx",
-            "console/app/console/(modules)/keys/Keys.tsx",
-            "console/app/console/(modules)/keys/keys-data.ts",
-            "console/app/console/(modules)/keys/page.tsx",
-            "console/app/console/(modules)/keys/loading.tsx",
-            "console/app/console/(modules)/keys/error.tsx"
+            "console/app/console/modules/keys/KeyShared.tsx",
+            "console/app/console/modules/keys/Keys.tsx",
+            "console/app/console/modules/keys/keys-data.ts",
+            "console/app/console/modules/keys/Module.tsx",
+            "console/app/console/modules/keys/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
@@ -592,15 +587,14 @@
           "businessFeature": "Console: Ingest Monitor",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/ingest/IngestMonitor.tsx",
-            "console/app/console/(modules)/ingest/SubmitBox.tsx",
-            "console/app/console/(modules)/ingest/ingest-data.ts",
-            "console/app/console/(modules)/ingest/useIngestFeed.ts",
-            "console/app/console/(modules)/ingest/page.tsx",
-            "console/app/console/(modules)/ingest/loading.tsx",
-            "console/app/console/(modules)/ingest/error.tsx",
-            "console/app/console/(modules)/ingest/views/ManifestView.tsx",
-            "console/app/console/(modules)/ingest/views/AirlockView.tsx"
+            "console/app/console/modules/ingest/IngestMonitor.tsx",
+            "console/app/console/modules/ingest/SubmitBox.tsx",
+            "console/app/console/modules/ingest/ingest-data.ts",
+            "console/app/console/modules/ingest/useIngestFeed.ts",
+            "console/app/console/modules/ingest/views/ManifestView.tsx",
+            "console/app/console/modules/ingest/views/AirlockView.tsx",
+            "console/app/console/modules/ingest/Module.tsx",
+            "console/app/console/modules/ingest/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
@@ -611,32 +605,30 @@
           "businessFeature": "Console: Knowledge Graph Explorer",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/graph/CortexMap.tsx",
-            "console/app/console/(modules)/graph/DetailSections.tsx",
-            "console/app/console/(modules)/graph/cortex-data.ts",
-            "console/app/console/(modules)/graph/useCanonicalDetail.ts",
-            "console/app/console/(modules)/graph/page.tsx",
-            "console/app/console/(modules)/graph/loading.tsx",
-            "console/app/console/(modules)/graph/error.tsx",
-            "console/app/console/(modules)/graph/views/StarChartView.tsx",
-            "console/app/console/(modules)/graph/views/DepthOfFieldView.tsx"
+            "console/app/console/modules/graph/CortexMap.tsx",
+            "console/app/console/modules/graph/DetailSections.tsx",
+            "console/app/console/modules/graph/cortex-data.ts",
+            "console/app/console/modules/graph/useCanonicalDetail.ts",
+            "console/app/console/modules/graph/views/StarChartView.tsx",
+            "console/app/console/modules/graph/views/DepthOfFieldView.tsx",
+            "console/app/console/modules/graph/Module.tsx",
+            "console/app/console/modules/graph/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
         },
         {
           "name": "Console: Disputes Bench",
-          "description": "Disputes Bench: maintainers adjudicate contradictions (resolve/coexist/dismiss) via server actions.",
+          "description": "Disputes Bench: maintainers triage reader FEEDBACK claims on a single memory (reverified/deprecated/dismissed) via server actions. NOTE: this is NOT contradiction adjudication — the contradiction endpoints (POST /v1/reviews/contradictions/{id}/resolve) are server-complete but have no console UI.",
           "businessFeature": "Console: Disputes Bench",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/disputes/DisputeBench.tsx",
-            "console/app/console/(modules)/disputes/DecisionBar.tsx",
-            "console/app/console/(modules)/disputes/disputes-data.ts",
-            "console/app/console/(modules)/disputes/actions.ts",
-            "console/app/console/(modules)/disputes/page.tsx",
-            "console/app/console/(modules)/disputes/loading.tsx",
-            "console/app/console/(modules)/disputes/error.tsx"
+            "console/app/console/modules/disputes/DisputeBench.tsx",
+            "console/app/console/modules/disputes/DecisionBar.tsx",
+            "console/app/console/modules/disputes/disputes-data.ts",
+            "console/app/console/modules/disputes/actions.ts",
+            "console/app/console/modules/disputes/Module.tsx",
+            "console/app/console/modules/disputes/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
@@ -647,42 +639,33 @@
           "businessFeature": "Console: Promotion Review Queue",
           "category": "ui",
           "filePaths": [
-            "console/app/console/(modules)/reviews/page.tsx",
-            "console/app/console/(modules)/reviews/actions.ts",
-            "console/app/console/(modules)/reviews/review-buttons.tsx",
-            "console/app/console/(modules)/reviews/loading.tsx",
-            "console/app/console/(modules)/reviews/error.tsx"
+            "console/app/console/modules/reviews/actions.ts",
+            "console/app/console/modules/reviews/review-buttons.tsx",
+            "console/app/console/modules/reviews/Module.tsx",
+            "console/app/console/modules/reviews/Skeleton.tsx"
           ],
           "target": null,
           "apiRoutes": []
         },
         {
           "name": "Analytics Observatory & Knowledge Graph",
-          "description": "Governance-health analytics dashboards (Mission Control and Transmission variants) and the entity knowledge-graph explorer with canonical hubs and evidence pointers.",
+          "description": "RETIRED 2026-07-15: superseded by the granular Console: * contexts after the module refactor. Kept as a tombstone; owns no files.",
           "businessFeature": "Analytics Observatory & Knowledge Graph",
           "category": "ui",
-          "filePaths": [
-            "console/app/analytics/page.tsx",
-            "console/app/analytics/observatory-data.ts",
-            "console/app/analytics/variants/MissionControlVariant.tsx",
-            "console/app/analytics/variants/TransmissionVariant.tsx",
-            "console/app/graph/page.tsx"
-          ],
+          "filePaths": [],
           "target": null,
-          "apiRoutes": []
+          "apiRoutes": [],
+          "status": "retired"
         },
         {
           "name": "Promotion Review Queue",
-          "description": "Maintainers review pending knowledge promotions and approve or reject them via server actions, closing the human-in-the-loop governance gate.",
+          "description": "RETIRED 2026-07-15: superseded by the granular Console: * contexts after the module refactor. Kept as a tombstone; owns no files.",
           "businessFeature": "Promotion Review Queue",
           "category": "ui",
-          "filePaths": [
-            "console/app/reviews/page.tsx",
-            "console/app/reviews/actions.ts",
-            "console/app/reviews/review-buttons.tsx"
-          ],
+          "filePaths": [],
           "target": null,
-          "apiRoutes": []
+          "apiRoutes": [],
+          "status": "retired"
         },
         {
           "name": "Console Shell & Home",
@@ -717,7 +700,6 @@
           "category": "ui",
           "filePaths": [
             "console/app/demo/DemoConsole.tsx",
-            "console/app/demo/ReviewGate.tsx",
             "console/app/demo/demo-reviews-data.ts",
             "console/app/demo/demo-shell.tsx",
             "console/app/demo/page.tsx",
@@ -788,8 +770,6 @@
             "console/app/page.tsx",
             "console/app/chrome.tsx",
             "console/app/console/page.tsx",
-            "console/app/console/(modules)/layout.tsx",
-            "console/app/console/(modules)/template.tsx",
             "console/src/design/routes.ts",
             "console/src/design/theme.ts",
             "console/src/design/demo-data.ts",
@@ -815,8 +795,7 @@
             "console/tsconfig.json",
             "console/vitest.config.ts",
             "console/postcss.config.mjs",
-            "console/package.json",
-            "console/next-env.d.ts"
+            "console/package.json"
           ],
           "target": null,
           "apiRoutes": []
