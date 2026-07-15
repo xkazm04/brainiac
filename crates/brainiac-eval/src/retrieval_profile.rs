@@ -93,6 +93,23 @@ pub async fn run(
     let mut temporal_latencies: Vec<f64> = Vec::new();
     let mut leak_latencies: Vec<f64> = Vec::new();
 
+    // The forbidden-at-current-time set, DERIVED from the seeded supersession
+    // graph rather than trusted to annotation. asof.yaml declares a two-part
+    // metric — "exact hit at rank 1; superseded memories absent from top-3 on
+    // current-time queries" — but the second half was delegated entirely to
+    // `forbidden_top3` strings (3 of them across 54 QA queries, against 6 gold
+    // memories that actually carry `superseded_by`). Add a supersession pair to
+    // the fixtures without also editing forbidden_top3 and the regression was
+    // invisible: a gate that passes when quality regressed. The seeder writes
+    // superseded_by/valid_to/status for these, so derive the set from the data.
+    let superseded_ids: Vec<(&str, Uuid)> = fx
+        .memories
+        .memories
+        .iter()
+        .filter(|m| m.superseded_by.is_some())
+        .map(|m| (m.id.as_str(), stable_uuid(&m.id)))
+        .collect();
+
     // ── QA suite ─────────────────────────────────────────────────────────
     for q in &fx.qa.queries {
         let principal = principal_for_user(fx, &q.asking_as.user)
@@ -134,6 +151,25 @@ pub async fn run(
                     "superseded memory {forbidden} in top-3 (rank {})",
                     pos + 1
                 ));
+            }
+        }
+        // The derived half: on a CURRENT-time query (no as_of), no memory that the
+        // supersession graph says is superseded may sit in the top-3 — regardless
+        // of whether a fixture author remembered to annotate it. Skip ids the
+        // fixture already lists so a hit is never double-counted.
+        if q.as_of.is_none() {
+            for (fx_id, sid) in &superseded_ids {
+                if q.forbidden_top3.iter().any(|f| f == fx_id) {
+                    continue;
+                }
+                if let Some(pos) = ranked.iter().take(3).position(|id| id == sid) {
+                    superseded_in_top3 += 1;
+                    violations.push(format!(
+                        "superseded memory {fx_id} in top-3 (rank {}) of a current-time query \
+                         [derived from the supersession graph]",
+                        pos + 1
+                    ));
+                }
             }
         }
         let is_negative = q.stratum == "negative";
