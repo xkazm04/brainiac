@@ -141,7 +141,11 @@ mod tests {
             open_contradictions: 1,
         };
         let (d, rule) = e.evaluate(&m, MemoryStatus::Candidate, &ctx);
-        assert_eq!(d, PolicyDecision::NeedsReview, "conflict must hold for review");
+        assert_eq!(
+            d,
+            PolicyDecision::NeedsReview,
+            "conflict must hold for review"
+        );
         assert_eq!(rule, "contradiction_pending");
     }
 }

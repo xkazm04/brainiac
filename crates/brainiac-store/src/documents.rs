@@ -242,7 +242,9 @@ pub async fn record_compose_failure(
     .bind(max_secs)
     .fetch_optional(&mut *conn)
     .await?;
-    Ok(row.map(|r| r.get::<i32, _>("compose_attempts")).unwrap_or(0))
+    Ok(row
+        .map(|r| r.get::<i32, _>("compose_attempts"))
+        .unwrap_or(0))
 }
 
 /// Mark a page dirty directly (a new binding, a manual recompose request).

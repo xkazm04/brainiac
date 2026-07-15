@@ -151,11 +151,17 @@ mod tests {
             assert!(out.contains(MASK), "no redaction in: {c} -> {out}");
             assert!(contains_secret(c), "not detected: {c}");
             assert!(!out.contains(jwt), "jwt survived: {out}");
-            assert!(!out.contains("9f8c7b6a5e4d3c2b1a09"), "value survived: {out}");
+            assert!(
+                !out.contains("9f8c7b6a5e4d3c2b1a09"),
+                "value survived: {out}"
+            );
         }
         // The label survives so the redaction stays legible.
         let b = redact(&format!("Authorization: Bearer {jwt}"));
-        assert!(b.to_lowercase().contains("bearer") && b.contains(MASK), "{b}");
+        assert!(
+            b.to_lowercase().contains("bearer") && b.contains(MASK),
+            "{b}"
+        );
         // Still idempotent with the new rules.
         assert_eq!(redact(&b), b);
     }

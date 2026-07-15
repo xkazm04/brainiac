@@ -19,6 +19,10 @@ pub struct NewMemory {
     pub status: MemoryStatus,
     pub kind: MemoryKind,
     pub content: String,
+    /// A short label for the claim — what the archive anchors a row on.
+    /// `None` is normal: the extractor does not write one yet, and readers fall
+    /// back to `content` (migration 0023).
+    pub title: Option<String>,
     /// KB-PLAN D2. Callers with no signal use [`Lifecycle::default`] (shipped).
     pub lifecycle: Lifecycle,
     /// KB-PLAN D3. `None` unless the source carried structure worth preserving.
@@ -41,9 +45,9 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     sqlx::query(
         "INSERT INTO memories
             (id, org_id, team_id, owner_user_id, visibility, status, kind,
-             content, lifecycle, detail_md, language, valid_from, valid_to,
+             content, title, lifecycle, detail_md, language, valid_from, valid_to,
              superseded_by, confidence, provenance_id)
-         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
     )
     .bind(m.id)
     .bind(m.org_id)
@@ -53,6 +57,7 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     .bind(m.status.as_str())
     .bind(m.kind.as_str())
     .bind(&m.content)
+    .bind(&m.title)
     .bind(m.lifecycle.as_str())
     .bind(&m.detail_md)
     .bind(&m.language)

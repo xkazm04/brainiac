@@ -33,11 +33,12 @@ pub async fn find(
     provider: &str,
     subject: &str,
 ) -> Result<Option<(Uuid, Uuid)>> {
-    let row = sqlx::query("SELECT org_id, user_id FROM identities WHERE provider = $1 AND subject = $2")
-        .bind(provider)
-        .bind(subject)
-        .fetch_optional(conn)
-        .await?;
+    let row =
+        sqlx::query("SELECT org_id, user_id FROM identities WHERE provider = $1 AND subject = $2")
+            .bind(provider)
+            .bind(subject)
+            .fetch_optional(conn)
+            .await?;
     Ok(row.map(|r| (r.get::<Uuid, _>("org_id"), r.get::<Uuid, _>("user_id"))))
 }
 

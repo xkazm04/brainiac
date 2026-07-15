@@ -309,7 +309,10 @@ mod tests {
         assert!(cb.check().is_ok(), "probe admitted");
         // ...and never reports back. After the staleness window, take it over.
         std::thread::sleep(Duration::from_millis(15));
-        assert!(cb.check().is_ok(), "a stale probe is taken over, not deadlocked");
+        assert!(
+            cb.check().is_ok(),
+            "a stale probe is taken over, not deadlocked"
+        );
     }
 
     #[test]

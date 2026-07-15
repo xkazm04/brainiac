@@ -212,7 +212,11 @@ mod tests {
         let m2 = mem(2, None, None, Some(1));
         let all = [m1.clone(), m2.clone()];
         let pool: HashMap<Uuid, &Memory> = all.iter().map(|m| (m.id, m)).collect();
-        assert_eq!(chain_head(&all[0], &pool).id, uuid(1), "canonical head = min id");
+        assert_eq!(
+            chain_head(&all[0], &pool).id,
+            uuid(1),
+            "canonical head = min id"
+        );
         assert_eq!(
             chain_head(&all[1], &pool).id,
             uuid(1),
@@ -220,7 +224,11 @@ mod tests {
         );
         // Both valid at as_of ⇒ the cycle must collapse to exactly one survivor.
         let out = dedupe_for_time(&[m1, m2], ts(3));
-        assert_eq!(out.len(), 1, "a supersession cycle must not surface both versions");
+        assert_eq!(
+            out.len(),
+            1,
+            "a supersession cycle must not surface both versions"
+        );
     }
 
     #[test]
