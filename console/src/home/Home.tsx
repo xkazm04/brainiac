@@ -297,7 +297,7 @@ export default function Home({
       tone: GOLD,
       wave: "in" as const,
       module: "gate" as const,
-      href: isPublic ? "/demo?m=reviews" : "/console/reviews",
+      href: isPublic ? "/demo?m=reviews" : "/console?m=reviews",
       cta: isPublic ? "see the review queue" : "open the review queue",
     },
     {
@@ -312,7 +312,7 @@ export default function Home({
       tone: MAGENTA,
       wave: "anti" as const,
       module: "contradiction" as const,
-      href: isPublic ? "/demo?m=disputes" : "/console/reviews",
+      href: isPublic ? "/demo?m=disputes" : "/console?m=reviews",
       cta: isPublic ? "see a contradiction" : "resolve contradictions",
     },
     {
@@ -329,7 +329,7 @@ export default function Home({
       tone: "#f6ecd0",
       wave: "locked" as const,
       module: "cortex" as const,
-      href: isPublic ? "/demo?m=graph" : "/console/graph",
+      href: isPublic ? "/demo?m=graph" : "/console?m=graph",
       cta: "explore the graph",
     },
     // ── the second movement: what the field computes that no session can ──
@@ -346,7 +346,7 @@ export default function Home({
       tone: band("theta", 74),
       wave: "beat" as const,
       module: "divergence" as const,
-      href: isPublic ? "/demo?m=divergence" : "/console/divergence",
+      href: isPublic ? "/demo?m=divergence" : "/console?m=divergence",
       cta: isPublic ? "see the standards board" : "open the standards board",
     },
     {
@@ -360,7 +360,7 @@ export default function Home({
       tone: band("delta", 74),
       wave: "composed" as const,
       module: "page" as const,
-      href: isPublic ? "/kb" : "/console/docs",
+      href: isPublic ? "/kb" : "/console?m=docs",
       cta: isPublic ? "browse the knowledge base" : "read the pages",
     },
     {
@@ -378,7 +378,7 @@ export default function Home({
       tone: band("alpha"),
       wave: "trace" as const,
       module: "health" as const,
-      href: isPublic ? "/demo?m=health" : "/console/health",
+      href: isPublic ? "/demo?m=health" : "/console?m=health",
       cta: "read the health report",
     },
   ];
@@ -399,6 +399,22 @@ export default function Home({
               {r.label}
             </Link>
           ))}
+          {/* The two doors, side by side and deliberately not alike.
+              `console →` is the operator gate: an existing deployment, one shared
+              passcode. This is the other one: sign in with Google and get a
+              project of your own. They lead somewhere different, so the visitor
+              should not have to read carefully to tell them apart — hence a pill
+              rather than a fifth identical link. Public surface only; an operator
+              already inside has no use for it. */}
+          {isPublic && (
+            <Link
+              href="/signup"
+              className="rounded-full border px-3.5 py-1.5 transition hover:scale-[1.03]"
+              style={{ borderColor: GOLD, color: GOLD }}
+            >
+              sign in
+            </Link>
+          )}
         </nav>
       </header>
 
@@ -479,7 +495,7 @@ export default function Home({
             {live ? (
               <>
                 <span style={{ color: GOLD }}>{live.canonicalCount}</span> canonical ·{" "}
-                <Link href="/console/reviews" className="underline decoration-dotted underline-offset-4 hover:text-[#f3c74f]">
+                <Link href="/console?m=reviews" className="underline decoration-dotted underline-offset-4 hover:text-[#f3c74f]">
                   {live.pendingPromotions} pending review
                 </Link>{" "}
                 · {live.openContradictions} open contradictions · {live.embeddingModel}
