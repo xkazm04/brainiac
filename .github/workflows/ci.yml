@@ -60,3 +60,29 @@ jobs:
             results/ci-run.json
             results/ci-diagnostics.json
           if-no-files-found: ignore
+
+  # The console was previously not exercised in CI at all — a tsc break or a
+  # failing honesty-guard test (kb-data.test.ts) could reach master invisibly.
+  # Three gates, cheapest first; `next build` uses its own dist dir by design
+  # (package.json wires NEXT_DIST_DIR=.next-build), so this also exercises the
+  # exact build path a deploy uses.
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: install
+        run: npm ci
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: vitest
+        run: npx vitest run
+      - name: build
+        run: npm run build
