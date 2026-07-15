@@ -448,6 +448,32 @@ pub async fn get_by_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Mem
     Ok(rows.iter().map(row_to_memory).collect())
 }
 
+/// Canonical memories that CHANGED within the window (newest first) — the
+/// source a digest binding draws from (migration 0027). `updated_at`, not
+/// `created_at`: a promotion or supersession is exactly the kind of change a
+/// digest exists to surface, and both touch `updated_at`. RLS filters as
+/// always, so a digest can never show its reader a change they may not see.
+pub async fn recent_canonical(
+    conn: &mut PgConnection,
+    window_days: i64,
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {MEMORY_COLUMNS} FROM memories
+         WHERE status = 'canonical'
+           AND superseded_by IS NULL
+           AND deleted_at IS NULL
+           AND updated_at > now() - make_interval(days => $1::int)
+         ORDER BY updated_at DESC
+         LIMIT $2"
+    ))
+    .bind(window_days)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.iter().map(row_to_memory).collect())
+}
+
 /// Strongest visible memories anchored to any of `entity_ids` (graph
 /// expansion stage). Bounded; canonical/candidate only.
 pub async fn for_entities(

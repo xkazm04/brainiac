@@ -107,11 +107,12 @@ Ordered roughly by leverage; none block the phase ladder.
    captured as extraction sources instead of overwritten — closes the D4
    one-way limitation). Prerequisite: extraction recall gate green; design
    its own eval fixtures first (a synthetic stale-docs corpus for Meridian).
-3. **Proactive digest** (UAT P1.5): session-start / scheduled push of canonical
-   changes touching the developer's entities. Note for the designer: a digest
-   is *also a projection* — model it as a `doc_kind: digest` with a
-   time-windowed binding and reuse the compose pipeline rather than building a
-   parallel generator.
+3. **Proactive digest** (UAT P1.5): ~~shipped 2026-07-15~~ exactly as the
+   design note prescribed — `doc_kind: digest` + `window_days` on the binding,
+   composed/reviewed/read through the existing pipeline (see status log).
+   Still open as a later increment: PER-DEVELOPER digests scoped to the
+   entities a developer touches (needs per-user pages or parameterized
+   delivery — a real design question, not a binding tweak).
 4. **More publish targets** behind the same trait: Notion, Backstage TechDocs.
    Cheap once D4 lands; pick by customer pull. ~~GitHub wiki~~ closed
    2026-07-15 as a documented recipe, not code: a wiki IS a git repo, so the
@@ -440,6 +441,29 @@ Ordered roughly by leverage; none block the phase ladder.
         slashes, quotes) and never become mermaid identifiers.
       - Reader-side RENDERING deferred (ladder rung (e)): fenced block shows
         as code for now; console docs UI is mid-redesign in a parallel session.
+- [x] **Weekly digest as a projection** (2026-07-15) — follow-up #3, built
+      exactly as the design note prescribed: no parallel generator.
+      - `doc_kind: digest` (migration 0027) + `SectionBinding.window_days`: a
+        time window is a SOURCE (recent canonical changes, newest first,
+        `updated_at` so promotions/supersessions count) feeding the same
+        filter chain — visibility/kind/lifecycle rules hold for a digest
+        exactly as for any page, and RLS means it cannot show a reader a
+        change they may not see.
+      - `scaffold_digest`: one `digest-weekly` page per org, created only once
+        ≥3 org-visible canonical changes land in a week (a digest over a quiet
+        corpus teaches readers to skip it). First revision still needs a
+        human, like every page.
+      - `refresh_digests`: the compose sweep re-dirties a digest whose newest
+        revision is older than 24h — a windowed page goes stale by TIME
+        PASSING, and no memory-change trigger fires for an item aging out.
+      - One policy exemption, narrowly for `digest`: items rolling out of the
+        window auto-publish (a digest is a window, not an account — the belief
+        still stands in the corpus; weekly re-signing would train
+        rubber-stamping). Unbacked claims force review, same as everywhere.
+      - "Session-start push" = the agent reads `digest-weekly` via the doc_get
+        it already has. Pinned end-to-end in `docs_pg`: activity floor,
+        idempotence, window filtering (40-day-old belief excluded), first-
+        revision review, then window-roll → auto-published.
 
 ## The KB line is complete
 

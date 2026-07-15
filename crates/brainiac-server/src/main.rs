@@ -708,6 +708,27 @@ async fn compose_sweep(
             }
         }
 
+        // The weekly digest: create it once the corpus has earned one, and
+        // re-dirty it when its newest revision ages past the refresh cadence —
+        // a time-windowed page goes stale by time passing, and no
+        // memory-change trigger fires for an item aging out of the window.
+        let mut tx = store.worker_tx(&principal).await?;
+        let digest = async {
+            let created = brainiac_pipeline::compose::scaffold_digest(&mut tx, org_id).await?;
+            let refreshed = brainiac_pipeline::compose::refresh_digests(&mut tx, org_id).await?;
+            anyhow::Ok((created, refreshed))
+        }
+        .await;
+        match digest {
+            Ok((created, _refreshed)) => {
+                stats.scaffolded += usize::from(created.is_some());
+                tx.commit().await?;
+            }
+            Err(e) => {
+                tracing::warn!(org = %org_id, error = %e, "digest upkeep failed");
+            }
+        }
+
         let c = brainiac_pipeline::worker::compose_tick(
             store, providers, embedder, version, org_id, 20,
         )

@@ -399,6 +399,7 @@ pub async fn run(
                     .filter_map(|l| brainiac_core::Lifecycle::parse(l))
                     .collect(),
                 query: b.query.clone(),
+                window_days: None,
                 max_items: 12,
             });
             brainiac_store::documents::insert_section(

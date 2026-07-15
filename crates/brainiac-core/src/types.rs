@@ -426,6 +426,10 @@ pub enum DocKind {
     TopicPage,
     Runbook,
     Onboarding,
+    /// A time-windowed projection — "what changed this week" — recomposed on
+    /// cadence (migration 0027). Same compose pipeline, same review gate, same
+    /// reader; the WINDOW is the only thing that makes it a digest.
+    Digest,
 }
 
 impl DocKind {
@@ -435,6 +439,7 @@ impl DocKind {
             Self::TopicPage => "topic_page",
             Self::Runbook => "runbook",
             Self::Onboarding => "onboarding",
+            Self::Digest => "digest",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -443,6 +448,7 @@ impl DocKind {
             "topic_page" => Some(Self::TopicPage),
             "runbook" => Some(Self::Runbook),
             "onboarding" => Some(Self::Onboarding),
+            "digest" => Some(Self::Digest),
             _ => None,
         }
     }
@@ -519,6 +525,12 @@ pub struct SectionBinding {
     /// Free-text retrieval query; empty = pure entity/kind binding.
     #[serde(default)]
     pub query: String,
+    /// Time window in days: when set, the section additionally SOURCES the
+    /// org's recently changed canonical memories (newest first) — the binding
+    /// shape a digest is made of. `None` for every ordinary page; optional so
+    /// each binding stored before migration 0027 deserializes unchanged.
+    #[serde(default)]
+    pub window_days: Option<i64>,
     #[serde(default = "default_max_items")]
     pub max_items: usize,
 }
@@ -545,6 +557,7 @@ impl Default for SectionBinding {
             kinds: Vec::new(),
             lifecycle: Vec::new(),
             query: String::new(),
+            window_days: None,
             max_items: default_max_items(),
         }
     }

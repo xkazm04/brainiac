@@ -120,6 +120,17 @@ async fn bound_memories(
         out.extend(mems);
     }
 
+    // A time-windowed binding (digests, migration 0027): the org's recently
+    // changed canonical memories, newest first. A SOURCE like the other two —
+    // the filter chain below still applies, so visibility/kind/lifecycle rules
+    // hold for a digest exactly as for any page.
+    if let Some(days) = binding.window_days {
+        let mems =
+            brainiac_store::memories::recent_canonical(conn, days, (binding.max_items * 3) as i64)
+                .await?;
+        out.extend(mems);
+    }
+
     // A free-text binding adds topical memories the entity graph would miss.
     if !binding.query.trim().is_empty() {
         let req = RetrievalRequest {
@@ -529,6 +540,22 @@ pub async fn compose_document(
                         "additive: every previously published claim survives and all claims are cited"
                             .to_string(),
                     )
+                } else if doc.doc_kind == DocKind::Digest {
+                    // The one kind where dropped claims ARE the design: a
+                    // digest is a WINDOW, not an account. An item leaving it
+                    // is time passing, not a belief being retracted — the
+                    // belief still stands in the corpus and on its real pages.
+                    // Requiring a human to re-sign the digest every time the
+                    // week rolled would train them to rubber-stamp it, which
+                    // is worse than no gate. Unbacked claims still force
+                    // review (checked above), like everywhere else.
+                    (
+                        RevisionPolicy::AutoPublished,
+                        format!(
+                            "digest window rolled: {} item(s) aged out; every current claim is cited",
+                            dropped.len()
+                        ),
+                    )
                 } else {
                     // A claim the org had published has disappeared. That is
                     // either a supersession working exactly as designed, or the
@@ -679,6 +706,7 @@ pub async fn scaffold_entity_pages(
                         kinds,
                         lifecycle,
                         query: name.clone(),
+                        window_days: None,
                         max_items: 10,
                     }),
                     pinned_content: None,
@@ -691,6 +719,119 @@ pub async fn scaffold_entity_pages(
         tracing::info!(entity = %name, document = %doc_id, "entity page scaffolded");
     }
     Ok(created)
+}
+
+// ── the proactive digest (KB-PLAN follow-up #3, UAT P1.5) ───────────────────
+//
+// The design note that shaped this: a digest is ALSO A PROJECTION. "What
+// changed this week" is a page whose binding is a time window, recomposed on
+// cadence by the same worker, reviewed through the same gate, and read through
+// the same `doc_get` an agent already has — session-start push is the agent
+// reading `digest-weekly` when it boots. No parallel generator to rot.
+
+/// The digest's window, and the activity floor that earns one. A digest over a
+/// quiet corpus would read "(no knowledge captured yet)" every week — noise
+/// that teaches readers to skip it, the same failure mode the entity-page
+/// thresholds exist to prevent.
+pub const DIGEST_WINDOW_DAYS: i64 = 7;
+pub const DIGEST_MIN_RECENT: i64 = 3;
+/// Recompose cadence: how stale the newest revision may get before the sweep
+/// re-dirties the page. A day keeps a weekly window honest without composing
+/// on every tick.
+pub const DIGEST_REFRESH_SECS: i64 = 24 * 3600;
+
+/// The org's digest slug — one weekly digest per org, idempotent by slug.
+pub const DIGEST_SLUG: &str = "digest-weekly";
+
+/// Create the org's weekly digest page if the corpus has earned one and it does
+/// not exist yet. Like entity scaffolding: the machine decides that the page
+/// should exist, a human still signs its first revision into existence.
+pub async fn scaffold_digest(conn: &mut PgConnection, org_id: Uuid) -> Result<Option<Uuid>> {
+    use sqlx::Row;
+    let exists = sqlx::query("SELECT 1 FROM documents WHERE org_id = $1 AND slug = $2")
+        .bind(org_id)
+        .bind(DIGEST_SLUG)
+        .fetch_optional(&mut *conn)
+        .await?
+        .is_some();
+    if exists {
+        return Ok(None);
+    }
+    // Only org-visible changes count toward the floor: that is all an org
+    // digest may show, so team-private churn must not earn a page that would
+    // then compose empty.
+    let recent: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM memories
+         WHERE org_id = $1 AND status = 'canonical' AND visibility = 'org'
+           AND superseded_by IS NULL AND deleted_at IS NULL
+           AND updated_at > now() - make_interval(days => $2::int)",
+    )
+    .bind(org_id)
+    .bind(DIGEST_WINDOW_DAYS)
+    .fetch_one(&mut *conn)
+    .await?
+    .get("n");
+    if recent < DIGEST_MIN_RECENT {
+        return Ok(None);
+    }
+
+    let doc_id = Uuid::new_v4();
+    brainiac_store::documents::insert_document(
+        conn,
+        &brainiac_store::documents::NewDocument {
+            id: doc_id,
+            org_id,
+            team_id: None,
+            slug: DIGEST_SLUG.into(),
+            title: "This week in the knowledge base".into(),
+            visibility: Visibility::Org,
+            doc_kind: DocKind::Digest,
+        },
+    )
+    .await?;
+    brainiac_store::documents::insert_section(
+        conn,
+        &brainiac_store::documents::NewSection {
+            id: Uuid::new_v4(),
+            document_id: doc_id,
+            org_id,
+            position: 0,
+            heading: "What changed this week".into(),
+            mode: SectionMode::Composed,
+            binding: Some(SectionBinding {
+                window_days: Some(DIGEST_WINDOW_DAYS),
+                max_items: 12,
+                ..Default::default()
+            }),
+            pinned_content: None,
+        },
+    )
+    .await?;
+    brainiac_store::documents::mark_dirty(conn, doc_id).await?;
+    tracing::info!(org = %org_id, document = %doc_id, "weekly digest scaffolded");
+    Ok(Some(doc_id))
+}
+
+/// Re-dirty digest pages whose newest revision has aged past the refresh
+/// cadence. A windowed page goes stale by TIME PASSING — no memory-change
+/// trigger will ever fire for an item silently aging out of the window, so the
+/// sweep has to supply the tick. Returns how many pages were marked.
+pub async fn refresh_digests(conn: &mut PgConnection, org_id: Uuid) -> Result<u64> {
+    let res = sqlx::query(
+        "UPDATE documents d
+         SET dirty_at = COALESCE(dirty_at, now()), updated_at = now()
+         WHERE d.org_id = $1 AND d.doc_kind = 'digest' AND d.dirty_at IS NULL
+           AND NOT EXISTS (
+                 SELECT 1 FROM document_revisions r
+                 WHERE r.document_id = d.id
+                   AND r.created_at > now() - make_interval(secs => $2::float8)
+               )",
+    )
+    .bind(org_id)
+    .bind(DIGEST_REFRESH_SECS as f64)
+    .execute(conn)
+    .await?;
+    Ok(res.rows_affected())
 }
 
 /// The principal composition runs as.

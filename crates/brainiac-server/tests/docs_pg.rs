@@ -603,3 +603,197 @@ async fn entity_pages_scaffold_only_where_knowledge_actually_crosses_teams() {
         rev.content_md
     );
 }
+
+/// The weekly digest (KB-PLAN follow-up #3): a page whose binding is a TIME
+/// WINDOW, not a topic — scaffolded once the corpus has earned it, composed by
+/// the same worker, gated like every page on its first revision, and allowed
+/// to auto-publish when the window rolls (items aging out of a window are time
+/// passing, not beliefs being retracted).
+#[tokio::test]
+async fn weekly_digest_is_a_time_windowed_projection() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    let p = brainiac_pipeline::pipeline_principal(ctx.org_id);
+
+    // A quiet corpus earns no digest — a weekly page that reads "(no knowledge
+    // captured yet)" teaches readers to skip it.
+    let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+    let none = brainiac_pipeline::compose::scaffold_digest(&mut tx, ctx.org_id)
+        .await
+        .expect("scaffold on quiet corpus");
+    tx.commit().await.expect("commit");
+    assert!(
+        none.is_none(),
+        "a corpus with no recent changes earned a digest"
+    );
+
+    // Four org-visible canonical memories; one of them is OLD news.
+    let mem_ids: Vec<Uuid> = (0..4).map(|_| Uuid::new_v4()).collect();
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    for (i, id) in mem_ids.iter().enumerate() {
+        brainiac_store::memories::insert(
+            &mut tx,
+            &NewMemory {
+                id: *id,
+                org_id: ctx.org_id,
+                team_id: Some(ctx.team_a),
+                owner_user_id: None,
+                visibility: Visibility::Org,
+                status: MemoryStatus::Canonical,
+                kind: MemoryKind::Fact,
+                title: None,
+                content: format!("belief number {i} about the payments flow"),
+                lifecycle: brainiac_core::Lifecycle::Shipped,
+                detail_md: None,
+                language: "en".into(),
+                valid_from: None,
+                valid_to: None,
+                superseded_by: None,
+                confidence: Some(0.9),
+                provenance_id: None,
+            },
+        )
+        .await
+        .expect("memory");
+    }
+    tx.commit().await.expect("commit");
+    let old_id = mem_ids[3];
+    sqlx::query("UPDATE memories SET updated_at = now() - interval '40 days' WHERE id = $1")
+        .bind(old_id)
+        .execute(&admin)
+        .await
+        .expect("age old belief");
+
+    // Three fresh org changes = the floor is met; the page exists exactly once.
+    let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+    let created = brainiac_pipeline::compose::scaffold_digest(&mut tx, ctx.org_id)
+        .await
+        .expect("scaffold")
+        .expect("digest earned");
+    let again = brainiac_pipeline::compose::scaffold_digest(&mut tx, ctx.org_id)
+        .await
+        .expect("scaffold again");
+    tx.commit().await.expect("commit");
+    assert!(again.is_none(), "digest scaffolding duplicated the page");
+
+    // Compose with a mock that CITES every memory it is offered — so
+    // composed_from is a faithful record of what the window admitted.
+    use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+    let embedder = DeterministicEmbedder::default();
+    let providers = brainiac_gateway::ProviderRouter::single(std::sync::Arc::new(
+        brainiac_gateway::MockProvider::new(|req: &brainiac_gateway::ChatRequest| {
+            let mut out = String::new();
+            for line in req.user.lines() {
+                if let Some(rest) = line.trim().strip_prefix("- id=") {
+                    let id = rest.split_whitespace().next().unwrap_or_default();
+                    out.push_str(&format!("Something changed here. [m:{id}]\n\n"));
+                }
+            }
+            out
+        }),
+    ));
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let version =
+        brainiac_store::memories::ensure_embedding_version(&mut tx, embedder.model_name(), 8)
+            .await
+            .expect("version");
+    tx.commit().await.expect("commit");
+    let stats = brainiac_pipeline::worker::compose_tick(
+        &ctx.store, &providers, &embedder, version, ctx.org_id, 10,
+    )
+    .await
+    .expect("compose");
+    assert_eq!(stats.composed, 1);
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let rev = brainiac_store::documents::revisions(&mut tx, created, 1)
+        .await
+        .expect("revs")
+        .into_iter()
+        .next()
+        .expect("revision");
+    tx.commit().await.expect("commit");
+    // The window is the binding: fresh beliefs are in, the 40-day-old one is
+    // not — and the first revision still needs a human, like every page.
+    for id in &mem_ids[..3] {
+        assert!(
+            rev.composed_from.contains(id),
+            "a fresh change is missing from the digest: {id}"
+        );
+    }
+    assert!(
+        !rev.composed_from.contains(&old_id),
+        "a 40-day-old belief leaked into a 7-day digest"
+    );
+    assert_eq!(
+        rev.policy_decision,
+        brainiac_core::RevisionPolicy::NeedsReview,
+        "first revision of the digest must still be signed into existence"
+    );
+
+    // A human signs it once. After that, the window rolling is NOT a retraction:
+    // age one belief out, force the refresh tick, recompose — auto-published.
+    let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+    let approved = brainiac_store::documents::approve_revision(
+        &mut tx,
+        rev.id,
+        ctx.user_a,
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("approve");
+    tx.commit().await.expect("commit");
+    assert!(approved, "the maintainer's approval did not land");
+
+    sqlx::query("UPDATE memories SET updated_at = now() - interval '40 days' WHERE id = $1")
+        .bind(mem_ids[2])
+        .execute(&admin)
+        .await
+        .expect("age a belief out of the window");
+    // The refresh tick only fires once the newest revision is older than the
+    // cadence — simulate a day passing.
+    sqlx::query("UPDATE document_revisions SET created_at = now() - interval '2 days' WHERE document_id = $1")
+        .bind(created)
+        .execute(&admin)
+        .await
+        .expect("age revision");
+    let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+    let refreshed = brainiac_pipeline::compose::refresh_digests(&mut tx, ctx.org_id)
+        .await
+        .expect("refresh");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        refreshed, 1,
+        "the stale digest must be re-dirtied by the sweep"
+    );
+
+    let stats = brainiac_pipeline::worker::compose_tick(
+        &ctx.store, &providers, &embedder, version, ctx.org_id, 10,
+    )
+    .await
+    .expect("recompose");
+    assert_eq!(stats.composed, 1);
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let rev = brainiac_store::documents::revisions(&mut tx, created, 1)
+        .await
+        .expect("revs")
+        .into_iter()
+        .next()
+        .expect("revision");
+    tx.commit().await.expect("commit");
+    assert!(
+        !rev.composed_from.contains(&mem_ids[2]),
+        "the aged-out belief should have left the window"
+    );
+    assert_eq!(
+        rev.policy_decision,
+        brainiac_core::RevisionPolicy::AutoPublished,
+        "the window rolling must not demand a human re-signature: {}",
+        rev.policy_decision.as_str()
+    );
+}
