@@ -289,6 +289,90 @@ pub async fn apply_supersession(
     Ok(true)
 }
 
+/// Deprecate a memory outright: end its validity window at `now()` and drop it
+/// out of retrieval, WITHOUT inventing a supersessor it does not have. This is
+/// what a maintainer means by "the reporters are right" on a disputed memory —
+/// the corpus is wrong and nothing replaces it.
+///
+/// Like [`apply_supersession`], and for the same reason, the transition is
+/// recorded in `promotions` — the status-transition audit log every other status
+/// change flows through — stamped with who applied it (`applied_by`: a human
+/// maintainer ⇒ `approved`, a policy actor ⇒ `auto_approved`). `rule` names the
+/// trigger, e.g. `feedback_deprecate`. The inline `UPDATE memories SET status =
+/// 'deprecated'` this replaces skipped that row, which is exactly why the
+/// permanent deprecation of an org memory was invisible to `/v1/audit`.
+///
+/// Idempotent and RLS-safe: a memory already deprecated or superseded, or not
+/// updatable under the caller's scope, is left untouched and returns `false`.
+pub async fn apply_deprecation(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    memory_id: Uuid,
+    applied_by: Option<Uuid>,
+    rule: &str,
+) -> Result<bool> {
+    // Existence + RLS gate and the serialization point in one, mirroring
+    // apply_supersession: the read is under the (visibility-scoped) SELECT
+    // policy, so the org-only UPDATE policy can never deprecate a row the caller
+    // cannot see.
+    let Some(row) = sqlx::query(
+        "SELECT status::text AS status, superseded_by
+         FROM memories WHERE id = $1 FOR UPDATE",
+    )
+    .bind(memory_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(false);
+    };
+    let from_status: String = row.get("status");
+    // Already retired — by an earlier deprecation or by a supersession, whose
+    // pointer this must not clobber.
+    if from_status == "deprecated" || row.get::<Option<Uuid>, _>("superseded_by").is_some() {
+        return Ok(false);
+    }
+
+    let changed = sqlx::query(
+        "UPDATE memories
+         SET status = 'deprecated'::memory_status, valid_to = now(), updated_at = now()
+         WHERE id = $1 AND status <> 'deprecated'::memory_status",
+    )
+    .bind(memory_id)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if changed != 1 {
+        return Ok(false);
+    }
+
+    let decision = if applied_by.is_some() {
+        "approved"
+    } else {
+        "auto_approved"
+    };
+    sqlx::query(
+        "INSERT INTO promotions
+            (id, org_id, memory_id, from_status, to_status,
+             policy_decision, policy_rule, reviewer_id, reviewed_at)
+         VALUES ($1,$2,$3,$4::memory_status,'deprecated'::memory_status,$5,$6,$7, now())",
+    )
+    .bind(Uuid::new_v4())
+    .bind(org_id)
+    .bind(memory_id)
+    .bind(from_status)
+    .bind(decision)
+    .bind(rule)
+    .bind(applied_by)
+    .execute(&mut *conn)
+    .await?;
+
+    // §8: the org just stopped believing this. Every page built on it now states
+    // something untrue and must recompose — the same propagation the supersession
+    // path performs, for the same reason.
+    crate::documents::mark_dirty_for_memory(&mut *conn, memory_id).await?;
+    Ok(true)
+}
+
 /// One side of an OPEN contradiction as seen from a result memory: the
 /// contradiction row and the memory it conflicts with.
 #[derive(Debug, Clone)]

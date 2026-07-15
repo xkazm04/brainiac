@@ -219,17 +219,24 @@ pub async fn open_claim_count(conn: &mut PgConnection, memory_id: Uuid) -> Resul
     Ok(row.get("n"))
 }
 
-/// Close every open claim against a memory with the maintainer's answer.
-/// Returns how many claims were closed (0 = nothing was open).
+/// Close every open claim against a memory with the maintainer's answer, and
+/// the rationale behind it (`note`, 0025 — kept apart from the reporter's own
+/// `note`, which is the claim being answered). Returns how many claims were
+/// closed (0 = nothing was open).
+///
+/// `resolved_at` is a single `now()` for the whole call, which is what lets the
+/// audit feed group the N closed claims back into the ONE decision that closed
+/// them.
 pub async fn resolve_claims(
     conn: &mut PgConnection,
     memory_id: Uuid,
     resolver: Uuid,
     resolution: &str,
+    note: Option<&str>,
 ) -> Result<u64> {
     let res = sqlx::query(
         "UPDATE memory_feedback
-         SET resolution = $3, resolved_by = $2, resolved_at = now()
+         SET resolution = $3, resolved_by = $2, resolved_at = now(), resolution_note = $4
          WHERE memory_id = $1
            AND resolved_at IS NULL
            AND verdict IN ('wrong', 'outdated')",
@@ -237,6 +244,7 @@ pub async fn resolve_claims(
     .bind(memory_id)
     .bind(resolver)
     .bind(resolution)
+    .bind(note)
     .execute(conn)
     .await?;
     Ok(res.rows_affected())

@@ -45,6 +45,22 @@ async fn seed_disputed(
     mem
 }
 
+/// A second reporter piles onto the same memory — so "one audit event per
+/// decision, not per claim" has something to actually prove.
+async fn add_claim(admin: &sqlx::PgPool, org: Uuid, mem: Uuid, reporter: Uuid) {
+    sqlx::query(
+        "INSERT INTO memory_feedback (id, org_id, memory_id, user_id, verdict, note)
+         VALUES ($1, $2, $3, $4, 'outdated', 'second reporter agrees')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(org)
+    .bind(mem)
+    .bind(reporter)
+    .execute(admin)
+    .await
+    .expect("second claim");
+}
+
 async fn status_of(admin: &sqlx::PgPool, mem: Uuid) -> String {
     use sqlx::Row;
     sqlx::query("SELECT status::text AS s FROM memories WHERE id = $1")
@@ -143,6 +159,8 @@ async fn dispute_resolution_gates_and_no_ops() {
         "org-wide: deploys freeze on Fridays",
     )
     .await;
+    // Two reporters on the same memory: one dispute, two claims.
+    add_claim(&admin, org, org_mem, stable_uuid("user-data-analyst1")).await;
     let r = resolve(
         org_mem,
         "tok_pay_dev",
@@ -161,8 +179,8 @@ async fn dispute_resolution_gates_and_no_ops() {
     );
     assert_eq!(
         open_claims(&admin, org_mem).await,
-        1,
-        "the refused call must not have closed the claim"
+        2,
+        "the refused call must not have closed the claims"
     );
 
     // A maintainer of ANY team may answer an org-wide dispute (docs.rs's stance
@@ -170,7 +188,7 @@ async fn dispute_resolution_gates_and_no_ops() {
     let r = resolve(
         org_mem,
         "tok_pay_lead",
-        serde_json::json!({"resolution": "deprecated"}),
+        serde_json::json!({"resolution": "deprecated", "note": "superseded by the 2026 policy"}),
     )
     .await;
     assert!(
@@ -180,6 +198,65 @@ async fn dispute_resolution_gates_and_no_ops() {
     );
     assert_eq!(status_of(&admin, org_mem).await, "deprecated");
     assert_eq!(open_claims(&admin, org_mem).await, 0);
+
+    // ── That deprecation must be IN the audit trail ───────────────────────
+    // It permanently retired an org memory. It used to leave no trace: the
+    // handler wrote inline SQL past the audited store primitive, and /v1/audit
+    // did not read memory_feedback at all.
+    let r = http
+        .get(format!("{base}/v1/audit?limit=200"))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("audit");
+    assert!(r.status().is_success());
+    let body: serde_json::Value = r.json().await.expect("json");
+    let events = body["events"].as_array().expect("events");
+    let target = org_mem.to_string();
+
+    let decision = events
+        .iter()
+        .find(|e| e["kind"] == "feedback_resolution" && e["memory_id"] == target)
+        .unwrap_or_else(|| panic!("the dispute decision must appear in the audit feed: {body}"));
+    assert_eq!(decision["outcome"], "deprecated");
+    assert_eq!(
+        decision["detail"], "superseded by the 2026 policy",
+        "the rationale must reach the auditor — 'why was this deprecated?'"
+    );
+    assert_eq!(
+        decision["actor_id"],
+        serde_json::json!(stable_uuid("user-pay-lead").to_string()),
+        "the decision must name who made it"
+    );
+
+    // ...and the status transition it applied is ledgered too, by the audited
+    // primitive the inline SQL used to bypass.
+    let transition = events.iter().find(|e| {
+        e["kind"] == "promotion_review"
+            && e["memory_id"] == target
+            && e["detail"] == "feedback_deprecate"
+    });
+    assert!(
+        transition.is_some(),
+        "the deprecation must also land in the promotions ledger: {body}"
+    );
+
+    // One event per DECISION, not per closed claim.
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["kind"] == "feedback_resolution" && e["memory_id"] == target)
+            .count(),
+        1,
+        "a resolve closing N claims is ONE audit event"
+    );
+
+    // `total` must describe the whole feed, not the page window.
+    assert_eq!(
+        body["total"].as_i64().expect("total"),
+        events.len() as i64,
+        "total must count the same set the page draws from"
+    );
 
     // ── The team gate still holds, and invisibility is a 404 (no oracle) ───
     let team_mem = seed_disputed(

@@ -142,10 +142,11 @@ export interface paths {
         };
         /**
          * Reverse-chronological feed of governance actions: promotion reviews
-         *     (human and policy) and contradiction resolutions. Reuses the reviewer /
-         *     resolved-by columns both tables already carry; rows resolve under the
-         *     caller's RLS transaction so members see their org slice only.
-         * @description Reverse-chronological feed of governance actions: promotion reviews (human and policy) and contradiction resolutions.
+         *     (human and policy), contradiction resolutions, and dispute resolutions.
+         *     Reuses the reviewer / resolved-by columns the tables already carry; rows
+         *     resolve under the caller's RLS transaction so members see their org slice
+         *     only.
+         * @description Reverse-chronological feed of governance actions: promotion reviews (human and policy), contradiction resolutions, and dispute resolutions.
          */
         get: operations["audit"];
         put?: never;
@@ -975,7 +976,9 @@ export interface components {
         };
         /**
          * @description One governance action. `kind` is `promotion_review` |
-         *     `contradiction_resolution`; `memory_b` is only set for contradictions.
+         *     `contradiction_resolution` | `feedback_resolution`; `memory_b` is only set
+         *     for contradictions. `detail` carries the decision's rationale where the path
+         *     captures one (the resolution note) and the policy rule otherwise.
          */
         AuditEvent: {
             /**
@@ -1951,6 +1954,12 @@ export interface components {
              * @description For `reverified`: the new validity budget (defaults to the kind TTL).
              */
             days?: number | null;
+            /**
+             * @description Why. Carried into the audit trail as the decision's rationale — the
+             *     answer to "who deprecated this org memory, and on what grounds?".
+             *     Recorded against the claims being closed, never over the reporter's note.
+             */
+            note?: string | null;
             /** @description reverified | deprecated | dismissed */
             resolution: string;
         };

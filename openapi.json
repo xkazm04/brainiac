@@ -162,8 +162,8 @@
         "tags": [
           "reviews"
         ],
-        "summary": "Reverse-chronological feed of governance actions: promotion reviews\n(human and policy) and contradiction resolutions. Reuses the reviewer /\nresolved-by columns both tables already carry; rows resolve under the\ncaller's RLS transaction so members see their org slice only.",
-        "description": "Reverse-chronological feed of governance actions: promotion reviews (human and policy) and contradiction resolutions.",
+        "summary": "Reverse-chronological feed of governance actions: promotion reviews\n(human and policy), contradiction resolutions, and dispute resolutions.\nReuses the reviewer / resolved-by columns the tables already carry; rows\nresolve under the caller's RLS transaction so members see their org slice\nonly.",
+        "description": "Reverse-chronological feed of governance actions: promotion reviews (human and policy), contradiction resolutions, and dispute resolutions.",
         "operationId": "audit",
         "parameters": [
           {
@@ -2071,7 +2071,7 @@
       },
       "AuditEvent": {
         "type": "object",
-        "description": "One governance action. `kind` is `promotion_review` |\n`contradiction_resolution`; `memory_b` is only set for contradictions.",
+        "description": "One governance action. `kind` is `promotion_review` |\n`contradiction_resolution` | `feedback_resolution`; `memory_b` is only set\nfor contradictions. `detail` carries the decision's rationale where the path\ncaptures one (the resolution note) and the policy rule otherwise.",
         "required": [
           "kind",
           "id",
@@ -4622,6 +4622,13 @@
             ],
             "format": "int64",
             "description": "For `reverified`: the new validity budget (defaults to the kind TTL)."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why. Carried into the audit trail as the decision's rationale — the\nanswer to \"who deprecated this org memory, and on what grounds?\".\nRecorded against the claims being closed, never over the reporter's note."
           },
           "resolution": {
             "type": "string",

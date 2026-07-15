@@ -1342,7 +1342,7 @@ async fn feedback_claims_queue_and_resolution() {
     );
 
     // A maintainer answers: dismissed → claims close, memory untouched.
-    let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed")
+    let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed", None)
         .await
         .expect("resolve");
     assert_eq!(closed, 2, "both open claims close together");
@@ -1360,7 +1360,7 @@ async fn feedback_claims_queue_and_resolution() {
     assert!(!trust[&uuid(102)].disputed(), "but the dispute is settled");
 
     // Re-resolving an already-answered memory closes nothing (idempotent).
-    let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed")
+    let closed = feedback::resolve_claims(&mut tx, uuid(102), uuid(11), "dismissed", None)
         .await
         .expect("resolve again");
     assert_eq!(closed, 0);

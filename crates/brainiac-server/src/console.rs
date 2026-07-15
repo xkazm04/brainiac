@@ -725,6 +725,10 @@ pub(crate) struct ResolveFeedbackBody {
     resolution: String,
     /// For `reverified`: the new validity budget (defaults to the kind TTL).
     days: Option<i64>,
+    /// Why. Carried into the audit trail as the decision's rationale — the
+    /// answer to "who deprecated this org memory, and on what grounds?".
+    /// Recorded against the claims being closed, never over the reporter's note.
+    note: Option<String>,
 }
 
 /// `valid_to` is null for `deprecated`/`dismissed` (only `reverified` moves
@@ -892,20 +896,25 @@ pub(crate) async fn resolve_feedback_claims(
             if status == "deprecated" || superseded {
                 return Err((StatusCode::CONFLICT, "memory is already deprecated".into()).into());
             }
-            let changed = sqlx::query(
-                "UPDATE memories
-                 SET status = 'deprecated'::memory_status, valid_to = now(), updated_at = now()
-                 WHERE id = $1 AND status <> 'deprecated'::memory_status",
+            // Store-owned primitive, for the reason the contradiction path
+            // already routes through apply_supersession: it deprecates the
+            // memory, closes valid_to, recomposes the pages built on it, AND
+            // records the transition in the promotions audit log. The inline SQL
+            // this replaces did the first two and skipped the audit row — which
+            // is why permanently retiring an org memory left no trace anywhere.
+            let applied = brainiac_store::governance::apply_deprecation(
+                &mut tx,
+                principal.org_id,
+                id,
+                Some(principal.user_id),
+                "feedback_deprecate",
             )
-            .bind(id)
-            .execute(&mut *tx)
             .await
-            .map_err(internal)?
-            .rows_affected();
-            // 0 rows under a held lock means the UPDATE policy refused a row the
+            .map_err(internal)?;
+            // false under a held lock means the UPDATE policy refused a row the
             // SELECT policy showed us. Never commit the claim closure on top of a
             // deprecation that did not happen.
-            if changed != 1 {
+            if !applied {
                 return Err((
                     StatusCode::CONFLICT,
                     "memory could not be deprecated under your scope".into(),
@@ -916,10 +925,15 @@ pub(crate) async fn resolve_feedback_claims(
         _ => {} // dismissed: the memory stands untouched
     }
 
-    let closed =
-        brainiac_store::feedback::resolve_claims(&mut tx, id, principal.user_id, &body.resolution)
-            .await
-            .map_err(internal)?;
+    let closed = brainiac_store::feedback::resolve_claims(
+        &mut tx,
+        id,
+        principal.user_id,
+        &body.resolution,
+        body.note.as_deref(),
+    )
+    .await
+    .map_err(internal)?;
     // The count was non-zero under this same lock a few statements ago; if it is
     // zero now the lock did not hold and every guard above was decided on stale
     // state. Roll back rather than report a decision we cannot stand behind.
@@ -1115,10 +1129,15 @@ pub(crate) async fn memory_reverify(
     };
     // Re-verifying answers any open feedback claims against this memory —
     // a maintainer who just confirmed it is true has, in fact, responded.
-    let claims_closed =
-        brainiac_store::feedback::resolve_claims(&mut tx, id, principal.user_id, "reverified")
-            .await
-            .map_err(internal)?;
+    let claims_closed = brainiac_store::feedback::resolve_claims(
+        &mut tx,
+        id,
+        principal.user_id,
+        "reverified",
+        None,
+    )
+    .await
+    .map_err(internal)?;
     tx.commit().await.map_err(internal)?;
     Ok(Json(ReverifyResponse {
         memory_id: id,
@@ -1138,7 +1157,9 @@ pub(crate) struct AuditQuery {
 }
 
 /// One governance action. `kind` is `promotion_review` |
-/// `contradiction_resolution`; `memory_b` is only set for contradictions.
+/// `contradiction_resolution` | `feedback_resolution`; `memory_b` is only set
+/// for contradictions. `detail` carries the decision's rationale where the path
+/// captures one (the resolution note) and the policy rule otherwise.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct AuditEvent {
     pub kind: String,
@@ -1161,14 +1182,22 @@ pub(crate) struct AuditResponse {
 }
 
 /// Reverse-chronological feed of governance actions: promotion reviews
-/// (human and policy) and contradiction resolutions. Reuses the reviewer /
-/// resolved-by columns both tables already carry; rows resolve under the
-/// caller's RLS transaction so members see their org slice only.
+/// (human and policy), contradiction resolutions, and dispute resolutions.
+/// Reuses the reviewer / resolved-by columns the tables already carry; rows
+/// resolve under the caller's RLS transaction so members see their org slice
+/// only.
+///
+/// A deprecation reached through a dispute appears twice, deliberately: once as
+/// the `feedback_resolution` decision and once as the `promotion_review` status
+/// transition it applied. That is the same shape a contradiction supersession
+/// already has — the decision and the transition are separate facts, and an
+/// audit trail that collapsed them could not show a decision whose transition
+/// never landed.
 #[utoipa::path(
     get,
     path = "/v1/audit",
     tag = "reviews",
-    description = "Reverse-chronological feed of governance actions: promotion reviews (human and policy) and contradiction resolutions.",
+    description = "Reverse-chronological feed of governance actions: promotion reviews (human and policy), contradiction resolutions, and dispute resolutions.",
     params(
         ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
         ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
@@ -1203,6 +1232,28 @@ pub(crate) async fn audit(
                    c.resolved_at AS at
             FROM contradictions c
             WHERE c.resolved_at IS NOT NULL
+            UNION ALL
+            -- Answering a dispute is a governance decision — it can permanently
+            -- deprecate an org memory — and it was missing from this union
+            -- entirely, so the feed could not answer 'who retired this?'.
+            --
+            -- One event per DECISION, not per claim: a resolve call closes every
+            -- open claim on the memory in one transaction, sharing a single
+            -- resolved_at/resolution/resolved_by. Grouping on those folds the N
+            -- rows back into the one act a maintainer actually performed,
+            -- instead of spamming the auditor with N identical entries.
+            SELECT 'feedback_resolution' AS kind,
+                   (array_agg(f.id ORDER BY f.id))[1] AS id,
+                   f.memory_id,
+                   NULL::uuid AS memory_b,
+                   f.resolution AS outcome,
+                   min(f.resolution_note) AS detail,
+                   f.resolved_by AS actor_id,
+                   f.resolved_at AS at
+            FROM memory_feedback f
+            JOIN memories m ON m.id = f.memory_id
+            WHERE f.resolved_at IS NOT NULL
+            GROUP BY f.memory_id, f.resolution, f.resolved_by, f.resolved_at
          ) audit";
     let rows = sqlx::query(&format!(
         "SELECT * {AUDIT_FROM} ORDER BY at DESC LIMIT $1 OFFSET $2"
