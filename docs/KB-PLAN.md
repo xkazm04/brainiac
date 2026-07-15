@@ -118,9 +118,17 @@ Ordered roughly by leverage; none block the phase ladder.
 3. **Proactive digest** (UAT P1.5): ~~shipped 2026-07-15~~ exactly as the
    design note prescribed — `doc_kind: digest` + `window_days` on the binding,
    composed/reviewed/read through the existing pipeline (see status log).
-   Still open as a later increment: PER-DEVELOPER digests scoped to the
-   entities a developer touches (needs per-user pages or parameterized
-   delivery — a real design question, not a binding tweak).
+   Still open: PER-DEVELOPER digests. *Design settled 2026-07-15, deliberately
+   not built*: a per-developer digest is **retrieval-shaped, not
+   projection-shaped**. Pages are org artifacts — N users × daily recompose
+   would explode cost and make the review gate meaningless (nobody reviews
+   10,000 personal pages). Instead: an MCP tool (`digest_for_me` or a
+   `memory_context` mode) computed on demand — canonical memories changed
+   since the caller's last ask, intersected with the caller's entity
+   footprint (derived from their sources/feedback trail), RLS-scoped as
+   always. No compose, no review gate needed: every item served IS already a
+   signed canonical belief; the digest is a view, not a new claim. Build when
+   pulled; the org `digest-weekly` page covers the shared case today.
 4. **More publish targets** behind the same trait: Notion, Backstage TechDocs.
    Cheap once D4 lands; pick by customer pull. ~~GitHub wiki~~ closed
    2026-07-15 as a documented recipe, not code: a wiki IS a git repo, so the
