@@ -1,0 +1,105 @@
+{
+  "fixture_version": "v1",
+  "embedding_model": "qwen:text-embedding-v4",
+  "match_threshold": 0.7,
+  "drift_margin": 0.05,
+  "gold_drifted": 4,
+  "detected_drifted": 4,
+  "drift_recall": 1.0,
+  "drift_precision": 1.0,
+  "proposal_accuracy": 1.0,
+  "false_alarms": [],
+  "misses": [],
+  "docs": [
+    {
+      "doc": "drift-doc-pay-onboarding",
+      "title": "Payments onboarding guide (last touched 2025-Q4)",
+      "claims": [
+        {
+          "claim": "checkout v1 is the live checkout flow for all merchants",
+          "verdict": "drifted",
+          "stale_memory": "mem-pay-0021",
+          "propose": "mem-pay-0022",
+          "stale_similarity": 1.0,
+          "fresh_similarity": 0.887
+        },
+        {
+          "claim": "New merchants complete KYC through the merchant portal wizard before their first settlement",
+          "verdict": "unmatched",
+          "best_similarity": 0.614
+        },
+        {
+          "claim": "the psp-gateway client timeout is 10 seconds",
+          "verdict": "drifted",
+          "stale_memory": "mem-pay-0063",
+          "propose": "mem-pay-0064",
+          "stale_similarity": 0.97,
+          "fresh_similarity": 0.907
+        },
+        {
+          "claim": "the refund-worker retry cap is 30s with jitter, aligned to std-retry policy",
+          "verdict": "aligned",
+          "memory": "mem-pay-0043",
+          "similarity": 0.962
+        }
+      ]
+    },
+    {
+      "doc": "drift-doc-plat-deploys",
+      "title": "Deploying a service (runbook, unowned)",
+      "claims": [
+        {
+          "claim": "production deploys go through the Jenkins pipelines in deploy-tools",
+          "verdict": "drifted",
+          "stale_memory": "mem-plat-0110",
+          "propose": "mem-plat-0111",
+          "stale_similarity": 1.0,
+          "fresh_similarity": 0.684
+        },
+        {
+          "claim": "the std-retry policy caps retries at 2 seconds with 3 attempts for all internal service calls",
+          "verdict": "drifted",
+          "stale_memory": "mem-plat-0107",
+          "propose": "mem-pay-0043",
+          "stale_similarity": 0.923,
+          "fresh_similarity": 0.718
+        },
+        {
+          "claim": "otel-collector-config drops spans when the batch processor queue exceeds 5k, so raise send_batch_size before scaling ingest",
+          "verdict": "aligned",
+          "memory": "mem-plat-0113",
+          "similarity": 0.991
+        },
+        {
+          "claim": "Release announcements are posted in the deploys channel every Thursday afternoon",
+          "verdict": "unmatched",
+          "best_similarity": 0.562
+        }
+      ]
+    },
+    {
+      "doc": "drift-doc-pay-current",
+      "title": "Current state of payments (reviewed 2026-06)",
+      "claims": [
+        {
+          "claim": "checkout v2 replaced checkout v1 as the live checkout flow, and the v1 endpoints are frozen",
+          "verdict": "aligned",
+          "memory": "mem-pay-0022",
+          "similarity": 0.973
+        },
+        {
+          "claim": "the psp-gateway client timeout was raised to 30 seconds after the PSP incident review",
+          "verdict": "aligned",
+          "memory": "mem-pay-0064",
+          "similarity": 0.972
+        },
+        {
+          "claim": "ArgoCD is the only supported production deploy path, and deploy-tools wraps the app-of-apps pattern",
+          "verdict": "aligned",
+          "memory": "mem-plat-0111",
+          "similarity": 0.972
+        }
+      ]
+    }
+  ]
+}

@@ -499,6 +499,15 @@ Ordered roughly by leverage; none block the phase ladder.
         both above threshold; the margin decides). Unit tests pin the margin
         honeypot, chain-terminal proposals, the harvest bucket, and the
         false-alarm hard gate.
+      - **Real-embedder calibration run** (qwen `text-embedding-v4`, archived
+        at `results/history/2026-07-15-drift-qwen-text-embedding-v4.json`):
+        also 1.0/1.0/1.0, zero false alarms — but the real embedder COMPRESSES
+        the margin: the 10s-timeout claim decides at 0.970 stale vs 0.907
+        fresh, a 0.063 gap against the 0.05 rule. Finding for the production
+        rung: `DRIFT_MARGIN` is load-bearing and near its edge on real
+        embeddings — treat any change to it as gate-affecting, and grow the
+        corpus with more near-miss pairs before trusting the detector on prose
+        further from the memories' wording.
 
 ## The KB line is complete
 
