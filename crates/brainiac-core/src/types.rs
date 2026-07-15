@@ -502,7 +502,8 @@ impl SectionMode {
 /// What a composed section pulls in. This is a *query*, not a list of memories:
 /// the page's content is whatever currently satisfies it, which is precisely why
 /// the page cannot go stale while the corpus moves on.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// NOTE: `Default` is implemented by hand, not derived — see the impl below.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SectionBinding {
     /// Canonical entity ids the section is anchored to.
     #[serde(default)]
@@ -524,6 +525,29 @@ pub struct SectionBinding {
 
 fn default_max_items() -> usize {
     12
+}
+
+/// Hand-written so the struct has ONE default, not two that disagree.
+///
+/// `#[derive(Default)]` gave `max_items = 0` (integer Default) while
+/// `#[serde(default = "default_max_items")]` gave 12 — so a binding built the
+/// idiomatic way (`SectionBinding { query, ..Default::default() }`, the pattern
+/// used for other structs all over the pipeline) silently got a cap of 0. compose
+/// then derives `LIMIT max_items * 3` = 0, fan-out `k = max_items * 2` = 0, and
+/// `kept.truncate(0)`, rendering an EMPTY page section and reporting success. It
+/// was latent only because every current caller happens to set `max_items`
+/// explicitly, and `SectionBinding` is `pub` in brainiac-core, so any new caller
+/// (or external consumer) would have walked into it.
+impl Default for SectionBinding {
+    fn default() -> Self {
+        Self {
+            entities: Vec::new(),
+            kinds: Vec::new(),
+            lifecycle: Vec::new(),
+            query: String::new(),
+            max_items: default_max_items(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -808,6 +832,26 @@ mod tests {
         for s in ["auto_approved", "needs_review", "denied"] {
             assert_eq!(PolicyDecision::parse(s).map(|v| v.as_str()), Some(s));
         }
+    }
+
+    #[test]
+    fn section_binding_has_one_default_not_two() {
+        // The derived Default gave max_items = 0 while serde's gave 12, so a
+        // `..Default::default()` binding silently composed an EMPTY section
+        // (LIMIT 0, k = 0, truncate(0)) and reported success.
+        assert_eq!(
+            SectionBinding::default().max_items,
+            default_max_items(),
+            "the struct default must not diverge from the serde default"
+        );
+        // Both construction paths must agree.
+        let from_json: SectionBinding =
+            serde_json::from_str(r#"{"query":"retry"}"#).expect("binding parses");
+        assert_eq!(from_json.max_items, SectionBinding::default().max_items);
+        // ...and an explicit value still wins.
+        let explicit: SectionBinding =
+            serde_json::from_str(r#"{"query":"retry","max_items":3}"#).expect("binding parses");
+        assert_eq!(explicit.max_items, 3);
     }
 
     #[test]
