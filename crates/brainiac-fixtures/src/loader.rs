@@ -75,9 +75,24 @@ pub fn load_unvalidated(root: impl AsRef<Path>) -> Result<Fixtures> {
         qa: read_yaml(&root.join("retrieval/qa.yaml"))?,
         leak: read_yaml(&root.join("retrieval/leak.yaml"))?,
         documents: {
-            let p = root.join("documents/pages.yaml");
+            // The `documents/` directory is the tree's declaration that it HAS a
+            // docs profile. If it exists but pages.yaml doesn't (renamed, moved,
+            // typo'd), loading an empty list would make every composition-gold
+            // check AND the zero-tolerance leak gate iterate zero items and report
+            // green — a vacuous pass, which validate.rs itself calls "worse than
+            // having no gate at all, because it reports safety it never verified".
+            // Only a tree with no `documents/` at all legitimately has no profile.
+            let dir = root.join("documents");
+            let p = dir.join("pages.yaml");
             if p.exists() {
                 read_yaml(&p)?
+            } else if dir.exists() {
+                bail!(
+                    "fixtures: {} exists but pages.yaml is missing — the composition \
+                     and leak gates would validate vacuously. Restore the file, or \
+                     remove the directory if this tree has no docs profile.",
+                    dir.display()
+                );
             } else {
                 DocumentsFile { documents: vec![] }
             }

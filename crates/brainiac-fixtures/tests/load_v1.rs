@@ -20,6 +20,14 @@ fn fixtures_v1_load_and_validate() {
     );
     assert!(fx.qa.queries.len() >= 54, "retrieval QA >= 54 queries");
     assert_eq!(fx.leak.queries.len(), 15, "15 RLS leak tests");
+    // Guards the vacuous-pass regression: if pages.yaml stops loading, every
+    // composition-gold check and the zero-tolerance leak gate would iterate zero
+    // items and report green. Nothing else asserts this.
+    assert_eq!(
+        fx.documents.documents.len(),
+        2,
+        "2 composition-gold pages — an empty list means the docs+leak gates are vacuous"
+    );
 
     // Every stratum represented.
     for stratum in [
