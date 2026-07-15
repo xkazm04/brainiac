@@ -247,6 +247,34 @@ pub async fn record_compose_failure(
         .unwrap_or(0))
 }
 
+/// Record that a page was served to a reader (migration 0025) — the raw event
+/// behind the liquidity signals. `via` is the channel (`http` | `mcp`), and
+/// `was_dirty` captures whether the page was serving a superseded belief at
+/// the moment of the read — the fact that ranks rot by harm.
+///
+/// Callers run this in its OWN transaction after the read has been served: an
+/// analytics insert must never fail a read, and inside the serving transaction
+/// a failed insert would poison the commit.
+pub async fn record_read(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    document_id: Uuid,
+    via: &str,
+    was_dirty: bool,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO document_reads (org_id, document_id, via, was_dirty)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(org_id)
+    .bind(document_id)
+    .bind(via)
+    .bind(was_dirty)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Mark a page dirty directly (a new binding, a manual recompose request).
 pub async fn mark_dirty(conn: &mut PgConnection, document_id: Uuid) -> Result<()> {
     sqlx::query(

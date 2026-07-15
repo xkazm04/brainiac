@@ -67,7 +67,7 @@ async fn setup(url: &str) -> Ctx {
     brainiac_store::migrate(url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE document_dependencies, document_revisions, document_sections, documents,
+        "TRUNCATE document_reads, document_dependencies, document_revisions, document_sections, documents,
                   memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
                   team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive

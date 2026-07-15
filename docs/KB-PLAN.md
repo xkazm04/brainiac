@@ -124,7 +124,11 @@ Ordered roughly by leverage; none block the phase ladder.
    design once, apply to both layers.
 8. **Page analytics as liquidity signals**: which pages/sections agents and
    humans actually read feeds the Knowledge Health liquidity pillar and
-   entity-page scaffolding thresholds.
+   entity-page scaffolding thresholds. *Measurement side shipped 2026-07-15*
+   (migration 0025 `document_reads`, health signals + attention items — see
+   status log); still open: feeding the liquidity PILLAR formula and the
+   scaffolding thresholds, deliberately deferred until there is real read
+   data to calibrate the lever against.
 9. **Automated decay scoring** (ARCHITECTURE deferred list): `memory_feedback`
    volume is the input; pages give it a new output — visibly aging sections.
 
@@ -381,6 +385,29 @@ Ordered roughly by leverage; none block the phase ladder.
       - Completed the concurrent session's memory-title plumbing (migration
         0023): `title: None` across test initializers, lint fixes, sweep-count
         pin in `console_pg` updated for 0024. Full pg suite green.
+- [x] **Page-read analytics, measurement side** (2026-07-15) — follow-up #8.
+      - `migrations/0025_document_reads.sql`: append-only event log (INSERT +
+        SELECT grants only — analytics that can be rewritten are not
+        analytics), RLS-gated by visible parent document. `via` records the
+        channel (`http` | `mcp`), `was_dirty` records whether the page was
+        serving a superseded belief AT THE MOMENT of the read.
+      - Recording happens in its OWN transaction after the serving tx commits
+        (warn-only on failure: analytics must never cost a reader their page),
+        and only when revision CONTENT was actually served — a skeleton view
+        of a revision-less page, an unsigned draft told to an agent, and a
+        not-found all record nothing.
+      - Knowledge Health signals: `page_reads_30d`, `agent_page_reads_30d`
+        (MCP — agents consuming pages is the loop the KB exists for),
+        `dirty_page_reads_30d` (rot being CONSUMED, which outranks rot that
+        merely exists), `pages_never_read`. Two new attention items: dirty
+        reads (warning), never-read published pages (info, a candidate list).
+      - The liquidity PILLAR formula is deliberately unchanged: measure first,
+        calibrate the lever when there is data — the same posture as
+        confidence calibration.
+      - Tests: `doc_edit_pg` pins no-content-no-read, then clean-read/dirty-read
+        against the same page (the flag is a property of the moment);
+        `docs_pg` pins the MCP channel and that drafts/not-founds record
+        nothing.
 
 ## The KB line is complete
 

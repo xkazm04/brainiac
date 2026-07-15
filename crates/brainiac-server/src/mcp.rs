@@ -1118,6 +1118,11 @@ async fn doc_get(state: &McpState, args: &Value) -> Result<Value, ToolError> {
         }));
     };
 
+    // Content was served to an agent: record the read (0025). Agents consuming
+    // pages is exactly the liquidity the KB exists to create, so this channel
+    // is worth telling apart from the console.
+    crate::docs::record_read(&state.store, &state.principal, &doc, "mcp").await;
+
     Ok(json!({
         "found": true,
         "slug": doc.slug,

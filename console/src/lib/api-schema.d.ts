@@ -1464,6 +1464,12 @@ export interface components {
             liquidity: number;
         };
         KhSignals: {
+            /**
+             * Format: int64
+             * @description The subset of the last 30 days' reads that came through MCP — coding
+             *     agents consuming pages, which is exactly the loop the KB exists for.
+             */
+            agent_page_reads_30d: number;
             /** Format: int64 */
             canonical_entities: number;
             /**
@@ -1477,6 +1483,13 @@ export interface components {
              * @description Canonical entities carrying knowledge from ≥2 teams — the graph doing its job.
              */
             cross_team_entities: number;
+            /**
+             * Format: int64
+             * @description Reads in the last 30 days that were served while the page was DIRTY —
+             *     someone consumed a belief the org had already moved past. This is the
+             *     number that ranks rot by harm rather than by age.
+             */
+            dirty_page_reads_30d: number;
             /**
              * Format: int64
              * @description org_wide / total, as a percentage — knowledge liquidity.
@@ -1498,10 +1511,23 @@ export interface components {
             org_wide: number;
             /**
              * Format: int64
+             * @description Page reads served in the last 30 days (0025) — consumption, the half of
+             *     liquidity the visibility mix cannot see. Zero on a fresh deployment is
+             *     normal; zero six months in means the wiki is decoration.
+             */
+            page_reads_30d: number;
+            /**
+             * Format: int64
              * @description Pages whose memories moved and which have NOT recomposed yet. Every one
              *     is a page currently telling readers something the org no longer believes.
              */
             pages_dirty: number;
+            /**
+             * Format: int64
+             * @description Published pages no one has ever read. Not an emergency — a candidate
+             *     list: promote them where readers are, or stop composing them.
+             */
+            pages_never_read: number;
             /**
              * Format: int64
              * @description Page revisions awaiting a human — the KB's own review backlog.

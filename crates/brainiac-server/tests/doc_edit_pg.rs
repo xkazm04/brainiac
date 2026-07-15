@@ -34,7 +34,7 @@ async fn a_human_edit_is_captured_as_knowledge_not_written_into_the_page() {
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE document_publications, publish_targets, document_dependencies,
+        "TRUNCATE document_reads, document_publications, publish_targets, document_dependencies,
                   document_revisions, document_sections, documents,
                   memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
@@ -245,6 +245,32 @@ async fn a_human_edit_is_captured_as_knowledge_not_written_into_the_page() {
     );
     tx.commit().await.expect("commit");
 
+    // ── read analytics (0025): no revision yet = nothing was consumed ──────
+    // The page has sections but no composed revision at this point. The GET
+    // succeeds (skeleton + metadata), but no CONTENT was served, so recording
+    // a "read" would inflate the consumption numbers with page-loads that
+    // taught the reader nothing.
+    let r = http
+        .get(format!("{base}/v1/docs/retry-policy"))
+        .bearer_auth("tok_lead")
+        .send()
+        .await
+        .expect("read revision-less page");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let mut tx = store.scoped_tx(&p).await.expect("tx");
+    let reads: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT via, was_dirty FROM document_reads WHERE document_id = $1 ORDER BY read_at",
+    )
+    .bind(doc_id)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("reads");
+    tx.commit().await.expect("commit");
+    assert!(
+        reads.is_empty(),
+        "a page view that served no revision content must not count as a read: {reads:?}"
+    );
+
     // ── the propagation SLA, end to end (KB4) ───────────────────────────
     // The product's promise is that knowledge changing reaches every page BY
     // ITSELF. Measure it: recompose, and assert the page came back clean. A
@@ -299,4 +325,44 @@ async fn a_human_edit_is_captured_as_knowledge_not_written_into_the_page() {
         rev.content_md
     );
     eprintln!("propagation latency (one page, mock composer): {elapsed:?}");
+
+    // ── read analytics (0025): the dirty flag is a property of the MOMENT ──
+    // A read of the freshly composed page records clean; the same page read
+    // after its memories move on again records dirty. `was_dirty` is what lets
+    // Knowledge Health rank rot that is being consumed above rot nobody opens.
+    let r = http
+        .get(format!("{base}/v1/docs/retry-policy"))
+        .bearer_auth("tok_lead")
+        .send()
+        .await
+        .expect("read clean page");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+
+    let mut tx = store.scoped_tx(&p).await.expect("tx");
+    brainiac_store::documents::mark_dirty(&mut tx, doc_id)
+        .await
+        .expect("mark dirty");
+    tx.commit().await.expect("commit");
+    let r = http
+        .get(format!("{base}/v1/docs/retry-policy"))
+        .bearer_auth("tok_lead")
+        .send()
+        .await
+        .expect("read dirty page");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+
+    let mut tx = store.scoped_tx(&p).await.expect("tx");
+    let reads: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT via, was_dirty FROM document_reads WHERE document_id = $1 ORDER BY read_at",
+    )
+    .bind(doc_id)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("reads");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        reads,
+        vec![("http".to_string(), false), ("http".to_string(), true)],
+        "clean read then dirty read, each recording the page's state at that moment"
+    );
 }

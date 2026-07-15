@@ -35,7 +35,7 @@ async fn setup(url: &str) -> Ctx {
     brainiac_store::migrate(url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE document_dependencies, document_revisions, document_sections, documents,
+        "TRUNCATE document_reads, document_dependencies, document_revisions, document_sections, documents,
                   memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
                   team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
@@ -301,6 +301,27 @@ async fn mcp_doc_get_serves_published_pages_and_refuses_unsigned_drafts() {
     )
     .await;
     assert_eq!(out["found"], false);
+
+    // ── read analytics (0025) ────────────────────────────────────────────
+    // Exactly ONE read was recorded in all of the above: the published page
+    // served to the agent. The unsigned draft served no content, and the
+    // outsider's not-found served nothing — neither is a read.
+    let mut tx = ctx
+        .store
+        .scoped_tx(&principal(ctx.org_id, ctx.user_a))
+        .await
+        .expect("tx");
+    let reads: Vec<(String, bool)> =
+        sqlx::query_as("SELECT via, was_dirty FROM document_reads ORDER BY read_at")
+            .fetch_all(&mut *tx)
+            .await
+            .expect("reads");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        reads,
+        vec![("mcp".to_string(), false)],
+        "one agent read of the published page; drafts and not-founds record nothing"
+    );
 }
 
 async fn mcp_state(ctx: &Ctx, user: Uuid) -> std::sync::Arc<brainiac_server::mcp::McpState> {

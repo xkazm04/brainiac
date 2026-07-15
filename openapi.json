@@ -3375,6 +3375,10 @@
           "oldest_dirty_secs",
           "pages_pending_review",
           "pages_published",
+          "page_reads_30d",
+          "agent_page_reads_30d",
+          "dirty_page_reads_30d",
+          "pages_never_read",
           "org_wide",
           "team_only",
           "siloed_private",
@@ -3383,6 +3387,11 @@
           "oldest_review_secs"
         ],
         "properties": {
+          "agent_page_reads_30d": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The subset of the last 30 days' reads that came through MCP — coding\nagents consuming pages, which is exactly the loop the KB exists for."
+          },
           "canonical_entities": {
             "type": "integer",
             "format": "int64"
@@ -3396,6 +3405,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Canonical entities carrying knowledge from ≥2 teams — the graph doing its job."
+          },
+          "dirty_page_reads_30d": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Reads in the last 30 days that were served while the page was DIRTY —\nsomeone consumed a belief the org had already moved past. This is the\nnumber that ranks rot by harm rather than by age."
           },
           "liquidity_pct": {
             "type": "integer",
@@ -3419,10 +3433,20 @@
             "type": "integer",
             "format": "int64"
           },
+          "page_reads_30d": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Page reads served in the last 30 days (0025) — consumption, the half of\nliquidity the visibility mix cannot see. Zero on a fresh deployment is\nnormal; zero six months in means the wiki is decoration."
+          },
           "pages_dirty": {
             "type": "integer",
             "format": "int64",
             "description": "Pages whose memories moved and which have NOT recomposed yet. Every one\nis a page currently telling readers something the org no longer believes."
+          },
+          "pages_never_read": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Published pages no one has ever read. Not an emergency — a candidate\nlist: promote them where readers are, or stop composing them."
           },
           "pages_pending_review": {
             "type": "integer",

@@ -28,6 +28,35 @@ use crate::http::{auth_of, internal, AppState, HttpError};
 pub const SCOPE_KB_READ: &str = "kb:read";
 pub const SCOPE_KB_PUBLISH: &str = "kb:publish";
 
+/// Record a page read (migration 0025) in its own transaction, warn-only on
+/// failure. Runs AFTER the serving transaction commits: analytics must never
+/// cost a reader their page, and a failed insert inside the serving tx would
+/// poison its commit. Shared by the HTTP reader here and MCP `doc_get`.
+pub(crate) async fn record_read(
+    store: &brainiac_store::Store,
+    principal: &brainiac_core::Principal,
+    doc: &brainiac_core::Document,
+    via: &str,
+) {
+    let outcome = async {
+        let mut tx = store.scoped_tx(principal).await?;
+        brainiac_store::documents::record_read(
+            &mut tx,
+            doc.org_id,
+            doc.id,
+            via,
+            doc.dirty_at.is_some(),
+        )
+        .await?;
+        tx.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        tracing::warn!(slug = %doc.slug, via, error = %e, "page read served but not recorded");
+    }
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct DocSummary {
     pub id: Uuid,
@@ -236,7 +265,15 @@ pub(crate) async fn doc_get(
             mode: s.mode.as_str().to_string(),
         })
         .collect();
+    let served_content = shown.is_some();
     tx.commit().await.map_err(internal)?;
+
+    // Read analytics (0025), only when revision content was actually served.
+    // Its own transaction, after the read committed: a failed analytics insert
+    // must cost a warning, never the read itself.
+    if served_content {
+        record_read(&state.store, &principal, &doc, "http").await;
+    }
 
     Ok(Json(DocDetailResponse {
         document: summary(&doc, pending.is_some()),

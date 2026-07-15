@@ -1563,6 +1563,20 @@ pub(crate) struct KhSignals {
     /// Page revisions awaiting a human — the KB's own review backlog.
     pub pages_pending_review: i64,
     pub pages_published: i64,
+    /// Page reads served in the last 30 days (0025) — consumption, the half of
+    /// liquidity the visibility mix cannot see. Zero on a fresh deployment is
+    /// normal; zero six months in means the wiki is decoration.
+    pub page_reads_30d: i64,
+    /// The subset of the last 30 days' reads that came through MCP — coding
+    /// agents consuming pages, which is exactly the loop the KB exists for.
+    pub agent_page_reads_30d: i64,
+    /// Reads in the last 30 days that were served while the page was DIRTY —
+    /// someone consumed a belief the org had already moved past. This is the
+    /// number that ranks rot by harm rather than by age.
+    pub dirty_page_reads_30d: i64,
+    /// Published pages no one has ever read. Not an emergency — a candidate
+    /// list: promote them where readers are, or stop composing them.
+    pub pages_never_read: i64,
     pub org_wide: i64,
     pub team_only: i64,
     pub siloed_private: i64,
@@ -1926,6 +1940,35 @@ pub(crate) async fn knowledge_health(
     .map_err(internal)?;
     let pages_pending_review: i64 = kb_review.get("pending");
 
+    // Consumption (0025). RLS scopes both queries to pages this viewer can
+    // see, like every other number in the report. The pillar math deliberately
+    // does NOT consume these yet — measure first, calibrate the lever after
+    // there is data to calibrate against (the same posture as confidence).
+    let reads = sqlx::query(
+        "SELECT
+           count(*) FILTER (WHERE read_at > now() - interval '30 days') AS reads_30d,
+           count(*) FILTER (WHERE via = 'mcp'
+                              AND read_at > now() - interval '30 days') AS agent_reads_30d,
+           count(*) FILTER (WHERE was_dirty
+                              AND read_at > now() - interval '30 days') AS dirty_reads_30d
+         FROM document_reads",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let page_reads_30d: i64 = reads.get("reads_30d");
+    let agent_page_reads_30d: i64 = reads.get("agent_reads_30d");
+    let dirty_page_reads_30d: i64 = reads.get("dirty_reads_30d");
+    let pages_never_read: i64 = sqlx::query(
+        "SELECT count(*) AS never_read FROM documents d
+         WHERE d.status = 'published'
+           AND NOT EXISTS (SELECT 1 FROM document_reads r WHERE r.document_id = d.id)",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?
+    .get("never_read");
+
     // One hour is generous for a loop that runs every tick; past it, propagation
     // is not "eventual", it is broken, and the pages are lying in the meantime.
     const PROPAGATION_SLA_SECS: i64 = 3600;
@@ -1956,6 +1999,34 @@ pub(crate) async fn knowledge_health(
             headline: format!("{pages_pending_review} page revision(s) waiting on a human"),
             detail: "A page revision publishes only when a maintainer signs it. Until then \
                      readers see the previous version."
+                .into(),
+        });
+    }
+    // Rot that is being CONSUMED outranks rot that merely exists: a dirty page
+    // nobody opens is a chore, a dirty page being read is misleading someone
+    // right now.
+    if dirty_page_reads_30d > 0 {
+        attention.push(KhAttention {
+            severity: "warning".into(),
+            kind: "staleness".into(),
+            headline: format!(
+                "{dirty_page_reads_30d} page read(s) this month served out-of-date content"
+            ),
+            detail: "Someone opened a page after its underlying memories had moved on but \
+                     before it recomposed. If propagation is healthy this window is minutes \
+                     wide; if this number keeps growing, readers are routinely acting on \
+                     beliefs the org has already corrected."
+                .into(),
+        });
+    }
+    if pages_never_read > 0 && pages_published > 0 {
+        attention.push(KhAttention {
+            severity: "info".into(),
+            kind: "silo".into(),
+            headline: format!("{pages_never_read} published page(s) have never been read"),
+            detail: "Compiled, reviewed, and consumed by no one. Not an emergency — a \
+                     candidate list: link them where readers already are, or stop spending \
+                     review effort keeping them current."
                 .into(),
         });
     }
@@ -2000,6 +2071,10 @@ pub(crate) async fn knowledge_health(
             oldest_dirty_secs,
             pages_pending_review,
             pages_published,
+            page_reads_30d,
+            agent_page_reads_30d,
+            dirty_page_reads_30d,
+            pages_never_read,
             org_wide,
             team_only,
             siloed_private: siloed,

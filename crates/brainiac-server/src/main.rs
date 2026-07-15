@@ -1069,7 +1069,7 @@ async fn reset_tenant(admin: &sqlx::PgPool) -> Result<()> {
         "TRUNCATE memory_entities, memory_embeddings, canonical_entity_embeddings, entity_links,
                   edges, contradictions, promotions, memories, canonical_entities, entities,
                   provenance, sources, team_members, users, teams, orgs, pipeline_runs,
-                  document_dependencies, document_publications, document_revisions,
+                  document_reads, document_dependencies, document_publications, document_revisions,
                   document_sections, documents, publish_targets,
                   queue.jobs, queue.archive CASCADE",
     )
