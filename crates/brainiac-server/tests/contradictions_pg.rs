@@ -113,6 +113,43 @@ async fn contradiction_resolve_is_serialized_and_honest() {
     let base = format!("http://{addr}");
     let http = reqwest::Client::new();
 
+    // ── 0. the queue reports a backlog, not a page length ────────────────
+    //
+    // Three open contradictions, asked for one at a time: `total` must stay 3
+    // while the array is 1. A client that renders `contradictions.length` as the
+    // backlog reports "1 open dispute" the moment the queue is paged.
+    let page: serde_json::Value = http
+        .get(format!(
+            "{base}/v1/reviews/contradictions?status=open&limit=1"
+        ))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("page 1")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(
+        page["contradictions"].as_array().expect("array").len(),
+        1,
+        "limit must bound the window"
+    );
+    assert_eq!(page["total"], 3, "total must count the filtered backlog");
+
+    // `total` follows the filters (not the histogram, which counts everything).
+    let filtered: serde_json::Value = http
+        .get(format!(
+            "{base}/v1/reviews/contradictions?status=open&detected_by=nobody"
+        ))
+        .bearer_auth("tok_pay_lead")
+        .send()
+        .await
+        .expect("filtered")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(filtered["total"], 0, "total must respect detected_by");
+
     // ── 1. two maintainers race the same dispute ─────────────────────────
     //
     // Both fire concurrently at the same open contradiction, disagreeing about

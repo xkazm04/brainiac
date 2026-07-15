@@ -317,6 +317,11 @@ pub(crate) struct ContradictionRow {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ContradictionQueueResponse {
     pub contradictions: Vec<ContradictionRow>,
+    /// Rows matching the CURRENT filters, ignoring the page window — the real
+    /// backlog behind this page. Without it a client can only report the length
+    /// of a truncated array, which silently reads as the whole queue the moment
+    /// the backlog passes `limit`.
+    pub total: i64,
     /// Status histogram over ALL contradictions — unaffected by the filters.
     pub counts: Vec<StatusCount>,
 }
@@ -383,6 +388,21 @@ pub(crate) async fn list_contradictions(
     .fetch_all(&mut *tx)
     .await
     .map_err(internal)?;
+    // The filtered backlog: the same predicate as the page query, without the
+    // window. Counted over `contradictions` alone — the LEFT JOINs above only
+    // decorate rows with content and never filter, so they cannot change it.
+    let total: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM contradictions c
+         WHERE ($1 = 'all' OR c.status = $1)
+           AND ($2::text IS NULL OR c.detected_by = $2)
+           AND ($3::bigint IS NULL OR c.created_at <= now() - make_interval(hours => $3::int))",
+    )
+    .bind(status)
+    .bind(q.detected_by.as_deref())
+    .bind(q.min_age_hours)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
     // Status counts ignore the row filters — they power the queue's tabs.
     let counts = sqlx::query("SELECT status, count(*) AS n FROM contradictions GROUP BY 1")
         .fetch_all(&mut *tx)
@@ -411,6 +431,7 @@ pub(crate) async fn list_contradictions(
         .collect();
     Ok(Json(ContradictionQueueResponse {
         contradictions: out,
+        total,
         counts: counts
             .iter()
             .map(|r| StatusCount {

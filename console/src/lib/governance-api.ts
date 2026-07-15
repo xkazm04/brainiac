@@ -100,6 +100,13 @@ export interface ContradictionQueueItem {
 
 export interface ContradictionQueuePage {
   contradictions: ContradictionQueueItem[];
+  /**
+   * Rows matching the current filters, ignoring the page window — the real
+   * backlog. `contradictions.length` is only ever the size of the page, so
+   * rendering it as the queue depth understates the moment the backlog passes
+   * `limit` (default 50).
+   */
+  total: number;
   counts: { status: string; count: number }[];
 }
 

@@ -1098,6 +1098,14 @@ export interface components {
             contradictions: components["schemas"]["ContradictionRow"][];
             /** @description Status histogram over ALL contradictions — unaffected by the filters. */
             counts: components["schemas"]["StatusCount"][];
+            /**
+             * Format: int64
+             * @description Rows matching the CURRENT filters, ignoring the page window — the real
+             *     backlog behind this page. Without it a client can only report the length
+             *     of a truncated array, which silently reads as the whole queue the moment
+             *     the backlog passes `limit`.
+             */
+            total: number;
         };
         ContradictionRow: {
             /** Format: int64 */

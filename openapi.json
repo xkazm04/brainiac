@@ -2409,6 +2409,7 @@
         "type": "object",
         "required": [
           "contradictions",
+          "total",
           "counts"
         ],
         "properties": {
@@ -2424,6 +2425,11 @@
               "$ref": "#/components/schemas/StatusCount"
             },
             "description": "Status histogram over ALL contradictions — unaffected by the filters."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows matching the CURRENT filters, ignoring the page window — the real\nbacklog behind this page. Without it a client can only report the length\nof a truncated array, which silently reads as the whole queue the moment\nthe backlog passes `limit`."
           }
         }
       },
