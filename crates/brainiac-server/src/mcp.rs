@@ -98,6 +98,35 @@ impl From<sqlx::Error> for ToolError {
     }
 }
 
+/// Optional point-in-time view. STRICT: an unparseable `as_of` is an error, not a
+/// silent fallback to "now".
+///
+/// This used to be `.and_then(|s| s.parse().ok())`, deliberately lenient — so a
+/// caller asking "what was true on 2026-01-01" got "what is true NOW", with no
+/// error, no marker, and no way to detect the substitution. In a temporal memory
+/// engine that is a confidently-wrong answer the agent will act on: a superseded
+/// fact reappears as current, a not-yet-valid one is served early. The lenient
+/// path was also easy to hit by accident — RFC3339 requires an offset, so the very
+/// common date-only `2026-01-01` fails to parse. Every other narrowing param
+/// (`scope`, `kinds`, `min_confidence`) already errors with -32602; `as_of` now
+/// matches them.
+fn parse_as_of(args: &Value) -> Result<Option<DateTime<Utc>>, ToolError> {
+    match args.get("as_of") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("`as_of` must be an RFC3339 timestamp string"))?;
+            s.parse::<DateTime<Utc>>().map(Some).map_err(|_| {
+                invalid(format!(
+                    "`as_of` must be an RFC3339 timestamp with an offset \
+                     (e.g. 2026-01-01T00:00:00Z); got {s:?}"
+                ))
+            })
+        }
+    }
+}
+
 fn invalid(msg: impl Into<String>) -> ToolError {
     ToolError::InvalidParams(msg.into())
 }
@@ -575,10 +604,7 @@ fn parse_filters(state: &McpState, args: &Value) -> Result<RetrievalFilters, Too
 async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let query = within_cap(required_str(args, "query")?, MAX_QUERY_CHARS, "query")?;
     let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(10).min(25) as usize;
-    let as_of: Option<DateTime<Utc>> = args
-        .get("as_of")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok());
+    let as_of = parse_as_of(args)?;
     let filters = parse_filters(state, args)?;
 
     let mut tx = state.store.scoped_tx(&state.principal).await?;
@@ -719,13 +745,8 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
         MAX_QUERY_CHARS,
         "task_hint",
     )?;
-    // Optional point-in-time view (same lenient parse as `memory_search`): an
-    // unparseable value is ignored rather than erroring, so a caller that hands
-    // a malformed timestamp still gets a live bundle.
-    let as_of: Option<DateTime<Utc>> = args
-        .get("as_of")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok());
+    // Optional point-in-time view — strictly parsed (see `parse_as_of`).
+    let as_of = parse_as_of(args)?;
 
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     // Push the Canonical floor INTO the SQL candidate stage (RetrievalFilters
