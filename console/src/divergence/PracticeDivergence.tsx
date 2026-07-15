@@ -28,6 +28,21 @@ import {
 } from "@/design/theme";
 import type { PracticeDivergence, PracticeDivergences } from "@/lib/types";
 
+/**
+ * `YYYY-MM-DD`, or an em dash when the timestamp is unusable.
+ *
+ * `new Date(x).toISOString()` THROWS a RangeError on an unparseable value, and
+ * this renders inside a card in a mapped list — so ONE malformed `detected_at`
+ * from the sweep took down the whole board. The route had no error.tsx either, so
+ * the crash reached the root boundary and white-screened it. A date we can't read
+ * is worth an em dash, not an outage.
+ */
+function isoDay(value: string | null | undefined): string {
+  if (!value) return "—";
+  const t = new Date(value);
+  return Number.isNaN(t.getTime()) ? "—" : t.toISOString().slice(0, 10);
+}
+
 type Approach = { team: string; approach: string };
 
 /** impact → accent. High is the alarm colour; the sweep is conservative, so a
@@ -120,7 +135,7 @@ function DivergenceCard({ d }: { d: PracticeDivergence }) {
         style={{ borderTop: `1px solid ${BORDER}`, color: INK_FAINT }}
       >
         <span>adjudicated by {d.model_ref ?? "—"}</span>
-        <span>{new Date(d.detected_at).toISOString().slice(0, 10)}</span>
+        <span>{isoDay(d.detected_at)}</span>
       </div>
     </article>
   );

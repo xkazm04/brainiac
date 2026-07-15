@@ -274,7 +274,20 @@ export default function LedgerField({ onStats, onApproveRef }: HeroFieldProps) {
 
     const ro = new ResizeObserver(() => {
       resize();
-      draw(performance.now());
+      // Repaint here ONLY when no RAF chain is running. `draw` reschedules itself
+      // at its tail, so calling it while the chain is live spawns a SECOND chain:
+      // it overwrites the shared `raf` handle (leaking the previous id, which
+      // cleanup can then never cancel) and the shared physics — drift, docking
+      // lerp, chain scroll — advances once per chain per frame. ResizeObserver
+      // fires one callback immediately on observe(), so this doubled the hero's
+      // animation speed from mount, before any user interaction, and added
+      // another chain per resize.
+      //
+      // Under reduced motion there IS no chain (draw ran once and did not
+      // reschedule), so a resize would otherwise clear the canvas and never
+      // repaint it — the hero would just go blank. Draw exactly once; the tail's
+      // `!reduce` guard means it still won't reschedule.
+      if (reduce && !disposed) draw(performance.now());
     });
     ro.observe(canvas);
 

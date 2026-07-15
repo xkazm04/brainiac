@@ -114,8 +114,6 @@ export default function Home({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
 
     const k = (Math.PI * 2) / WAVELEN;
 
@@ -189,6 +187,26 @@ export default function Home({
       if (!reduce) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
+
+    // Observed AFTER `draw` exists, because a resize has to be able to repaint.
+    //
+    // Assigning canvas.width/height RESETS and clears the surface. With motion
+    // allowed the running RAF chain repaints on the next frame, so a bare
+    // `resize` was fine. Under prefers-reduced-motion `draw` runs exactly once
+    // (the tail's `!reduce` guard means it never reschedules), so ANY resize —
+    // window, devtools, orientation, or just the ResizeObserver's own initial
+    // fire after fonts settle — cleared the hero and nothing ever redrew it. The
+    // primary visual of the whole pitch silently vanished, leaving the emitter
+    // labels floating over an empty box.
+    //
+    // Repaint once here in that case; with motion allowed the chain still owns
+    // the repaint, so we must NOT call draw and spawn a second chain.
+    const ro = new ResizeObserver(() => {
+      resize();
+      if (reduce && !disposed) draw(performance.now());
+    });
+    ro.observe(canvas);
+
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);

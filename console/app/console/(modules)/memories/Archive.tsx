@@ -10,7 +10,7 @@
  * filtering over one fetched corpus = zero-latency scrubbing.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { band, FONT_DISPLAY, FONT_MONO, LABEL } from "@/design/theme";
@@ -18,6 +18,10 @@ import { band, FONT_DISPLAY, FONT_MONO, LABEL } from "@/design/theme";
 import { timeBounds, validAt, type ArchiveData } from "./archive-data";
 import MemoryInspector, { fmtDate, statusTone } from "./MemoryInspector";
 import { useMemoryDetail } from "./useMemoryDetail";
+
+/** Rows rendered per window step. Keeps the animated re-layout cheap while
+ * leaving the rest of the corpus reachable via the load-more control. */
+const PAGE = 40;
 
 const VIOLET = band("delta");
 const VIOLET_GLOW = band("delta", 60, 0.35);
@@ -39,6 +43,16 @@ export default function Archive({ data }: { data: ArchiveData }) {
     [data.rows, at],
   );
   const resurrected = visible.filter((r) => r.status === "deprecated").length;
+
+  // Rendered window. Driven by an index rather than a hard `.slice(0, 40)` so the
+  // rest of the corpus stays reachable (see the load-more control below).
+  const [shown, setShown] = useState(PAGE);
+  // Scrubbing the timeline changes WHICH memories pass validAt, so the window
+  // resets — otherwise an expanded window would persist across an unrelated set.
+  useEffect(() => {
+    setShown(PAGE);
+  }, [at]);
+  const windowed = useMemo(() => visible.slice(0, shown), [visible, shown]);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
@@ -89,7 +103,7 @@ export default function Archive({ data }: { data: ArchiveData }) {
       <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_0.9fr]">
         <div className="space-y-2">
           <AnimatePresence initial={false}>
-            {visible.slice(0, 40).map((r) => (
+            {windowed.map((r) => (
               <motion.button
                 key={r.id}
                 layout
@@ -115,6 +129,25 @@ export default function Archive({ data }: { data: ArchiveData }) {
               </motion.button>
             ))}
           </AnimatePresence>
+          {/* The window is honest about itself. The header counts every memory
+              true at this instant, but the list is capped to keep the animated
+              re-layout cheap — without this the remainder was simply
+              unreachable: never rendered, never selectable, its lineage and
+              provenance uninspectable, while the header claimed to be showing
+              them. In an audit tool that is data loss with extra steps. */}
+          {visible.length > windowed.length && (
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <span className={`${FONT_MONO} text-xs text-[#e9edff]/35`}>
+                showing {windowed.length} of {visible.length}
+              </span>
+              <button
+                onClick={() => setShown((n) => n + PAGE)}
+                className={`${FONT_MONO} rounded-full border border-white/15 px-4 py-1 text-xs text-[#e9edff]/60 transition hover:border-white/40 hover:text-white`}
+              >
+                show {Math.min(PAGE, visible.length - windowed.length)} more
+              </button>
+            </div>
+          )}
           {visible.length === 0 && (
             <p className={`${FONT_MONO} py-10 text-center text-sm text-[#e9edff]/35`}>
               nothing was known yet — scrub forward
