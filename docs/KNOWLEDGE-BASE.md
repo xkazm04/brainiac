@@ -179,6 +179,23 @@ token that writes to your wiki.
 An agent's token can read every page it is permitted to see without ever being
 able to publish one. **Agents write memories; pages follow from them.**
 
+### Recipe: publishing to a GitHub wiki
+
+A GitHub wiki *is* a git repository (`git clone
+https://github.com/org/repo.wiki.git`), with one markdown file per page at the
+repository root. The existing `git` target therefore covers it with no new
+adapter — the recipe is a configuration, not a feature:
+
+```json
+{ "kind": "git", "config": { "repo_path": "/srv/checkouts/repo.wiki", "docs_dir": "." } }
+```
+
+The target writes `{slug}.md` files and deliberately stops there; your pipeline
+commits and pushes on whatever cadence and credentials your org already trusts.
+Two wiki-specific notes: GitHub renders each file as a wiki page named after
+the filename, and it renders ` ```mermaid ` blocks natively — the deterministic
+entity-neighborhood diagrams draw themselves there.
+
 ## 8. What this layer will never do
 
 These are refusals, not gaps. Each one is a thing a competitor could ship next

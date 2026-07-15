@@ -112,8 +112,12 @@ Ordered roughly by leverage; none block the phase ladder.
    is *also a projection* — model it as a `doc_kind: digest` with a
    time-windowed binding and reuse the compose pipeline rather than building a
    parallel generator.
-4. **More publish targets** behind the same trait: Notion, GitHub wiki,
-   Backstage TechDocs. Cheap once D4 lands; pick by customer pull.
+4. **More publish targets** behind the same trait: Notion, Backstage TechDocs.
+   Cheap once D4 lands; pick by customer pull. ~~GitHub wiki~~ closed
+   2026-07-15 as a documented recipe, not code: a wiki IS a git repo, so the
+   existing `git` target covers it with `docs_dir: "."` — see
+   KNOWLEDGE-BASE.md §7. Bonus: GitHub renders mermaid natively, so the
+   neighborhood diagrams draw themselves there.
 5. **Team-space Confluence mapping** (relaxes D5): per-team spaces with
    visibility mapping, only after the leak eval covers the mapping matrix.
 6. **Substrate trust workstream** (owned by UAT follow-ups, blocking KB3 GA):
