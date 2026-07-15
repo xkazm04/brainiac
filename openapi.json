@@ -1062,6 +1062,47 @@
         }
       }
     },
+    "/v1/provision": {
+      "post": {
+        "tags": [
+          "provision"
+        ],
+        "summary": "POST /v1/provision — exchange a verified identity for its project.",
+        "description": "Exchange a VERIFIED federated identity for its single project, optionally minting a device key. Requires the `admin` scope; the caller must have already verified the identity with the provider.",
+        "operationId": "provision_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Project provisioned or already existed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported provider, or empty subject/email"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      }
+    },
     "/v1/queue/dead-letters": {
       "get": {
         "tags": [
@@ -4329,6 +4370,81 @@
           },
           "kind": {
             "type": "string"
+          }
+        }
+      },
+      "ProvisionBody": {
+        "type": "object",
+        "description": "A verified federated identity, plus what to do with it.",
+        "required": [
+          "provider",
+          "subject",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "For display and support only; never the identity."
+          },
+          "issue_key": {
+            "type": "boolean",
+            "description": "Mint a fresh device key. Always true in effect on first creation (a project\nwith no key cannot be reached); on a returning identity it is opt-in, so a\npage refresh does not quietly mint keys."
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to call the project. Defaults to the email's local part."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Identity provider. Only `google` today."
+          },
+          "subject": {
+            "type": "string",
+            "description": "The provider's stable subject — the Firebase uid. NOT the email: emails get\nreassigned and change case, uids do not."
+          }
+        }
+      },
+      "ProvisionResponse": {
+        "type": "object",
+        "required": [
+          "org_id",
+          "user_id",
+          "team_id",
+          "created"
+        ],
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device key, in the ONLY response that will ever contain it — only its\nsha256 is stored. Null when no key was issued this call."
+          },
+          "api_key_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key's display prefix, safe to persist and show in a list."
+          },
+          "created": {
+            "type": "boolean",
+            "description": "False when the identity already had a project. Signing in twice is not an\nerror — it just does not make a second project."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "team_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

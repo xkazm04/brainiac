@@ -570,6 +570,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/provision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/provision — exchange a verified identity for its project.
+         * @description Exchange a VERIFIED federated identity for its single project, optionally minting a device key. Requires the `admin` scope; the caller must have already verified the identity with the provider.
+         */
+        post: operations["provision_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/queue/dead-letters": {
         parameters: {
             query?: never;
@@ -1801,6 +1821,46 @@ export interface components {
              */
             excerpt?: string | null;
             kind: string;
+        };
+        /** @description A verified federated identity, plus what to do with it. */
+        ProvisionBody: {
+            /** @description For display and support only; never the identity. */
+            email: string;
+            /**
+             * @description Mint a fresh device key. Always true in effect on first creation (a project
+             *     with no key cannot be reached); on a returning identity it is opt-in, so a
+             *     page refresh does not quietly mint keys.
+             */
+            issue_key?: boolean;
+            /** @description What to call the project. Defaults to the email's local part. */
+            project_name?: string | null;
+            /** @description Identity provider. Only `google` today. */
+            provider: string;
+            /**
+             * @description The provider's stable subject — the Firebase uid. NOT the email: emails get
+             *     reassigned and change case, uids do not.
+             */
+            subject: string;
+        };
+        ProvisionResponse: {
+            /**
+             * @description The device key, in the ONLY response that will ever contain it — only its
+             *     sha256 is stored. Null when no key was issued this call.
+             */
+            api_key?: string | null;
+            /** @description The key's display prefix, safe to persist and show in a list. */
+            api_key_prefix?: string | null;
+            /**
+             * @description False when the identity already had a project. Signing in twice is not an
+             *     error — it just does not make a second project.
+             */
+            created: boolean;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            team_id: string;
+            /** Format: uuid */
+            user_id: string;
         };
         /** @description Ingest queue depth — shared by `/v1/analytics` and the observatory. */
         QueueDepth: {
@@ -3074,6 +3134,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PipelineRunsResponse"];
                 };
+            };
+        };
+    };
+    provision_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProvisionBody"];
+            };
+        };
+        responses: {
+            /** @description Project provisioned or already existed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvisionResponse"];
+                };
+            };
+            /** @description Unsupported provider, or empty subject/email */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

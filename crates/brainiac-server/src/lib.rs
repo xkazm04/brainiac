@@ -8,4 +8,5 @@ pub mod docs;
 pub mod http;
 pub mod mcp;
 pub mod openapi;
+pub mod provision;
 pub mod sweeps;

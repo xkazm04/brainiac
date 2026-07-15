@@ -113,6 +113,8 @@ impl Modify for BearerAuth {
         http::queue_health,
         http::queue_dead_letters,
         http::queue_requeue,
+        // self-serve onboarding
+        crate::provision::provision_project,
         // tokens + keys (admin)
         http::list_tokens,
         http::create_token,

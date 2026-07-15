@@ -33,11 +33,16 @@ pub struct AppState {
     pub reranker: Option<Arc<dyn Reranker>>,
     pub embedding_version: i32,
     pub tokens: TokenMap,
-    /// RLS-bypassing owner pool, used ONLY to compute org-level analytics
-    /// (Knowledge Health) at their TRUE org totals — a leadership metric must not
-    /// depend on which team the viewer happens to belong to. Never route
-    /// request-scoped reads/writes of tenant content through it; those stay on
-    /// `store.scoped_tx`.
+    /// RLS-bypassing owner pool. Two callers, and both are cases where a
+    /// tenant-scoped transaction structurally cannot do the work:
+    ///
+    /// - Org-level analytics (Knowledge Health) at their TRUE org totals — a
+    ///   leadership metric must not depend on which team the viewer belongs to.
+    /// - Self-serve provisioning (`crate::provision`) — a person signing up has no
+    ///   org yet, so there is no RLS scope to create one under.
+    ///
+    /// Never route request-scoped reads/writes of tenant content through it; those
+    /// stay on `store.scoped_tx`.
     pub admin_pool: sqlx::PgPool,
 }
 
@@ -102,6 +107,7 @@ pub async fn router(
         .route("/v1/queue/dead-letters", get(queue_dead_letters))
         .route("/v1/queue/dead-letters/{id}/requeue", post(queue_requeue))
         .merge(crate::console::routes())
+        .merge(crate::provision::routes())
         // Explicit request-body cap. The largest free-text field REST accepts
         // is `memory_add` content (MAX_CONTENT_CHARS = 8000 chars ≈ 32 KiB of
         // UTF-8); 1 MiB leaves generous headroom for JSON framing and every
