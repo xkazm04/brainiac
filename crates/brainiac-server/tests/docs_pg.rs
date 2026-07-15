@@ -525,4 +525,81 @@ async fn entity_pages_scaffold_only_where_knowledge_actually_crosses_teams() {
         .expect("scaffold");
     tx.commit().await.expect("commit");
     assert!(again.is_empty(), "scaffolding duplicated an existing page");
+
+    // ── the deterministic neighborhood diagram (D9 rung a) ────────────────
+    // Composed with no edges in the graph: NO diagram. An empty mermaid block
+    // would be decoration, and diagrams here are language, not decoration.
+    use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+    let embedder = DeterministicEmbedder::default();
+    let providers = brainiac_gateway::ProviderRouter::single(std::sync::Arc::new(
+        brainiac_gateway::MockProvider::new(|_| "The event bus carries settlements.".to_string()),
+    ));
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let version =
+        brainiac_store::memories::ensure_embedding_version(&mut tx, embedder.model_name(), 8)
+            .await
+            .expect("version");
+    tx.commit().await.expect("commit");
+    let stats = brainiac_pipeline::worker::compose_tick(
+        &ctx.store, &providers, &embedder, version, ctx.org_id, 10,
+    )
+    .await
+    .expect("compose");
+    assert_eq!(stats.composed, 1);
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let rev = brainiac_store::documents::revisions(&mut tx, doc.id, 1)
+        .await
+        .expect("revs")
+        .into_iter()
+        .next()
+        .expect("revision");
+    tx.commit().await.expect("commit");
+    assert!(
+        !rev.content_md.contains("## Neighborhood"),
+        "an entity with no edges must not get an empty diagram:\n{}",
+        rev.content_md
+    );
+
+    // The graph learns an edge (kafka feeds sidecar, asserted by a memory) —
+    // the next compose renders it, compiled from the DB row, no model involved.
+    let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+    brainiac_store::entities::insert_edge(
+        &mut tx,
+        Uuid::new_v4(),
+        ctx.org_id,
+        kafka_raw_a.0,
+        sidecar_raw.0,
+        "feeds",
+        Some(rows[0].0),
+    )
+    .await
+    .expect("edge");
+    brainiac_store::documents::mark_dirty(&mut tx, doc.id)
+        .await
+        .expect("dirty");
+    tx.commit().await.expect("commit");
+    let stats = brainiac_pipeline::worker::compose_tick(
+        &ctx.store, &providers, &embedder, version, ctx.org_id, 10,
+    )
+    .await
+    .expect("compose");
+    assert_eq!(stats.composed, 1);
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let rev = brainiac_store::documents::revisions(&mut tx, doc.id, 1)
+        .await
+        .expect("revs")
+        .into_iter()
+        .next()
+        .expect("revision");
+    tx.commit().await.expect("commit");
+    assert!(
+        rev.content_md.contains("## Neighborhood") && rev.content_md.contains("```mermaid"),
+        "the edge must render as a diagram:\n{}",
+        rev.content_md
+    );
+    assert!(
+        rev.content_md.contains("-->|feeds|") && rev.content_md.contains("[\"sidecar\"]"),
+        "the diagram must show the relation and the neighbor:\n{}",
+        rev.content_md
+    );
 }

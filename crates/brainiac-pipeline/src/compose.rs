@@ -24,8 +24,8 @@
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
 use brainiac_core::{
-    Document, DocumentSection, Lifecycle, Memory, MemoryKind, MemoryStatus, RevisionPolicy,
-    SectionBinding, SectionMode, Visibility,
+    DocKind, Document, DocumentSection, Lifecycle, Memory, MemoryKind, MemoryStatus,
+    RevisionPolicy, SectionBinding, SectionMode, Visibility,
 };
 use brainiac_gateway::{ChatProvider, ChatRequest};
 use brainiac_store::retrieval::{RetrievalFilters, RetrievalRequest};
@@ -350,6 +350,100 @@ async fn compose_section(
     })
 }
 
+/// The first rung of the diagrams ladder (KB-PLAN D9 / follow-up #1a): a
+/// DETERMINISTIC mermaid neighborhood for entity pages, compiled from the
+/// entity/edge graph by code. No model proposes an edge — every arrow IS a row
+/// in `edges` — so the zero-hallucination bar that defers LLM-authored diagrams
+/// is met by construction. Renders `None` when the entity has no edges: an
+/// empty diagram would be decoration, and D9's whole point is that diagrams are
+/// language here, not decoration.
+///
+/// Visibility: edges and entity NAMES are org-level rows by schema (RLS scopes
+/// them to the org; the visibility ladder lives on memories), so an org-visible
+/// entity page may render them. No memory content enters the diagram.
+async fn mermaid_neighborhood(conn: &mut PgConnection, doc: &Document) -> Result<Option<String>> {
+    use sqlx::Row;
+    if doc.doc_kind != DocKind::EntityPage {
+        return Ok(None);
+    }
+    // Scaffolded entity pages carry their anchor in the slug (`entity-{uuid}`).
+    // A hand-made page with a different slug simply gets no diagram.
+    let Some(canonical_id) = doc
+        .slug
+        .strip_prefix("entity-")
+        .and_then(|s| s.parse::<Uuid>().ok())
+    else {
+        return Ok(None);
+    };
+    let center: Option<String> = sqlx::query("SELECT name FROM canonical_entities WHERE id = $1")
+        .bind(canonical_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|r| r.get("name"));
+    let Some(center) = center else {
+        return Ok(None);
+    };
+    let rows = sqlx::query(
+        "WITH mine AS (SELECT entity_id FROM entity_links WHERE canonical_id = $1)
+         SELECT DISTINCT e.relation,
+                (e.src_entity IN (SELECT entity_id FROM mine)) AS outgoing,
+                CASE WHEN e.src_entity IN (SELECT entity_id FROM mine)
+                     THEN dst.name ELSE src.name END AS neighbor
+         FROM edges e
+         JOIN entities src ON src.id = e.src_entity
+         JOIN entities dst ON dst.id = e.dst_entity
+         WHERE (e.src_entity IN (SELECT entity_id FROM mine)
+             OR e.dst_entity IN (SELECT entity_id FROM mine))
+           AND (e.valid_to IS NULL OR e.valid_to > now())
+         ORDER BY neighbor, e.relation
+         LIMIT 24",
+    )
+    .bind(canonical_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let edges: Vec<(String, String, bool)> = rows
+        .iter()
+        .map(|r| (r.get("neighbor"), r.get("relation"), r.get("outgoing")))
+        .collect();
+    Ok(Some(render_mermaid(&center, &edges)))
+}
+
+/// Pure renderer: mermaid `graph LR` with opaque node ids and quoted labels, so
+/// entity names never have to be valid mermaid identifiers. `edges` are
+/// (neighbor name, relation, outgoing?) with the page's entity as the anchor.
+fn render_mermaid(center: &str, edges: &[(String, String, bool)]) -> String {
+    // Mermaid quoted labels break on double quotes; nothing else needs escaping.
+    let label = |s: &str| s.replace('"', "'");
+    let mut out = String::from("```mermaid\ngraph LR\n");
+    out.push_str(&format!("  n0[\"{}\"]\n", label(center)));
+    let mut node_of: Vec<String> = Vec::new();
+    let mut lines = Vec::new();
+    for (neighbor, relation, outgoing) in edges {
+        let idx = match node_of.iter().position(|n| n == neighbor) {
+            Some(i) => i,
+            None => {
+                node_of.push(neighbor.clone());
+                out.push_str(&format!("  n{}[\"{}\"]\n", node_of.len(), label(neighbor)));
+                node_of.len() - 1
+            }
+        };
+        let rel = label(relation);
+        lines.push(if *outgoing {
+            format!("  n0 -->|{rel}| n{}\n", idx + 1)
+        } else {
+            format!("  n{} -->|{rel}| n0\n", idx + 1)
+        });
+    }
+    for l in lines {
+        out.push_str(&l);
+    }
+    out.push_str("```\n");
+    out
+}
+
 /// Compose every section of a page into one revision, and decide whether it may
 /// publish itself.
 ///
@@ -394,6 +488,14 @@ pub async fn compose_document(
             }
         }
         any_unbacked |= out.unbacked;
+    }
+
+    // Deterministic diagram, appended by CODE after the model's sections — the
+    // same trust boundary as `evidence_blocks`. It lives inside a fenced block,
+    // so neither the citation firewall nor the eval's prose scan mistakes it
+    // for an uncited claim.
+    if let Some(diagram) = mermaid_neighborhood(conn, doc).await? {
+        body.push_str(&format!("\n## Neighborhood\n\n{diagram}"));
     }
 
     // ── policy (ARCHITECTURE §8.2) ──────────────────────────────────────
@@ -613,6 +715,39 @@ pub fn compose_principal(org_id: Uuid) -> brainiac_core::Principal {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    // ── the deterministic mermaid neighborhood (D9 rung a) ──────────────────
+
+    #[test]
+    fn mermaid_uses_opaque_ids_and_quoted_labels() {
+        // Entity names are user data: spaces, slashes, quotes. They go in
+        // labels, never in node identifiers.
+        let md = render_mermaid(
+            "payments \"core\" service",
+            &[
+                ("refund-worker".into(), "depends_on".into(), true),
+                ("ledger/v2".into(), "writes_to".into(), true),
+                ("refund-worker".into(), "alerts".into(), false),
+            ],
+        );
+        assert!(md.starts_with("```mermaid\ngraph LR\n"), "{md}");
+        assert!(md.trim_end().ends_with("```"), "{md}");
+        assert!(md.contains("n0[\"payments 'core' service\"]"), "{md}");
+        // The repeated neighbor gets ONE node and two edges.
+        assert_eq!(md.matches("[\"refund-worker\"]").count(), 1, "{md}");
+        assert!(md.contains("n0 -->|depends_on| n1"), "{md}");
+        assert!(md.contains("n1 -->|alerts| n0"), "{md}");
+        assert!(md.contains("n0 -->|writes_to| n2"), "{md}");
+    }
+
+    #[test]
+    fn mermaid_block_is_invisible_to_the_prose_scan_shape() {
+        // The whole diagram lives inside one fence: nothing in it can ever be
+        // counted as an uncited claim by anything that skips fenced blocks.
+        let md = render_mermaid("a", &[("b".into(), "r".into(), true)]);
+        let fences = md.matches("```").count();
+        assert_eq!(fences, 2, "one opening and one closing fence: {md}");
+    }
 
     fn mem(id: Uuid, vis: Visibility, team: Option<Uuid>) -> Memory {
         Memory {

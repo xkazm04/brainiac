@@ -90,13 +90,16 @@ migrations/             # 0015 memory facets (done), 0017 document layer, 0018 k
 
 Ordered roughly by leverage; none block the phase ladder.
 
-1. **Diagrams ladder (D9 continuation).** (a) deterministic mermaid
-   entity-neighborhood on entity pages — allowed in KB2; (b) deterministic
-   sequence/flow diagrams compiled from runbook-kind memory chains; (c)
-   LLM-proposed diagrams entering through the same review gate as prose
-   (hallucination gate applies to edges: every edge must cite a memory);
+1. **Diagrams ladder (D9 continuation).** (a) ~~deterministic mermaid
+   entity-neighborhood on entity pages~~ shipped 2026-07-15 (see status log);
+   (b) deterministic sequence/flow diagrams compiled from runbook-kind memory
+   chains; (c) LLM-proposed diagrams entering through the same review gate as
+   prose (hallucination gate applies to edges: every edge must cite a memory);
    (d) diagram rendering in the Confluence adapter (plugin/ADF extension
-   territory — investigate before promising).
+   territory — investigate before promising); (e) mermaid RENDERING in the
+   console reader (currently shows as a code block — honest, but rung (a)
+   pays off fully once the reader draws it; console docs UI is under active
+   redesign in a parallel session, so this waits for that to land).
 2. **Level 2 — cross-documentation intelligence** (one huge standalone topic):
    repo/doc-corpus scans as ingestion sources; **docs-drift detection** (diff
    existing human docs against canonical memories → propose supersessions or
@@ -408,6 +411,26 @@ Ordered roughly by leverage; none block the phase ladder.
         against the same page (the flag is a property of the moment);
         `docs_pg` pins the MCP channel and that drafts/not-founds record
         nothing.
+- [x] **Deterministic mermaid neighborhood on entity pages** (2026-07-15) —
+      diagrams ladder rung (a), the one D9 allowed early.
+      - `compose::mermaid_neighborhood`: for `entity_page` docs, compile a
+        `graph LR` mermaid block from the `edges` table — the canonical
+        entity's raw set, every live edge touching it, neighbors labeled by
+        entity name, arrows labeled by relation. NO model proposes an edge:
+        every arrow IS a database row, so the zero-hallucination bar is met by
+        construction.
+      - Appended by CODE after the model's sections, exactly the
+        `evidence_blocks` trust boundary; the whole diagram lives in one
+        fenced block, invisible to both the citation firewall and the eval's
+        prose scan (pinned by unit test).
+      - No edges → no diagram: an empty diagram is decoration, and D9's point
+        is that diagrams are language. Pinned end-to-end in `docs_pg`: compose
+        before the edge exists (no Neighborhood section), insert the edge,
+        recompose (diagram present with relation + neighbor).
+      - Opaque node ids + quoted labels: entity names are user data (spaces,
+        slashes, quotes) and never become mermaid identifiers.
+      - Reader-side RENDERING deferred (ladder rung (e)): fenced block shows
+        as code for now; console docs UI is mid-redesign in a parallel session.
 
 ## The KB line is complete
 
