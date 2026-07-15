@@ -14,40 +14,93 @@ import { band, GROUND, type BandKey } from "./theme";
 /** A route's accent band, or "ground" (0 Hz) for identity/access surfaces. */
 export type RouteBand = BandKey | "ground";
 
+/**
+ * The two halves of the product, and the reason the nav is grouped at all.
+ *
+ * "memory" is the substrate: what the org captured, what it disagrees about,
+ * what it resolved to, and what is arriving. "knowledge" is what the field
+ * computes on top of it — the review gate, the health composite, the compiled
+ * pages, the standards board. Ten flat links made those read as one
+ * undifferentiated pile; they are two different jobs, often two different people.
+ *
+ * `keys` is in neither. It is access, not knowledge — it sits with sign-out on
+ * the right, where the identity affordances live.
+ */
+export type NavGroup = "memory" | "knowledge";
+
+export const NAV_GROUPS: { id: NavGroup; label: string }[] = [
+  { id: "memory", label: "memory" },
+  { id: "knowledge", label: "knowledge" },
+];
+
 export interface ProductRoute {
-  /** Route path, e.g. "/console/reviews". */
+  /** Route path, e.g. "/console?m=reviews". */
   path: string;
-  /** The module key (the segment after /console/), e.g. "reviews". */
+  /** The module key (what ?m= carries), e.g. "reviews". */
   segment: string;
-  /** Nav label — may differ from the segment (e.g. …/memories → "archive"). */
+  /** Nav label — may differ from the segment (e.g. memories → "archive"). */
   label: string;
   /** EEG band accent, or "ground" for surfaces outside the band spectrum. */
   band: RouteBand;
+  /** Which nav group it belongs to; omitted for the access surfaces. */
+  group?: NavGroup;
 }
 
 // In nav order. Bands mirror theme.ts MODULE_BAND; keys sits on ground (0 Hz),
-// deliberately outside the spectrum (see GROUND in theme.ts). Every module
-// lives under /console — one parent whose layout owns the operator chrome
-// (app/console/(modules)/layout.tsx), so navigation between modules is a
-// content-pane swap under a persistent header.
+// deliberately outside the spectrum (see GROUND in theme.ts).
+//
+// The console is ONE route (app/console/page.tsx) and the module is a query
+// param, so every path here is /console?m=<segment>. Analytics leads because it
+// is what /console itself opens on: the console's front door is the wall, not a
+// landing page — the landing lives at "/" and having it twice only made the
+// operator click through a pitch to reach their own org.
 export const PRODUCT_ROUTES: ProductRoute[] = [
-  { path: "/console/reviews", segment: "reviews", label: "reviews", band: "alpha" },
-  { path: "/console/disputes", segment: "disputes", label: "disputes", band: "theta" },
-  { path: "/console/graph", segment: "graph", label: "graph", band: "gamma" },
-  { path: "/console/memories", segment: "memories", label: "archive", band: "delta" },
-  { path: "/console/ingest", segment: "ingest", label: "ingest", band: "theta" },
-  { path: "/console/analytics", segment: "analytics", label: "analytics", band: "beta" },
+  // ── memory: the substrate ──────────────────────────────────────────────
+  { path: "/console?m=analytics", segment: "analytics", label: "analytics", band: "beta", group: "memory" },
+  { path: "/console?m=memories", segment: "memories", label: "archive", band: "delta", group: "memory" },
+  { path: "/console?m=disputes", segment: "disputes", label: "disputes", band: "theta", group: "memory" },
+  { path: "/console?m=graph", segment: "graph", label: "graph", band: "gamma", group: "memory" },
+  { path: "/console?m=ingest", segment: "ingest", label: "ingest", band: "theta", group: "memory" },
+
+  // ── knowledge: what the field computes on top of it ────────────────────
   // The leadership read: one composite the org can be held to (KB-PLAN KB0).
-  { path: "/console/health", segment: "health", label: "health", band: "alpha" },
+  { path: "/console?m=health", segment: "health", label: "health", band: "alpha", group: "knowledge" },
   // The document layer (KB-PLAN KB2): pages compiled from canonical memories.
   // Gamma — the binding band — because a composed page is exactly that: many
   // teams' governed memories bound into one percept.
-  { path: "/console/docs", segment: "docs", label: "pages", band: "gamma" },
+  { path: "/console?m=docs", segment: "docs", label: "pages", band: "gamma", group: "knowledge" },
+  { path: "/console?m=reviews", segment: "reviews", label: "reviews", band: "alpha", group: "knowledge" },
   // Standardization: where teams solved the same problem different ways (theta,
   // the divergence band — same family as disputes/contradiction work).
-  { path: "/console/divergence", segment: "divergence", label: "standards", band: "theta" },
-  { path: "/console/keys", segment: "keys", label: "keys", band: "ground" },
+  { path: "/console?m=divergence", segment: "divergence", label: "standards", band: "theta", group: "knowledge" },
+
+  // ── access: grouped with sign-out, not with the knowledge ──────────────
+  { path: "/console?m=keys", segment: "keys", label: "keys", band: "ground" },
 ];
+
+/** The console's modules, in nav order — the same list, named for what it is. */
+export const CONSOLE_MODULES = PRODUCT_ROUTES;
+
+export type ConsoleModuleId =
+  | "analytics"
+  | "reviews"
+  | "disputes"
+  | "graph"
+  | "memories"
+  | "ingest"
+  | "health"
+  | "docs"
+  | "divergence"
+  | "keys";
+
+/** The module /console opens on when ?m= is absent or junk. */
+export const DEFAULT_MODULE: ConsoleModuleId = "analytics";
+
+/** Read ?m= into a module id. Unknown values fall back rather than 404. */
+export const parseModule = (raw: string | string[] | undefined): ConsoleModuleId => {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return (PRODUCT_ROUTES.find((r) => r.segment === v)?.segment as ConsoleModuleId) ?? DEFAULT_MODULE;
+};
 
 /** Resolve a route's accent color from its band. */
 export const routeAccent = (b: RouteBand): string =>
@@ -69,8 +122,15 @@ export const routeForPath = (pathname: string): ProductRoute | undefined =>
 // boundary imports the same predicate instead of growing its own copy — two
 // copies drifted twice before (/kb unreachable, chrome stacked on /demo).
 
-/** Exact-match public paths: the landing wave field and the gate itself. */
-const PUBLIC_PATHS = new Set<string>(["/", "/login"]);
+/**
+ * Exact-match public paths: the landing wave field, the gate itself, and the
+ * free-tier sign-up.
+ *
+ * `/signup` MUST be public — it exists for someone who has no passcode, which is
+ * the entire point of it. It reads no org data: the only privileged step is the
+ * server-side provisioning call, made after the Google sign-in is verified.
+ */
+const PUBLIC_PATHS = new Set<string>(["/", "/login", "/signup"]);
 
 /** Public subtrees — each renders its own shell (pitch, demo tour, wiki). */
 const PUBLIC_SUBTREES = ["/pitch", "/demo", "/kb"];
