@@ -340,10 +340,26 @@ async fn process_claimed_job(
                     // commits (see write_pipeline_run docs for the atomicity
                     // choice): the memories exist and carry this run_id via
                     // provenance, and now the run row records the outcome.
-                    write_pipeline_run(
+                    //
+                    // BEST-EFFORT, and it must stay that way: the job is already
+                    // committed and durable. Propagating an error from this
+                    // observability write would skip `queue::complete`, leaving an
+                    // ingested source in-flight until the visibility window lapses,
+                    // then re-running the whole chain (re-calling the LLM for every
+                    // extract chunk — the dedup only skips the DB write) and
+                    // bumping `attempts` until a SUCCEEDED source is dead-lettered.
+                    // Losing an audit row is the acceptable failure here; losing
+                    // the ack is not.
+                    if let Err(e) = write_pipeline_run(
                         store, org_id, source_id, run_id, started_at, "ok", None, &run,
                     )
-                    .await?;
+                    .await
+                    {
+                        tracing::error!(
+                            job = job.id, %source_id, %run_id, error = %e,
+                            "pipeline_runs row failed to write; job succeeded and is being acked anyway"
+                        );
+                    }
                     queue::complete(store.pool(), &job).await?;
                 }
                 Err(e) => {
@@ -352,7 +368,9 @@ async fn process_claimed_job(
                     // gone), but we still record a failed run row with the
                     // error summary — the whole point of writing the row
                     // outside the job transaction.
-                    write_pipeline_run(
+                    // Best-effort for the same reason: `queue::fail` is the ack
+                    // primitive, and it must run even if the audit row doesn't.
+                    if let Err(we) = write_pipeline_run(
                         store,
                         org_id,
                         source_id,
@@ -362,7 +380,13 @@ async fn process_claimed_job(
                         Some(&summarize_error(&e)),
                         &run,
                     )
-                    .await?;
+                    .await
+                    {
+                        tracing::error!(
+                            job = job.id, %source_id, %run_id, error = %we,
+                            "pipeline_runs row failed to write for a failed job; failing the job anyway"
+                        );
+                    }
                     queue::fail(store.pool(), &job, cfg.backoff_base_secs).await?;
                 }
             }
