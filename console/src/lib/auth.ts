@@ -8,7 +8,14 @@
  * console shipped that data to anyone who could reach the port.
  *
  * WHAT THIS IS: a shared-passcode gate. One secret per deployment, exchanged
- * for an HMAC-derived session cookie.
+ * for an HMAC-signed session cookie carrying a nonce + issued-at, verified
+ * server-side on every request. (This doc previously claimed "HMAC-derived"
+ * while the implementation used a keyless digest — see `sessionToken`.)
+ *
+ * CONFIG: `CONSOLE_PASSCODE` is the gate. `CONSOLE_SESSION_SECRET` is optional
+ * but recommended in production — it keys the cookie signature independently of
+ * the passcode, so a guessed passcode cannot be turned straight into a valid
+ * cookie (which would sidestep the login rate limiter).
  *
  * WHAT THIS IS NOT: per-user identity. It authenticates "someone who knows the
  * console passcode", not "Petra". The architecture calls for OIDC/SAML + SCIM
@@ -50,17 +57,69 @@ export function isMisconfigured(): boolean {
   return configuredPasscode() === undefined && process.env.NODE_ENV === "production";
 }
 
-async function sha256Hex(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
+function toHex(buf: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-/** The cookie value for a given passcode. Never the passcode itself. */
-export function sessionToken(passcode: string): Promise<string> {
-  return sha256Hex(DOMAIN_SEPARATOR + passcode);
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  return toHex(await crypto.subtle.digest("SHA-256", bytes));
+}
+
+/**
+ * The key the session cookie is signed with.
+ *
+ * `CONSOLE_SESSION_SECRET` is the one that matters: with it, a cookie cannot be
+ * derived from the passcode at all, so guessing the passcode offline buys nothing
+ * — an attacker must go through /login, where the rate limiter applies. Without
+ * it we fall back to keying on the passcode: still a real improvement (nonce +
+ * expiry + per-session values), but a guessed passcode could be turned into a
+ * cookie directly, bypassing the login throttle. Set the secret in production.
+ */
+function signingKey(passcode: string): string {
+  const secret = process.env.CONSOLE_SESSION_SECRET?.trim();
+  return secret ? secret : passcode;
+}
+
+async function hmacHex(key: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return toHex(await crypto.subtle.sign("HMAC", k, enc.encode(message)));
+}
+
+/** Short fingerprint of the passcode, embedded so rotating it invalidates every
+ * outstanding session (the cookie is no longer a function of the passcode, so
+ * rotation would otherwise NOT log anyone out). */
+async function passcodeFingerprint(passcode: string): Promise<string> {
+  return (await sha256Hex(DOMAIN_SEPARATOR + passcode)).slice(0, 16);
+}
+
+/**
+ * Mint a session cookie: `issuedAt.nonce.passcodeFingerprint.hmac`.
+ *
+ * Replaces a keyless, unsalted `sha256(DOMAIN_SEPARATOR + passcode)` that was
+ * (a) identical for every user and every session — one leaked cookie
+ * authenticated forever, (b) derivable by anyone holding the (public) source and
+ * a passcode guess, so /login's throttle could be skipped entirely, and (c)
+ * without any server-side expiry: SESSION_MAX_AGE was only a browser attribute,
+ * so a copied value stayed valid indefinitely. The nonce makes each session
+ * distinct, issuedAt gives a real server-checked lifetime, and the HMAC key adds
+ * a rotation lever independent of the passcode.
+ */
+export async function sessionToken(passcode: string): Promise<string> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const nonce = crypto.randomUUID().replace(/-/g, "");
+  const fp = await passcodeFingerprint(passcode);
+  const payload = `${issuedAt}.${nonce}.${fp}`;
+  return `${payload}.${await hmacHex(signingKey(passcode), payload)}`;
 }
 
 /** Length-independent, constant-time-ish comparison. */
@@ -71,10 +130,33 @@ export function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-/** Does this cookie value authorize access to the real-data console? */
+/**
+ * Does this cookie value authorize access to the real-data console?
+ *
+ * Verifies the signature, that the session has not aged out (server-side — not
+ * merely the browser's cookie attribute), and that it was issued against the
+ * CURRENT passcode, so a rotation logs everyone out.
+ */
 export async function isValidSession(cookieValue: string | undefined): Promise<boolean> {
   if (!cookieValue) return false;
   const passcode = configuredPasscode();
   if (!passcode) return false;
-  return safeEqual(cookieValue, await sessionToken(passcode));
+
+  const parts = cookieValue.split(".");
+  if (parts.length !== 4) return false;
+  const [iatRaw, nonce, fp, sig] = parts;
+  if (!iatRaw || !nonce || !fp || !sig) return false;
+
+  const payload = `${iatRaw}.${nonce}.${fp}`;
+  const expected = await hmacHex(signingKey(passcode), payload);
+  if (!safeEqual(sig, expected)) return false;
+
+  const issuedAt = Number(iatRaw);
+  if (!Number.isFinite(issuedAt)) return false;
+  const age = Math.floor(Date.now() / 1000) - issuedAt;
+  // Reject the future too: a clock-skewed or hand-crafted iat must not buy extra
+  // lifetime. (Signature-checked, so this only matters for our own bad clocks.)
+  if (age < -60 || age > SESSION_MAX_AGE) return false;
+
+  return safeEqual(fp, await passcodeFingerprint(passcode));
 }

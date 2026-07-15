@@ -82,6 +82,12 @@ export default async function LoginPage({
               </p>
             )}
 
+            {err === "throttled" && (
+              <p className={`${FONT_MONO} text-xs`} style={{ color: "#f0b429" }}>
+                Too many attempts. Wait a few minutes and try again.
+              </p>
+            )}
+
             <button
               type="submit"
               className={`${FONT_MONO} w-full rounded-full px-6 py-3 text-sm font-semibold transition hover:scale-[1.01]`}

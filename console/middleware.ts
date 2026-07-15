@@ -54,8 +54,16 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next's own static output and image assets.
   matcher: [
+    // /api is ALWAYS gated, listed first and unconditionally. The asset
+    // exclusion below is extension-based and applies to every path, so
+    // `GET /api/memories/<id>.txt` slipped past the middleware entirely and
+    // reached the privileged-token proxy with no session check — leaving the
+    // route's own hex-id regex as the only thing between an anonymous caller and
+    // the live org. Matchers are OR'd, so this entry re-captures those paths.
+    // Real static assets are served from /public and never live under /api.
+    "/api/:path*",
+    // Everything else except Next's own static output and image assets.
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt)$).*)",
   ],
 };
