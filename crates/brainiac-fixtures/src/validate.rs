@@ -254,7 +254,20 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
         }
     }
 
-    // Stable-uuid collision check across every id namespace we persist.
+    // Stable-uuid collision check across every id namespace the seeders persist.
+    //
+    // `stable_uuid` is a namespace-FLAT hash of the raw id string, so a collision
+    // between any two ids — even across types (a document id vs a memory id) —
+    // maps two distinct fixture entities onto one primary key, and one silently
+    // overwrites the other at seed time. That makes cross-namespace coverage the
+    // whole point: this previously stopped at teams/users/entities/memories while
+    // documents, transcripts, contradictions, temporal, qa and leak ids are all
+    // persisted too (docs_profile/extraction_profile/pipeline_profile all call
+    // stable_uuid on them).
+    //
+    // Iterate the underlying Vecs, never HashMap::keys(), so both detection and
+    // the emitted diagnostic order are deterministic across runs — a lint whose
+    // output reorders is not diffable in CI.
     {
         let mut seen: HashMap<uuid::Uuid, &str> = HashMap::new();
         for id in fx
@@ -263,8 +276,14 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
             .iter()
             .map(|t| t.id.as_str())
             .chain(fx.org.users.iter().map(|u| u.id.as_str()))
-            .chain(entities.keys().copied())
-            .chain(memories.keys().copied())
+            .chain(fx.entities.entities.iter().map(|e| e.id.as_str()))
+            .chain(fx.memories.memories.iter().map(|m| m.id.as_str()))
+            .chain(fx.documents.documents.iter().map(|d| d.id.as_str()))
+            .chain(fx.transcripts.iter().map(|t| t.id.as_str()))
+            .chain(fx.contradictions.cases.iter().map(|c| c.id.as_str()))
+            .chain(fx.temporal.cases.iter().map(|c| c.id.as_str()))
+            .chain(fx.qa.queries.iter().map(|q| q.id.as_str()))
+            .chain(fx.leak.queries.iter().map(|q| q.id.as_str()))
         {
             if let Some(prev) = seen.insert(stable_uuid(id), id) {
                 e.err(
