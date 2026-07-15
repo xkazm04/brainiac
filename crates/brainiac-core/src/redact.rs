@@ -53,10 +53,26 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         r(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b", None), // GitHub tokens
         r(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b", None), // Slack tokens
         r(r"\bAIza[0-9A-Za-z_\-]{30,}\b", None), // Google API key
+        // `Authorization: Bearer <token>` — the module doc promised bearer
+        // coverage but no rule implemented it, so live bearer credentials pasted
+        // into a session survived verbatim into a memory body. Masks only the
+        // token so the `Bearer` label stays legible.
+        r(r"(?i)\bbearer\s+([A-Za-z0-9._\-]{20,})", Some(1)),
+        // A raw JWT anywhere (header.payload.signature), with or without a Bearer
+        // prefix — these carry identity and are routinely pasted into transcripts.
+        r(
+            r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*",
+            None,
+        ),
         // `key = value` / `key: value` where the key names a secret. Captures the
         // value (quoted or bare) and masks only it, keeping the label.
+        //
+        // The optional `(?:[a-z0-9]+[_-])?` prefix is load-bearing: `\btoken\b`
+        // cannot match the `token` inside `access_token` / `refresh_token` /
+        // `auth_token`, because `_` is a word character so there is no boundary —
+        // the most common OAuth key names slipped through entirely.
         r(
-            r#"(?i)\b(?:api[_-]?key|secret|password|passwd|token|client[_-]?secret|access[_-]?key)\b\s*[:=]\s*(['"]?)([^\s'"]{6,})(['"]?)"#,
+            r#"(?i)\b(?:[a-z0-9]+[_-])?(?:api[_-]?key|secret|password|passwd|token|client[_-]?secret|access[_-]?key)\b\s*[:=]\s*(['"]?)([^\s'"]{6,})(['"]?)"#,
             Some(2),
         ),
     ]
@@ -113,6 +129,35 @@ mod tests {
         // The password is masked; the host and scheme survive (legible redaction).
         let db = redact("postgres://admin:sup3rs3cret@db.internal:5432/app");
         assert!(db.contains("db.internal") && db.contains(MASK) && !db.contains("sup3rs3cret"));
+    }
+
+    #[test]
+    fn masks_bearer_jwt_and_compound_oauth_keys() {
+        // The module doc claimed bearer coverage that no rule implemented, and
+        // `\btoken\b` could never match inside `access_token` (`_` is a word char,
+        // so there's no boundary) — so live OAuth credentials survived redact()
+        // into memory bodies and out through memory_provenance.
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let cases = [
+            format!("Authorization: Bearer {jwt}"),
+            format!("curl -H 'authorization: bearer {jwt}'"),
+            format!("the raw token is {jwt} btw"),
+            "access_token= 9f8c7b6a5e4d3c2b1a09".to_string(),
+            "refresh_token: \"r1_aBcD1234EfGh5678\"".to_string(),
+            "auth_token = zzzz9999yyyy8888".to_string(),
+        ];
+        for c in &cases {
+            let out = redact(c);
+            assert!(out.contains(MASK), "no redaction in: {c} -> {out}");
+            assert!(contains_secret(c), "not detected: {c}");
+            assert!(!out.contains(jwt), "jwt survived: {out}");
+            assert!(!out.contains("9f8c7b6a5e4d3c2b1a09"), "value survived: {out}");
+        }
+        // The label survives so the redaction stays legible.
+        let b = redact(&format!("Authorization: Bearer {jwt}"));
+        assert!(b.to_lowercase().contains("bearer") && b.contains(MASK), "{b}");
+        // Still idempotent with the new rules.
+        assert_eq!(redact(&b), b);
     }
 
     #[test]
