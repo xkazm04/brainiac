@@ -142,7 +142,14 @@ Ordered roughly by leverage; none block the phase ladder.
    comment promised.
 7. **Scoped/contractor visibility tier + cross-team observability role** (UAT
    structural gap): affects both retrieval and the publish visibility rule —
-   design once, apply to both layers.
+   design once, apply to both layers. *Design shipped 2026-07-15*:
+   `docs/VISIBILITY-TIERS.md` — the observer role is already expressible
+   (teamless org member; needs only a provisioning preset + fixture
+   coverage), the contractor tier is principal-side schema work
+   (`team_members.access` + `memory_shares`, time-fenced RLS predicate) with
+   one non-negotiable rule: a restricted member sees NO team pages, because a
+   composed page is a projection over history they cannot read. Eval gate
+   specified; implementation deliberately not started (red fixtures first).
 8. **Page analytics as liquidity signals**: which pages/sections agents and
    humans actually read feeds the Knowledge Health liquidity pillar and
    entity-page scaffolding thresholds. *Measurement side shipped 2026-07-15*
