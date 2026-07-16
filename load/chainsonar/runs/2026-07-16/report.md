@@ -42,7 +42,7 @@ and a team trusting it.
 | F-9 | standards-page (L8) can't scaffold without a graph — KB stayed empty | bug | high · **fixed** |
 | F-4 | no skill-authoring path; memory has no kind/tag | design gap | medium · **fixed** |
 | F-5 | REST/MCP surface asymmetries (adopted-only list, uuid vs slug…) | design gap | low · **fixed** |
-| F-8 | `bx` shell-quoting taxes code examples | harness | medium |
+| F-8 | `bx` shell-quoting taxes code examples | harness | medium · **fixed** |
 | F-6 | honesty rule held under a leading prompt | positive | — |
 | F-7 | cross-agent dedup collapsed 11 proposals → 8 | positive | — |
 | H-1 | a field test must own its database (a mid-run test truncated it) | harness | medium |
@@ -283,7 +283,19 @@ reach for `doc-search`/`doc-get` — they searched memory and standards directly
 Agents treat the KB as optional when the atoms (memories, rules) are available;
 worth knowing for how the KB earns its place.
 
-### F-8 — `bx` shell-quoting taxes code examples · **harness · medium**
+### F-8 — `bx` shell-quoting taxes code examples · **harness · medium · FIXED**
+
+> **Fixed (2026-07-16).** `bx` now resolves `--<field>-file <path>` for ANY
+> flag: the file's contents become the value, read verbatim, so the product
+> receives exactly what is on disk — no shell in the middle. Verified live: a
+> runbook full of backticks, `$`, and apostrophes went in via
+> `skill-propose --instructions-file` and came back **byte-identical** from
+> `skill_versions.content_md`. A single trailing newline is dropped; a bad path
+> is a clean exit 2, not a crash. The same pass brought `bx` in line with the
+> product fixes it had flagged as findings: `doc-search --query` now hits the
+> real REST search (F-5), `skill-report --slug` uses usage-by-slug (F-5),
+> `memory-add` takes `--kind`/`--entities` (F-4B), and a `skill-propose` command
+> was added (F-4).
 
 `bx` is deliberately dumb, so the agent owns all shell quoting. TypeScript
 snippets contain backticks and `$`, precisely what breaks a double-quoted arg,
