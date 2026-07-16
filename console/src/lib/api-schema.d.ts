@@ -4665,7 +4665,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreatedTokenResponse"];
                 };
             };
-            /** @description Empty name or scopes outside read|write|admin */
+            /** @description Empty name or scopes outside the mintable set (see auth::SCOPES) */
             400: {
                 headers: {
                     [name: string]: unknown;

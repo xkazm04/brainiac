@@ -2284,7 +2284,7 @@
             }
           },
           "400": {
-            "description": "Empty name or scopes outside read|write|admin"
+            "description": "Empty name or scopes outside the mintable set (see auth::SCOPES)"
           },
           "401": {
             "description": "Missing or unknown bearer token"
