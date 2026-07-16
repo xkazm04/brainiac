@@ -82,18 +82,22 @@ pub async fn keyed_source_id(
     Ok(row.map(|r| r.get::<Uuid, _>("id")))
 }
 
+/// (team_id, kind, raw_text). The kind rides along because the extraction
+/// stage dispatches on it: a `manual` source is a pre-distilled statement and
+/// ingests verbatim (F-3); transcripts/docs go to the model.
 pub async fn get_source_text(
     conn: &mut PgConnection,
     id: Uuid,
-) -> Result<Option<(Option<Uuid>, String)>> {
+) -> Result<Option<(Option<Uuid>, String, String)>> {
     use sqlx::Row;
-    let row = sqlx::query("SELECT team_id, raw_text FROM sources WHERE id = $1")
+    let row = sqlx::query("SELECT team_id, kind, raw_text FROM sources WHERE id = $1")
         .bind(id)
         .fetch_optional(conn)
         .await?;
     Ok(row.map(|r| {
         (
             r.get("team_id"),
+            r.get::<String, _>("kind"),
             r.get::<Option<String>, _>("raw_text").unwrap_or_default(),
         )
     }))

@@ -59,6 +59,7 @@ async fn mcp_handshake_and_tools() {
             user_id: stable_uuid("user-data-analyst1"),
             team_ids: vec![stable_uuid("team-data")],
         },
+        scopes: None,
     });
 
     // initialize
@@ -92,6 +93,10 @@ async fn mcp_handshake_and_tools() {
             "memory_search",
             "memory_context",
             "memory_add",
+            // F-1/F-2: close the async-ingest loop — poll a source for the
+            // memory ids it produced, so an agent can confirm its contribution
+            // landed and cite it.
+            "memory_status",
             "entity_lookup",
             "knowledge_propose",
             "memory_feedback",
@@ -199,6 +204,87 @@ async fn mcp_handshake_and_tools() {
     .expect("response");
     let payload = tool_payload(&r);
     assert_eq!(payload["accepted"], true);
+    let src = payload["source_id"]
+        .as_str()
+        .expect("source_id")
+        .to_string();
+
+    // memory_status (F-1/F-2): the loop-closer. Right after the add, extraction
+    // has not run, so the source exists but has produced nothing yet.
+    let r = handle_message(
+        &state,
+        &rpc(
+            61,
+            "tools/call",
+            json!({ "name": "memory_status", "arguments": { "source_id": src } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["found"], true);
+    assert_eq!(
+        payload["extracted"], false,
+        "nothing extracted yet: {payload}"
+    );
+
+    // Link a memory to that source the way extraction would, then poll again:
+    // the memory id must surface — that is the handle an agent cites as evidence.
+    let org = stable_uuid(&fx.org.org);
+    let (prov_id, mem_id) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    sqlx::query("INSERT INTO provenance (id, org_id, actor_kind, actor_id, source_id) VALUES ($1,$2,'pipeline','worker:test',$3)")
+        .bind(prov_id).bind(org).bind(src.parse::<uuid::Uuid>().expect("source_id is a uuid"))
+        .execute(&admin).await.expect("provenance");
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, visibility, status, kind, content, provenance_id)
+         VALUES ($1,$2,'org','canonical','fact','event-lake backfills at 04:00 UTC',$3)",
+    )
+    .bind(mem_id)
+    .bind(org)
+    .bind(prov_id)
+    .execute(&admin)
+    .await
+    .expect("memory");
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            62,
+            "tools/call",
+            json!({ "name": "memory_status", "arguments": { "source_id": src } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(
+        payload["extracted"], true,
+        "the linked memory must surface: {payload}"
+    );
+    let ids: Vec<&str> = payload["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .map(|m| m["id"].as_str().expect("id"))
+        .collect();
+    assert!(
+        ids.contains(&mem_id.to_string().as_str()),
+        "the produced memory id is the citable handle: {payload}"
+    );
+
+    // A source that does not exist (or is invisible under RLS) is "not found",
+    // never an error — existence is itself information.
+    let r = handle_message(
+        &state,
+        &rpc(
+            63,
+            "tools/call",
+            json!({ "name": "memory_status", "arguments": { "source_id": uuid::Uuid::new_v4() } }),
+        ),
+    )
+    .await
+    .expect("response");
+    assert_eq!(tool_payload(&r)["found"], false);
 
     // memory_feedback: closes the loop on a memory this principal CAN read.
     // Grab a visible id from a search first (data-team memories are seeded).

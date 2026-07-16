@@ -521,12 +521,15 @@ async fn process_job(
     let principal = pipeline_principal(org_id);
     let mut tx = store.worker_tx(&principal).await?;
 
-    let (team_id, raw_text) = brainiac_store::governance::get_source_text(&mut tx, source_id)
-        .await?
-        .context("source not found")?;
+    let (team_id, source_kind, raw_text) =
+        brainiac_store::governance::get_source_text(&mut tx, source_id)
+            .await?
+            .context("source not found")?;
 
     // extract (+ embed inline). run_id threads onto the provenance row so every
-    // memory written here links back to this run.
+    // memory written here links back to this run. The source's kind picks the
+    // path: `manual` is a pre-distilled statement and ingests verbatim (F-3);
+    // transcripts and docs go to the model.
     let extracted = extract::run_extract(
         &mut tx,
         providers.for_stage(Stage::Extract),
@@ -535,6 +538,7 @@ async fn process_job(
         org_id,
         team_id,
         source_id,
+        &source_kind,
         &raw_text,
         Some(run_id),
     )
@@ -548,13 +552,13 @@ async fn process_job(
     if run.model_ref.is_none() {
         run.model_ref = extracted.model_ref.clone();
     }
-    // Cost + resilience per source: number of chunks (= primary calls) and
-    // total LLM calls (chunks + repairs), plus memories deduped away (retry
-    // redelivery / chunk overlap).
+    // Cost + resilience per source: chunks, ACTUAL model calls (zero for a
+    // verbatim manual ingest), plus memories deduped away (retry redelivery /
+    // chunk overlap).
     tracing::info!(
         source = %source_id,
         chunks = extracted.chunks,
-        llm_calls = extracted.chunks + extracted.repairs,
+        llm_calls = extracted.llm_calls,
         memories = extracted.memories_written,
         deduped = extracted.deduped,
         parse_failures = extracted.parse_failures,

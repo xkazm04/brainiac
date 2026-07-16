@@ -519,7 +519,9 @@ async fn console_reviews_graph_analytics() {
         .expect("org users");
     assert!(r.status().is_success());
     let body: serde_json::Value = r.json().await.expect("json");
-    assert_eq!(body["users"].as_array().expect("users").len(), 6);
+    // 7 fixture users: 6 team members + the cross-team observer added in
+    // c2cb63e (the leak suite's observer posture). org/users lists the whole org.
+    assert_eq!(body["users"].as_array().expect("users").len(), 7);
 
     // The analyst's radius: sees her own private note, org rows, data-team
     // rows — and materially less than the payments lead.

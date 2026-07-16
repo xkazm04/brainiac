@@ -73,7 +73,39 @@ impl TokenMap {
 // ── managed API tokens ──────────────────────────────────────────────────
 
 pub const TOKEN_PREFIX: &str = "brk_";
-pub const SCOPES: [&str; 3] = ["read", "write", "admin"];
+
+/// Every scope a managed token may be minted with.
+///
+/// This list is the token minter's vocabulary, and it MUST contain every scope
+/// any endpoint enforces — otherwise the product ships a scope it checks and
+/// refuses to issue, which is worse than having no scope at all: the endpoint
+/// looks governed, and the only key that can reach it is `admin`.
+///
+/// That is exactly what happened. `kb:*` (KB-PLAN D6) and `lib:*`
+/// (LIBRARY-PLAN L7) were enforced on their endpoints from the day they landed
+/// while this list still read `["read", "write", "admin"]`, so a
+/// `POST /v1/tokens {scopes:["lib:read"]}` was rejected as out-of-vocabulary, a
+/// provisioned device key got 403 on every KB and Library endpoint, and the
+/// only thing that could read a standard over REST was an admin token —
+/// collapsing "an agent's token can read the library but never decree a rule"
+/// into "give the agent the keys to the building". The layers' own pg tests
+/// missed it because they mint through `brainiac_store::tokens::create`
+/// directly, bypassing this validation, so `library_pg` now mints through the
+/// real endpoint. Found by trying to onboard a customer (load/README.md F-1).
+pub const SCOPES: [&str; 8] = [
+    // memory layer
+    "read",
+    "write",
+    // knowledge base (KB-PLAN D6)
+    "kb:read",
+    "kb:publish",
+    // library (LIBRARY-PLAN L7)
+    "lib:read",
+    "lib:propose",
+    "lib:publish",
+    // implies all of the above
+    "admin",
+];
 
 /// Where a request's authority came from. Env tokens carry every scope;
 /// API tokens carry exactly what they were minted with (admin implies all).

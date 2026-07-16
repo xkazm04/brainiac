@@ -789,6 +789,7 @@ async fn alias_capture_and_resolution() {
         org_id,
         Some(team_a),
         source_id,
+        "session_transcript",
         "psp-gateway (PSP) owns retry backoff",
         None,
     )
@@ -977,6 +978,7 @@ async fn reprocessing_source_is_idempotent() {
         org_id,
         Some(team),
         source_id,
+        "session_transcript",
         source_text,
         None,
     )
@@ -995,6 +997,7 @@ async fn reprocessing_source_is_idempotent() {
         org_id,
         Some(team),
         source_id,
+        "session_transcript",
         source_text,
         None,
     )
@@ -1083,6 +1086,7 @@ async fn malformed_extraction_repairs_once() {
         org_id,
         Some(team),
         source_id,
+        "session_transcript",
         "a transcript",
         None,
     )
@@ -1161,6 +1165,7 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         org_id,
         Some(team),
         source_id,
+        "session_transcript",
         "garbage",
         None,
     )
@@ -1203,6 +1208,129 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         .await
         .expect("dl");
     assert_eq!(dl.len(), 1, "exactly one dead letter recorded");
+}
+
+/// F-3: a `manual` source (a memory_add — one pre-distilled statement) ingests
+/// VERBATIM. The field test measured qwen hard-failing extraction on 36% of
+/// exactly these distilled inputs; the fix is that a manual source never
+/// touches the model. This proves it with a provider that PANICS if called —
+/// so a green run is proof the model was not touched — and asserts the
+/// statement lands as one memory, byte-for-byte, with the author's kind hint,
+/// and `llm_calls`/`parse_failures` both zero.
+#[tokio::test]
+async fn manual_source_ingests_verbatim_without_the_model() {
+    use brainiac_gateway::{ChatRequest, MockProvider};
+    use brainiac_pipeline::{extract, manual};
+    use brainiac_store::{memories, orgs};
+    use sqlx::Row;
+
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    truncate_all(&admin).await;
+
+    let store = Store::connect(&url).await.expect("connect");
+    let embedder = DeterministicEmbedder::default();
+    let org_id = Uuid::from_bytes([61u8; 16]);
+    let team = Uuid::from_bytes([62u8; 16]);
+    let principal = brainiac_pipeline::pipeline_principal(org_id);
+
+    // Any model call is a bug on this path — fail loudly rather than pass a
+    // provider that happens to return nothing.
+    let mock = MockProvider::new(|_req: &ChatRequest| {
+        panic!("the verbatim path must never call the model");
+    });
+
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
+    orgs::upsert_team(&mut tx, team, org_id, "chain")
+        .await
+        .expect("team");
+    let version =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
+
+    // Exactly what the MCP `memory_add` stores: the statement plus an encoded
+    // kind + entity hint block. The statement is deliberately awkward for an
+    // extractor (a bare distilled claim with numerals and a symbol) — the shape
+    // the field test showed qwen dropping.
+    let statement = "eth_getLogs on a public Polygon RPC caps the scan window at ~100 blocks.";
+    let raw = manual::encode_manual_source(
+        statement,
+        Some(brainiac_core::MemoryKind::Pitfall),
+        &["eth_getLogs".into(), "Polygon RPC".into()],
+    );
+    let source_id = Uuid::from_bytes([63u8; 16]);
+    brainiac_store::governance::insert_source(
+        &mut tx,
+        source_id,
+        org_id,
+        Some(team),
+        "manual",
+        &raw,
+        None,
+    )
+    .await
+    .expect("source");
+
+    let stats = extract::run_extract(
+        &mut tx,
+        &mock,
+        &embedder,
+        version,
+        org_id,
+        Some(team),
+        source_id,
+        "manual",
+        &raw,
+        None,
+    )
+    .await
+    .expect("verbatim extract");
+
+    assert_eq!(stats.llm_calls, 0, "no model call on the verbatim path");
+    assert_eq!(stats.parse_failures, 0, "nothing to parse, nothing to fail");
+    assert_eq!(stats.chunks, 1, "a statement is never chunked");
+    assert_eq!(stats.memories_written, 1, "the statement became one memory");
+
+    // Commit so the admin pool (a separate connection) can see the writes.
+    tx.commit().await.expect("commit");
+
+    // The stored memory is the statement byte-for-byte (the hint block stripped)
+    // with the author's kind — not a model paraphrase. Read through the admin
+    // pool: the memory is team-visibility and the pipeline principal (which
+    // wrote it) is not a member of that team, so RLS hides it on read-back —
+    // the write is what we're verifying, not the pipeline's own visibility.
+    let memory_id = *stats.memory_ids.first().expect("one memory id");
+    let row = sqlx::query("SELECT content, kind::text AS kind FROM memories WHERE id = $1")
+        .bind(memory_id)
+        .fetch_one(&admin)
+        .await
+        .expect("memory row");
+    let content: String = row.get("content");
+    let kind: String = row.get("kind");
+    assert_eq!(content, statement, "statement ingested verbatim");
+    assert_eq!(kind, "pitfall", "the author's kind hint was honored");
+
+    // The hinted entities rode through the same resolution machinery.
+    let mut ent_names: Vec<String> = Vec::new();
+    for id in &stats.entities_created {
+        let name: String = sqlx::query_scalar("SELECT name FROM entities WHERE id = $1")
+            .bind(id)
+            .fetch_one(&admin)
+            .await
+            .expect("entity name");
+        ent_names.push(name);
+    }
+    assert!(
+        ent_names.iter().any(|n| n == "eth_getLogs"),
+        "hinted entities carried through: {ent_names:?}"
+    );
 }
 
 /// Direction 2: a transcript longer than the chunk threshold is split, and
@@ -1292,6 +1420,7 @@ async fn long_transcript_captures_head_and_tail() {
         org_id,
         Some(team),
         source_id,
+        "session_transcript",
         &transcript,
         None,
     )
@@ -1427,6 +1556,7 @@ async fn extraction_firewall_types_entities_and_relations() {
         org_id,
         Some(team_id),
         source_id,
+        "session_transcript",
         "gizmo-svc calls widget-svc",
         None,
     )

@@ -11,6 +11,7 @@ pub mod contradict;
 pub mod divergence;
 pub mod extract;
 pub mod library_sweep;
+pub mod manual;
 pub mod policy;
 pub mod reembed;
 pub mod resolve;

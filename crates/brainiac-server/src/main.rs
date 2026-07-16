@@ -676,22 +676,15 @@ async fn compose_sweep(
     version: i32,
     admin: &sqlx::PgPool,
 ) -> Result<KbStats> {
-    use sqlx::Row;
     let mut stats = KbStats::default();
     let console_url = console_url();
 
-    // Every org that has at least one page, plus every org with canonical
-    // entities (a candidate for scaffolding its first page).
-    let orgs = sqlx::query(
-        "SELECT DISTINCT org_id FROM documents
-         UNION
-         SELECT DISTINCT org_id FROM canonical_entities",
-    )
-    .fetch_all(admin)
-    .await?;
+    // Every org with compose work: a page to recompose, a canonical entity to
+    // scaffold an entity page from, or adopted standards to project into a
+    // standards page (the last clause fixes F-9 — see the function's doc).
+    let org_ids = brainiac_pipeline::compose::orgs_with_compose_work(admin).await?;
 
-    for row in orgs {
-        let org_id: uuid::Uuid = row.get("org_id");
+    for org_id in org_ids {
         let principal = brainiac_pipeline::pipeline_principal(org_id);
 
         // Scaffold under worker authority: deciding whether an entity has earned

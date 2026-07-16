@@ -296,3 +296,120 @@ async fn standards_render_verbatim_adopted_only_and_cannot_rot() {
         out.markdown
     );
 }
+
+#[tokio::test]
+async fn a_library_first_org_is_visited_by_the_compose_sweep() {
+    // F-9: the compose sweep chooses which orgs to visit, and the standards-page
+    // scaffold's trigger (>=3 adopted rules) is evaluated INSIDE that visit. An
+    // org that adopts rules but has no graph and no pages must still be visited,
+    // or its standards page never scaffolds — the Library's KB projection would
+    // silently depend on the Memory graph being populated. This is a
+    // Library-first org: adopted standards, zero canonical entities, zero
+    // documents. Before the fix, orgs_with_compose_work skipped it entirely.
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    sqlx::query(
+        "TRUNCATE library_usage_events, skill_versions, skills, standard_provenance,
+                  standard_versions, standards, practice_divergences, memory_feedback,
+                  document_reads, document_dependencies, document_revisions,
+                  document_sections, documents,
+                  memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
+         CASCADE",
+    )
+    .execute(&admin)
+    .await
+    .expect("truncate");
+
+    let org = Uuid::new_v4();
+    let maintainer = Uuid::new_v4();
+    let mut conn = admin.acquire().await.expect("conn");
+    orgs::upsert_org(&mut conn, org, "library-first")
+        .await
+        .expect("org");
+
+    // Three adopted rules, each with memory provenance so adoption is plain
+    // (no decree) — and NOTHING else: no memories in a graph, no entities, no
+    // documents.
+    let ev = Uuid::new_v4();
+    memories::insert(&mut conn, &mem(ev, org, "the incident behind the rule"))
+        .await
+        .expect("evidence");
+    for i in 0..3 {
+        let id = Uuid::new_v4();
+        library::insert_standard(
+            &mut conn,
+            &library::NewStandard {
+                id,
+                org_id: org,
+                origin: StandardOrigin::Human,
+                stack: "rust".into(),
+                category: "errors".into(),
+                slug: format!("rule-{i}"),
+                statement: format!("Rule number {i}, in one sentence."),
+                rationale: None,
+                detail_md: None,
+                enforcement: Enforcement::Recommended,
+                provenance: vec![(StandardProvenanceKind::Memory, ev)],
+                author: Some(maintainer),
+            },
+        )
+        .await
+        .expect("insert");
+        assert!(library::adopt_standard(&mut conn, id, maintainer, false)
+            .await
+            .expect("adopt"));
+    }
+
+    // Ground truth: this org has no entities and no documents — the two things
+    // the sweep used to key on.
+    let entities: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM canonical_entities WHERE org_id = $1")
+            .bind(org)
+            .fetch_one(&admin)
+            .await
+            .expect("entities");
+    let docs: i64 = sqlx::query_scalar("SELECT count(*) FROM documents WHERE org_id = $1")
+        .bind(org)
+        .fetch_one(&admin)
+        .await
+        .expect("docs");
+    assert_eq!(
+        (entities, docs),
+        (0, 0),
+        "the setup must be a library-first org"
+    );
+
+    // THE FIX: the sweep's org selection must include this org, on the strength
+    // of its adopted standards alone.
+    let visited = brainiac_pipeline::compose::orgs_with_compose_work(&admin)
+        .await
+        .expect("orgs");
+    assert!(
+        visited.contains(&org),
+        "an org with adopted rules but no graph must still be visited by the compose sweep, \
+         or its standards page never scaffolds (F-9)"
+    );
+
+    // And the payoff: visiting it, the scaffold now makes the page.
+    let made = scaffold_standards_pages(&mut conn, org, 5)
+        .await
+        .expect("scaffold");
+    assert_eq!(
+        made.len(),
+        1,
+        "the library-first org earns its standards page"
+    );
+    let page = brainiac_store::documents::get_document(&mut conn, made[0])
+        .await
+        .expect("get")
+        .expect("page");
+    assert_eq!(page.slug, "standards-rust");
+    assert_eq!(page.doc_kind, brainiac_core::DocKind::StandardsPage);
+}

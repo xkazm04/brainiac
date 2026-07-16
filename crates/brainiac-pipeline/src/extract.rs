@@ -220,9 +220,12 @@ pub struct ExtractStats {
     pub chunks: usize,
     /// First responses that failed to parse and triggered a repair re-prompt.
     pub parse_failures: usize,
-    /// Repair re-prompts that recovered a parseable response. Total LLM calls
-    /// for the source = `chunks + repairs`.
+    /// Repair re-prompts that recovered a parseable response.
     pub repairs: usize,
+    /// Actual model calls made for this source. Zero for a `manual` source —
+    /// the verbatim path (F-3) never touches the provider, and the log must
+    /// say so rather than implying a call happened.
+    pub llm_calls: usize,
     /// Model ref the provider actually reported (from the first chunk's call),
     /// recorded on the pipeline_runs row. `None` only for an empty source.
     pub model_ref: Option<String>,
@@ -434,6 +437,53 @@ struct LlmExtract {
     repaired: bool,
 }
 
+/// The verbatim path for `manual` sources (F-3): no model, no parse, no way to
+/// fail. A `memory_add` sends ONE pre-distilled statement — the exact shape
+/// the transcript-tuned extractor is least robust on (the ChainSonar field
+/// test measured a 36% hard-failure rate on real qwen-max, every success
+/// needing a repair pass). But a distilled statement does not need distilling:
+/// the statement IS the memory. So it becomes one [`ExtractedMemory`]
+/// directly — kind from the author's hint (default `fact`), the hinted entity
+/// names carried through — and flows into the SAME firewall, dedup, insert,
+/// and entity-resolution machinery as an LLM extraction. What this path gives
+/// up, deliberately: free-text entity mining beyond the hints, and multi-fact
+/// splitting of paragraph pastes (the tool contract is one statement). What it
+/// buys: a contribution that cannot be lost to a parse failure, zero LLM cost,
+/// and instant, deterministic ingestion.
+fn extract_verbatim(raw_text: &str) -> LlmExtract {
+    let decoded = crate::manual::decode_manual_source(raw_text);
+    let kind = decoded.kind_hint.unwrap_or(brainiac_core::MemoryKind::Fact);
+    LlmExtract {
+        output: ExtractionOutput {
+            memories: vec![ExtractedMemory {
+                kind: kind.as_str().to_string(),
+                title: None,
+                content: decoded.content,
+                lifecycle: None,
+                detail_md: None,
+                visibility: None,
+                // No extractor ran, so there is no extraction confidence to
+                // report — None, not a flattering constant. Policy treats an
+                // absent confidence conservatively, which is right: the gate
+                // still reviews it like any other raw memory.
+                confidence: None,
+                entities: decoded
+                    .entities
+                    .into_iter()
+                    .map(|name| ExtractedEntity {
+                        name,
+                        kind: default_entity_kind(),
+                        aliases: Vec::new(),
+                    })
+                    .collect(),
+                relations: Vec::new(),
+            }],
+        },
+        model_ref: "verbatim:manual".to_string(),
+        repaired: false,
+    }
+}
+
 async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtract> {
     let resp = provider
         .complete(&ChatRequest {
@@ -536,16 +586,28 @@ pub async fn run_extract(
     org_id: Uuid,
     team_id: Option<Uuid>,
     source_id: Uuid,
+    // The source's `kind` column. `manual` (a memory_add — one pre-distilled
+    // statement) takes the deterministic verbatim path; everything else
+    // (`session_transcript`, `doc`, …) is prose that genuinely needs the
+    // model to distill it.
+    source_kind: &str,
     raw_text: &str,
     // Direction 2: the run this extraction belongs to. Stamped onto the single
     // provenance row so every memory (and entity) written here links back to
     // the pipeline_runs record via provenance.pipeline_run_id.
     pipeline_run_id: Option<Uuid>,
 ) -> Result<ExtractStats> {
+    let verbatim = source_kind == "manual";
     // Chunk oversized sources so a long session's tail isn't truncated. One
     // provenance row per source still (stamped from the first chunk's model
     // ref), every chunk's memories linked to it; dedup collapses overlaps.
-    let chunks = chunk_source(raw_text);
+    // A manual source is one bounded statement — never chunked (chunking a
+    // statement could split it across the overlap and duplicate it).
+    let chunks = if verbatim {
+        vec![raw_text.to_string()]
+    } else {
+        chunk_source(raw_text)
+    };
     let mut stats = ExtractStats {
         chunks: chunks.len(),
         ..Default::default()
@@ -553,11 +615,21 @@ pub async fn run_extract(
     let mut provenance_id: Option<Uuid> = None;
 
     for chunk in &chunks {
-        // One BYOM call per chunk, each with a bounded JSON-repair re-prompt.
-        let call = extract_once(provider, chunk).await?;
+        // Manual sources bypass the model entirely (F-3: nothing to distill,
+        // nothing to mis-parse); everything else pays one BYOM call per chunk,
+        // each with a bounded JSON-repair re-prompt.
+        let call = if verbatim {
+            extract_verbatim(chunk)
+        } else {
+            extract_once(provider, chunk).await?
+        };
+        if !verbatim {
+            stats.llm_calls += 1;
+        }
         if call.repaired {
             stats.parse_failures += 1;
             stats.repairs += 1;
+            stats.llm_calls += 1;
         }
 
         // Lazily create the single provenance row on the first chunk, using

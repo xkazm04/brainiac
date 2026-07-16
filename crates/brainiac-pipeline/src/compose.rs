@@ -619,6 +619,34 @@ pub async fn compose_document(
 pub const SCAFFOLD_MIN_MEMORIES: i64 = 4;
 pub const SCAFFOLD_MIN_TEAMS: i64 = 2;
 
+/// Every org the compose sweep must visit each tick: any org that has a
+/// document (to recompose / publish), a canonical entity (a candidate for
+/// entity-page scaffolding), OR adopted standards (a candidate for
+/// standards-page scaffolding, LIBRARY-PLAN L8).
+///
+/// The last clause fixes a real coupling bug. The standards-page scaffold's own
+/// trigger — three adopted rules on a stack — is evaluated *inside* this sweep.
+/// Without the standards union, an org that adopts rules but has no graph and no
+/// pages is never visited, so its standards page never scaffolds: the Library's
+/// KB projection silently depended on the Memory graph being populated. A
+/// Library-first org (rules before entities) got an empty KB forever. Found by
+/// the ChainSonar field test (load/chainsonar/runs/2026-07-16/report.md, F-9).
+///
+/// Runs on the RLS-bypassing admin pool — it is a cross-org operator query.
+pub async fn orgs_with_compose_work(pool: &sqlx::PgPool) -> Result<Vec<Uuid>> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT DISTINCT org_id FROM documents
+         UNION
+         SELECT DISTINCT org_id FROM canonical_entities
+         UNION
+         SELECT DISTINCT org_id FROM standards WHERE lifecycle = 'adopted'",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(|r| r.get("org_id")).collect())
+}
+
 /// Create `entity_page`s for canonical entities that have crossed the threshold
 /// and don't have one yet. Idempotent: the slug is derived from the entity, and
 /// an existing page is skipped rather than duplicated.

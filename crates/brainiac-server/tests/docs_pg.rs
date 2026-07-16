@@ -342,6 +342,7 @@ async fn mcp_state(ctx: &Ctx, user: Uuid) -> std::sync::Arc<brainiac_server::mcp
         embedder: std::sync::Arc::new(DeterministicEmbedder::default()),
         embedding_version: version,
         principal: principal(ctx.org_id, user),
+        scopes: None,
     })
 }
 

@@ -1091,6 +1091,15 @@ pub(crate) struct SourceResults {
     memories: i64,
     promoted: i64,
     pending_review: i64,
+    /// The ids of the memories this source produced — what closes the loop on
+    /// an async `memory_add` (F-1/F-2). Poll this endpoint until `status` is
+    /// `processed`; then these ids are real memories you can cite (e.g. as a
+    /// standard's `evidence_memory_id`) or feed back on. `memory_add` returns a
+    /// SOURCE id, not a memory id, and extraction is asynchronous — so before
+    /// this, an agent had no way to learn what its contribution became, or
+    /// whether it landed at all. Empty while queued, or if extraction produced
+    /// nothing (a real outcome worth seeing, not a hang).
+    memory_ids: Vec<Uuid>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1148,6 +1157,21 @@ pub(crate) async fn source_status(
     .fetch_one(&mut *tx)
     .await
     .map_err(internal)?;
+    // The ids themselves (not just the count) — the handle that lets an agent
+    // cite what it just added. Fetched under the same RLS tx as the count.
+    let memory_ids: Vec<Uuid> = sqlx::query(
+        "SELECT m.id FROM memories m
+         JOIN provenance pv ON pv.id = m.provenance_id
+         WHERE pv.source_id = $1
+         ORDER BY m.created_at",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?
+    .iter()
+    .map(|r| r.get::<Uuid, _>("id"))
+    .collect();
     drop(tx);
     // Queue state lives outside RLS (the queue schema is org-blind); the
     // source's org membership was already proven by the RLS read above.
@@ -1191,6 +1215,7 @@ pub(crate) async fn source_status(
             memories,
             promoted: produced.get::<i64, _>("promoted"),
             pending_review: produced.get::<i64, _>("pending_review"),
+            memory_ids,
         },
     }))
 }
@@ -1232,7 +1257,7 @@ pub(crate) struct CreatedTokenResponse {
     request_body = CreateTokenBody,
     responses(
         (status = 201, description = "Token minted", body = CreatedTokenResponse),
-        (status = 400, description = "Empty name or scopes outside read|write|admin"),
+        (status = 400, description = "Empty name or scopes outside the mintable set (see auth::SCOPES)"),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `admin` scope"),
     )

@@ -186,17 +186,56 @@ pub struct McpState {
     pub embedder: Arc<dyn Embedder>,
     pub embedding_version: i32,
     pub principal: Principal,
+    /// The token's scopes; `None` for an env bootstrap token (unrestricted),
+    /// mirroring [`crate::auth::AuthContext`]. A managed `brk_` device key
+    /// carries exactly what it was minted with, so an agent's key can read the
+    /// library and propose to it without ever being able to publish a rule —
+    /// the same gate the REST surface applies (see [`tool_scope`]).
+    pub scopes: Option<Vec<String>>,
+}
+
+/// The scope a tool requires — the MCP mirror of the `auth_of(&state, scope)`
+/// call every REST handler makes. It MUST agree with the REST endpoint the
+/// tool shadows, or the same token would be allowed on one surface and refused
+/// on the other for the same action.
+fn tool_scope(tool: &str) -> &'static str {
+    match tool {
+        // reads over the governed memory
+        "memory_search" | "memory_context" | "memory_provenance" | "entity_lookup"
+        | "memory_status" => "read",
+        // writes: a proposal, a memory, a feedback verdict
+        "memory_add" | "knowledge_propose" | "memory_feedback" => "write",
+        // the knowledge base
+        "doc_get" | "doc_search" => "kb:read",
+        // the library: reads + usage reporting hold lib:read; proposing holds
+        // lib:propose (LIBRARY-PLAN L7). There is deliberately no MCP tool that
+        // needs lib:publish — an agent proposes; a human adopts.
+        "standards_for" | "skill_search" | "skill_fetch" | "skill_report_usage" => "lib:read",
+        "standard_propose" => "lib:propose",
+        // Unknown tools are handled (and rejected) in call_tool; gate them as
+        // admin so a future tool cannot slip in ungated by accident.
+        _ => "admin",
+    }
 }
 
 impl McpState {
+    /// Resolve the MCP token the same way REST does — env map first, then the
+    /// `api_tokens` table for `brk_…` device keys (via
+    /// [`crate::auth::resolve_bearer`]). Before this, MCP resolved ONLY against
+    /// the env map, so the managed key `/signup` mints "for the local device
+    /// (the MCP agent)" failed with "does not resolve to a principal" — the
+    /// free-tier onboarding→agent loop was broken end to end (load/README.md
+    /// F-2). An env token still resolves (unrestricted); a device key now
+    /// resolves too, carrying its scopes.
     pub async fn from_env(store: Store, embedder: Arc<dyn Embedder>) -> Result<Self> {
         let tokens = crate::auth::TokenMap::from_env()?;
         let token = std::env::var("BRAINIAC_MCP_TOKEN")
             .context("BRAINIAC_MCP_TOKEN must be set for the MCP surface")?;
-        let principal = tokens
-            .resolve(&token)
-            .cloned()
+        let ctx = crate::auth::resolve_bearer(&tokens, &store, &token)
+            .await?
             .context("BRAINIAC_MCP_TOKEN does not resolve to a principal")?;
+        let principal = ctx.principal;
+        let scopes = ctx.scopes;
         let embedding_version = {
             let mut tx = store.scoped_tx(&principal).await?;
             // Serve path: refuse to start on a version whose reembed backfill did
@@ -216,7 +255,17 @@ impl McpState {
             embedder,
             embedding_version,
             principal,
+            scopes,
         })
+    }
+
+    /// Does this session's token allow `scope`? `None` scopes = env bootstrap
+    /// token, unrestricted. Mirrors [`crate::auth::AuthContext::allows`].
+    fn allows(&self, scope: &str) -> bool {
+        match &self.scopes {
+            None => true,
+            Some(scopes) => scopes.iter().any(|s| s == scope || s == "admin"),
+        }
     }
 }
 
@@ -385,7 +434,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "memory_add",
-            "description": "Record a piece of durable knowledge (fact, decision, pattern, pitfall, howto). It enters the extraction/review pipeline as raw knowledge — it is NOT immediately canonical. The optional kind/entities hints steer the extractor.",
+            "description": "Record a piece of durable knowledge (fact, decision, pattern, pitfall, howto). It enters the extraction/review pipeline as raw knowledge — it is NOT immediately canonical. Returns a source_id; extraction is asynchronous, so call memory_status with it to learn the memory ids it produced (needed to cite the new memory as evidence). The optional kind/entities hints steer the extractor.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -394,6 +443,17 @@ fn tool_definitions() -> Value {
                     "entities": { "type": "array", "items": { "type": "string" }, "description": "Optional: names of the services/repos/techs/features this concerns — surfaced to the extractor so it anchors them" }
                 },
                 "required": ["content"]
+            }
+        },
+        {
+            "name": "memory_status",
+            "description": "Check what an async memory_add became: the ingestion status and the memory ids it produced. Poll this with the source_id from memory_add until `extracted` is true, then those memory ids are real — cite one as a standard_propose evidence id, or feed back on it. `extracted:false` with an empty list means the pipeline has not run yet (or produced nothing).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source_id": { "type": "string", "description": "The source_id returned by memory_add" }
+                },
+                "required": ["source_id"]
             }
         },
         {
@@ -540,10 +600,23 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
         .cloned()
         .unwrap_or_else(|| json!({}));
 
+    // Scope gate, before the tool runs — the MCP mirror of REST's `auth_of`.
+    // A managed device key that was minted read+write can search and add
+    // memories but cannot propose a standard; the refusal is a tool error the
+    // agent can read, not a crash.
+    let required = tool_scope(name);
+    if !state.allows(required) {
+        return Err(RpcError::new(
+            -32001,
+            format!("this token lacks the `{required}` scope required by `{name}`"),
+        ));
+    }
+
     let payload = match name {
         "memory_search" => memory_search(state, &args).await,
         "memory_context" => memory_context(state, &args).await,
         "memory_add" => memory_add(state, &args).await,
+        "memory_status" => memory_status(state, &args).await,
         "entity_lookup" => entity_lookup(state, &args).await,
         "memory_feedback" => memory_feedback(state, &args).await,
         "knowledge_propose" => knowledge_propose(state, &args).await,
@@ -957,31 +1030,12 @@ fn parse_entity_names(args: &Value) -> Result<Vec<String>, ToolError> {
 /// is the in-scope lever that actually reaches extraction — no worker change, no
 /// new column. With no hints the stored text is the content verbatim (today's
 /// behavior preserved byte-for-byte).
+/// Encode a memory_add into its stored source text. Delegates to the
+/// pipeline's `manual` module — the ONE owner of this format, because the
+/// verbatim ingest path (F-3) decodes it back out, and an encoder and decoder
+/// living in different crates is how formats drift apart.
 fn build_source_text(content: &str, kind: Option<MemoryKind>, entities: &[String]) -> String {
-    let mut hints: Vec<String> = Vec::new();
-    if let Some(k) = kind {
-        // Phrased as a non-restrictive hint: the flywheel run showed
-        // "recording this as a pitfall" led the extractor to take ONLY the
-        // pitfall and drop a co-located howto/decision. Signal the primary kind
-        // without narrowing extraction to it (the prompt reinforces this).
-        hints.push(format!(
-            "The author considers this primarily a {}, but extract every distinct durable \
-             learning it contains, not only the {}.",
-            k.as_str(),
-            k.as_str()
-        ));
-    }
-    if !entities.is_empty() {
-        hints.push(format!(
-            "It concerns these entities: {}.",
-            entities.join(", ")
-        ));
-    }
-    if hints.is_empty() {
-        content.to_string()
-    } else {
-        format!("{content}\n\n[Context for extraction: {}]", hints.join(" "))
-    }
+    brainiac_pipeline::manual::encode_manual_source(content, kind, entities)
 }
 
 async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> {
@@ -1027,7 +1081,62 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         "job_id": job_id,
         "kind": kind.map(|k| k.as_str()),
         "entities": entities,
-        "note": "queued for extraction; it becomes searchable after the pipeline runs and is subject to review before promotion"
+        "note": "queued for extraction. Call memory_status with this source_id to learn what it became — the memory ids it produced (to cite as evidence or feed back on), or that it produced nothing. It is not searchable until the pipeline runs and a human/policy reviews it."
+    }))
+}
+
+/// Close the loop on an async memory_add (F-1/F-2). Extraction is asynchronous
+/// and memory_add returns a SOURCE id, so an agent had no way to learn what its
+/// contribution became — or whether it landed. This reports the ingestion
+/// status and the memory ids produced, which are the handles for citing the new
+/// memory (standard_propose evidence) or feeding back on it.
+async fn memory_status(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    use sqlx::Row;
+    let source_id = required_uuid(args, "source_id")?;
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+
+    // RLS makes an unknown-or-foreign source indistinguishable from absent.
+    let exists = sqlx::query("SELECT 1 AS one FROM sources WHERE id = $1")
+        .bind(source_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some();
+    if !exists {
+        return Ok(json!({ "found": false, "source_id": source_id }));
+    }
+
+    let rows = sqlx::query(
+        "SELECT m.id, m.status::text AS status FROM memories m
+         JOIN provenance pv ON pv.id = m.provenance_id
+         WHERE pv.source_id = $1 ORDER BY m.created_at",
+    )
+    .bind(source_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let memories: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<uuid::Uuid, _>("id"),
+                "status": r.get::<String, _>("status"),
+            })
+        })
+        .collect();
+    let done = !memories.is_empty();
+    Ok(json!({
+        "found": true,
+        "source_id": source_id,
+        // `extracted` = the pipeline has run and produced these; if it is true
+        // and the list is empty, extraction ran but found nothing worth keeping.
+        "extracted": done,
+        "memories": memories,
+        "note": if done {
+            "these ids are real memories — cite one as a standard's evidence, or feed back on it"
+        } else {
+            "not extracted yet (or extraction produced nothing) — poll again shortly"
+        }
     }))
 }
 

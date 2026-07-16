@@ -610,6 +610,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
             user_id: ctx.user_reader,
             team_ids: vec![ctx.team_a],
         },
+        scopes: None,
     });
     let rpc = |id: i64, method: &str, params: serde_json::Value| json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
     let call = |id: i64, name: &str, args: serde_json::Value| {
@@ -1049,6 +1050,7 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
             user_id: ctx.user_maint, // a different identity — fresh budget
             team_ids: vec![ctx.team_a],
         },
+        scopes: None,
     });
     let r = handle_message(
         state.as_ref(),
@@ -1071,4 +1073,262 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
         payload["note"].as_str().expect("note").contains("respect"),
         "the agent is told to respect the rejection: {payload}"
     );
+}
+
+// ── the harness blockers (load/README.md F-1, F-2), as regressions ──────────
+
+#[tokio::test]
+async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
+    // F-2: the MCP surface used to resolve ONLY env tokens, so the `brk_`
+    // device key that /signup mints "for the local device (the MCP agent)"
+    // failed with "does not resolve to a principal" — the onboarding→agent
+    // loop was broken end to end. And once it DOES resolve, its scopes must
+    // gate the tools, or a read+write device key would get the whole library.
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+
+    // A device key exactly like a coding agent holds: read the memory + KB +
+    // library, propose to the library, but never publish, never admin.
+    let dev_scopes = ["read", "write", "kb:read", "lib:read", "lib:propose"];
+    let secret = scoped_token(&ctx, ctx.org_a, ctx.user_reader, "device", &dev_scopes).await;
+
+    // Resolve the way MCP now does (env map → api_tokens table).
+    let tokens = brainiac_server::auth::TokenMap::from_env().expect("token map");
+    let resolved = brainiac_server::auth::resolve_bearer(&tokens, &ctx.store, &secret)
+        .await
+        .expect("resolve")
+        .expect("a managed brk_ key must resolve — the onboarding loop depends on it");
+    assert_eq!(resolved.principal.user_id, ctx.user_reader);
+
+    let state = Arc::new(McpState {
+        store: ctx.store.clone(),
+        embedder: Arc::new(DeterministicEmbedder::default()),
+        embedding_version: 1,
+        principal: resolved.principal,
+        scopes: resolved.scopes,
+    });
+    let call = |id: i64, name: &str, args: serde_json::Value| {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": { "name": name, "arguments": args } })
+    };
+
+    // lib:read is held → standards_for is allowed (empty, but not refused).
+    let r = handle_message(
+        state.as_ref(),
+        &call(1, "standards_for", json!({"stack": "rust"})),
+    )
+    .await
+    .expect("standards_for");
+    assert!(
+        r.get("error").is_none(),
+        "a lib:read key must reach standards_for: {r}"
+    );
+
+    // lib:propose is held → a proposal is accepted (the funnel, not the gate).
+    let r = handle_message(
+        state.as_ref(),
+        &call(
+            2,
+            "standard_propose",
+            json!({"name": "device proposal", "statement": "One rule."}),
+        ),
+    )
+    .await
+    .expect("propose");
+    assert!(
+        r.get("error").is_none(),
+        "a lib:propose key must reach standard_propose: {r}"
+    );
+
+    // Now a key WITHOUT lib:propose — the same agent, minted read-only for the
+    // library — must be refused at the tool boundary, not crash.
+    let ro = scoped_token(
+        &ctx,
+        ctx.org_a,
+        ctx.user_reader,
+        "readonly",
+        &["read", "lib:read"],
+    )
+    .await;
+    let ro_ctx = brainiac_server::auth::resolve_bearer(&tokens, &ctx.store, &ro)
+        .await
+        .expect("resolve")
+        .expect("resolve");
+    let ro_state = Arc::new(McpState {
+        store: ctx.store.clone(),
+        embedder: Arc::new(DeterministicEmbedder::default()),
+        embedding_version: 1,
+        principal: ro_ctx.principal,
+        scopes: ro_ctx.scopes,
+    });
+    let r = handle_message(
+        ro_state.as_ref(),
+        &call(
+            3,
+            "standard_propose",
+            json!({"name": "nope", "statement": "Refused."}),
+        ),
+    )
+    .await
+    .expect("propose refused");
+    let err = r
+        .get("error")
+        .expect("a key without lib:propose must be refused");
+    assert!(
+        err["message"]
+            .as_str()
+            .expect("msg")
+            .contains("lib:propose"),
+        "the refusal must name the missing scope: {err}"
+    );
+    // …and the same read-only key can still READ the library (lib:read held).
+    let r = handle_message(ro_state.as_ref(), &call(4, "standards_for", json!({})))
+        .await
+        .expect("read");
+    assert!(
+        r.get("error").is_none(),
+        "lib:read must still work on the read-only key: {r}"
+    );
+}
+
+#[tokio::test]
+async fn the_token_endpoint_can_mint_every_enforced_scope() {
+    // F-1: `auth::SCOPES` — the minter's vocabulary — must contain every scope
+    // an endpoint enforces, or the product ships a governed endpoint whose only
+    // reachable key is `admin`. This drives the REAL `POST /v1/tokens`
+    // validation (the layers' own pg tests mint through the store directly and
+    // so never exercised it), and asserts a minted lib:read key actually reaches
+    // the library it was minted for.
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let base = boot_http(&ctx).await; // tok_maint is a full-authority env token
+    let http = reqwest::Client::new();
+
+    // Every scope the layers enforce must be mintable through the endpoint.
+    for scope in [
+        "read",
+        "write",
+        "kb:read",
+        "kb:publish",
+        "lib:read",
+        "lib:propose",
+        "lib:publish",
+    ] {
+        let r = http
+            .post(format!("{base}/v1/tokens"))
+            .bearer_auth("tok_maint")
+            .json(&json!({ "name": format!("k-{scope}"), "scopes": [scope] }))
+            .send()
+            .await
+            .expect("mint");
+        assert_eq!(
+            r.status(),
+            reqwest::StatusCode::CREATED,
+            "scope `{scope}` is enforced somewhere but the minter rejects it — \
+             an endpoint the product governs that no non-admin key can reach"
+        );
+    }
+
+    // And the minted key WORKS: a lib:read token reaches the library.
+    let minted: serde_json::Value = http
+        .post(format!("{base}/v1/tokens"))
+        .bearer_auth("tok_maint")
+        .json(&json!({ "name": "agent-key", "scopes": ["lib:read"], "user_id": ctx.user_reader }))
+        .send()
+        .await
+        .expect("mint")
+        .json()
+        .await
+        .expect("json");
+    let secret = minted["token"].as_str().expect("secret");
+    let r = http
+        .get(format!("{base}/v1/library/standards"))
+        .bearer_auth(secret)
+        .send()
+        .await
+        .expect("list");
+    assert_eq!(
+        r.status(),
+        reqwest::StatusCode::OK,
+        "a freshly minted lib:read key must reach the library — otherwise the scope is theatre"
+    );
+}
+
+#[tokio::test]
+async fn source_status_returns_the_memory_ids_it_produced() {
+    // F-1/F-2 over REST: an agent's memory_add returns a SOURCE id and
+    // extraction is async, so it must be able to poll GET /v1/sources/{id} and
+    // learn the memory ids produced — the handle it cites as a standard's
+    // evidence. Before the fix the endpoint returned counts only.
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let base = boot_http(&ctx).await;
+    let http = reqwest::Client::new();
+
+    // A source that extraction turned into one org-visible canonical memory,
+    // linked the way the pipeline links them (memory -> provenance -> source).
+    let (source_id, prov_id, mem_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    sqlx::query("INSERT INTO sources (id, org_id, kind) VALUES ($1,$2,'manual')")
+        .bind(source_id)
+        .bind(ctx.org_a)
+        .execute(&ctx.admin)
+        .await
+        .expect("source");
+    sqlx::query("INSERT INTO provenance (id, org_id, actor_kind, actor_id, source_id) VALUES ($1,$2,'pipeline','worker:test',$3)")
+        .bind(prov_id).bind(ctx.org_a).bind(source_id).execute(&ctx.admin).await.expect("provenance");
+    sqlx::query(
+        "INSERT INTO memories (id, org_id, visibility, status, kind, content, provenance_id)
+         VALUES ($1,$2,'org','canonical','fact','a fact the agent contributed',$3)",
+    )
+    .bind(mem_id)
+    .bind(ctx.org_a)
+    .bind(prov_id)
+    .execute(&ctx.admin)
+    .await
+    .expect("memory");
+
+    let r: serde_json::Value = http
+        .get(format!("{base}/v1/sources/{source_id}"))
+        .bearer_auth("tok_maint")
+        .send()
+        .await
+        .expect("status")
+        .json()
+        .await
+        .expect("json");
+
+    let ids: Vec<&str> = r["results"]["memory_ids"]
+        .as_array()
+        .expect("memory_ids")
+        .iter()
+        .map(|v| v.as_str().expect("id"))
+        .collect();
+    assert_eq!(
+        ids,
+        vec![mem_id.to_string()],
+        "the source must report the memory it produced — the id an agent cites as evidence: {r}"
+    );
+    assert_eq!(r["results"]["memories"], 1);
+
+    // Another org cannot poll this source — RLS makes it a plain 404.
+    let outsider = scoped_token(&ctx, ctx.org_b, ctx.user_b, "rival", &["read"]).await;
+    let r = http
+        .get(format!("{base}/v1/sources/{source_id}"))
+        .bearer_auth(&outsider)
+        .send()
+        .await
+        .expect("cross-org");
+    assert_eq!(r.status(), reqwest::StatusCode::NOT_FOUND);
 }
