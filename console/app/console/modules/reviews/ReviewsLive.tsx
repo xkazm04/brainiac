@@ -16,6 +16,7 @@
 
 import ReviewWorklist from "./ReviewWorklist";
 import { ContradictionButtons, PromotionButtons } from "./review-buttons";
+import { CONTRA_HEADING_ID } from "./review-surface";
 import type {
   ContradictionQueueItem,
   ContradictionStatus,
@@ -48,8 +49,11 @@ export default function ReviewsLive({
         />
       )}
       // Filtering is a server round trip: the status is a query param the page
-      // re-queries on, so the tabs are links rather than callbacks.
-      statusHref={(s) => `/console?m=reviews&cstatus=${s}#contradictions-h`}
+      // re-queries on, so the tabs are links rather than callbacks. The fragment
+      // must match the heading ReviewWorklist actually renders (CONTRA_HEADING_ID)
+      // — it pointed at a `#contradictions-h` that no longer exists, so every tab
+      // click round-tripped and then scrolled nowhere.
+      statusHref={(s) => `/console?m=reviews&cstatus=${s}#${CONTRA_HEADING_ID}`}
       // No onBulk: there is no bulk endpoint, and looping N single approvals
       // behind one button is not a decision this surface has earned. The rail
       // says so rather than offering a control that cannot fire.

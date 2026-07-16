@@ -24,24 +24,46 @@ export interface ActionResult {
   message: string;
 }
 
+/**
+ * The console's one route (app/console/page.tsx). Modules are `?m=` on this
+ * path, and revalidatePath keys on the path alone — so this is the whole
+ * console's cache key, not just the reviews module's.
+ */
+const CONSOLE_PATH = "/console";
+
 function describe(e: unknown): string {
   if (e instanceof ApiError) {
     // Shared service token → a 403 is about the token's roles, not "you".
     if (e.status === 403)
       return "The console's service token is not a maintainer of the owning team (check BRAINIAC_API_TOKEN).";
     // 404 (no longer pending) or 409 (lost the atomic approve/reject race) both
-    // mean another session already decided this item — see the refresh below.
+    // mean this item was decided before our write landed. We cannot know BY WHOM
+    // — the backend authenticates the shared service token, not the human — so
+    // the message says what is true (it is already decided) and not who did it.
     if (e.status === 404 || e.status === 409)
-      return "Already decided in another session — the queue has been refreshed.";
+      return "Already decided — this item is no longer pending.";
     return `API error ${e.status}: ${e.message}`;
   }
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Refresh the queues so a phantom (already-decided) row clears for this client too. */
+/**
+ * Refresh the queues so a decided row actually leaves the rail.
+ *
+ * ONE path, not two. The console was collapsed to a single route that switches
+ * modules on `?m=` (app/console/page.tsx), so `/console` IS the reviews surface
+ * AND the analytics surface. The two paths this used to revalidate
+ * (`/console/reviews`, `/console/analytics`) have not existed since that
+ * collapse, and revalidating a route that does not exist is a silent no-op:
+ * every approve/reject left the decided row sitting in the rail, and clicking it
+ * again produced an "already decided" note about a race that never happened.
+ *
+ * revalidatePath takes the PATH only — the query string is not part of it, so
+ * this one call covers every module, which is exactly what we want: a promotion
+ * approval also moves the analytics counters.
+ */
 function refreshQueues() {
-  revalidatePath("/console/reviews");
-  revalidatePath("/console/analytics");
+  revalidatePath(CONSOLE_PATH);
 }
 
 /** True when the failure means the item was already decided elsewhere. */

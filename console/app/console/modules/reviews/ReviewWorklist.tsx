@@ -50,7 +50,13 @@ import {
 import { formatAge } from "@/lib/format";
 import type { ContradictionStatus, PromotionQueueItem } from "@/lib/governance-api";
 
-import { STATUS_TABS, type ReviewSurfaceProps } from "./review-surface";
+import {
+  CONTRA_HEADING_ID,
+  resolveFocusIndex,
+  stepFocus,
+  STATUS_TABS,
+  type ReviewSurfaceProps,
+} from "./review-surface";
 
 const ALPHA = band("alpha");
 const DIM = "rgba(233,237,255,0.5)";
@@ -138,7 +144,9 @@ export default function ReviewWorklist({
   const reduced = useReducedMotion();
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [limit, setLimit] = useState(RAIL_WINDOW);
-  const [focus, setFocus] = useState(0);
+  // The cursor is the focused promotion's id — never its row index. See
+  // resolveFocusIndex for why that is a safety property and not a preference.
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [clim, setClim] = useState(CONTRA_WINDOW);
   const railRef = useRef<HTMLDivElement>(null);
@@ -172,9 +180,11 @@ export default function ReviewWorklist({
     };
   }, [ordered, filters]);
 
-  // Focus is an index, clamped at read time — a filter that shrinks the rail
-  // under the cursor must not leave the pane pointing at nothing.
-  const focusIdx = Math.min(focus, Math.max(0, matched.length - 1));
+  // The cursor is resolved against the CURRENT list on every render, so a
+  // refresh (or a filter) that moves the focused claim moves the pane with it,
+  // and one that removes it lands at the front of the rail rather than on a
+  // stranger's claim at the same index.
+  const focusIdx = resolveFocusIndex(matched, focusId);
   const active: PromotionQueueItem | undefined = matched[focusIdx];
   // Walking past the window widens it. No separate bookkeeping, no way for the
   // cursor to escape what is mounted.
@@ -188,7 +198,7 @@ export default function ReviewWorklist({
 
   const reset = () => {
     setLimit(RAIL_WINDOW);
-    setFocus(0);
+    setFocusId(null);
   };
   const setDim = (k: "team" | "kind" | "rule", v: string) => {
     setFilters((f) => {
@@ -228,17 +238,20 @@ export default function ReviewWorklist({
     const k = e.key.toLowerCase();
     if (k === "j" || e.key === "ArrowDown") {
       e.preventDefault();
-      setFocus(Math.min(focusIdx + 1, matched.length - 1));
+      setFocusId(stepFocus(matched, focusId, 1));
     } else if (k === "k" || e.key === "ArrowUp") {
       e.preventDefault();
-      setFocus(Math.max(focusIdx - 1, 0));
+      setFocusId(stepFocus(matched, focusId, -1));
     } else if (k === "x" && active) {
       e.preventDefault();
       toggleSel(active.id);
     } else if ((k === "a" || k === "r") && active && onBulk) {
       e.preventDefault();
+      // Sign the claim the pane is showing, then step to the NEXT id before the
+      // decided row leaves the list — so the cursor lands where the operator
+      // expects rather than falling back to the front of the rail.
       onBulk([active.id], k === "a" ? "approve" : "reject");
-      setFocus(Math.min(focusIdx + 1, matched.length - 1));
+      setFocusId(stepFocus(matched, focusId, 1));
     }
   };
 
@@ -440,8 +453,8 @@ export default function ReviewWorklist({
                 )}
               </div>
             ) : (
-              rows.map((p, i) => {
-                const focused = i === focusIdx;
+              rows.map((p) => {
+                const focused = p.id === active?.id;
                 const sel = selected.has(p.id);
                 const stale = p.age_secs > STALE_SECS;
                 return (
@@ -475,7 +488,7 @@ export default function ReviewWorklist({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setFocus(i)}
+                      onClick={() => setFocusId(p.id)}
                       aria-current={focused ? "true" : undefined}
                       className="flex min-w-0 flex-1 cursor-pointer items-baseline gap-2 py-1.5 pr-2.5 text-left transition hover:bg-white/5"
                     >
@@ -644,9 +657,9 @@ export default function ReviewWorklist({
       </div>
 
       {/* ── contradictions ─────────────────────────────────────────────── */}
-      <section aria-labelledby="wl-contra-h" className="mt-10">
+      <section aria-labelledby={CONTRA_HEADING_ID} className="mt-10">
         <div className="flex items-baseline justify-between">
-          <h2 id="wl-contra-h" className="scroll-mt-6 text-lg font-semibold text-white">
+          <h2 id={CONTRA_HEADING_ID} className="scroll-mt-6 text-lg font-semibold text-white">
             Contradictions
           </h2>
           <span className={LABEL} style={{ color: FAINT }}>
