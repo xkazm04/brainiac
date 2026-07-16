@@ -132,20 +132,53 @@ export async function contradictionQueue(
 
 // ── audit trail ─────────────────────────────────────────────────────────
 
+export type AuditKind =
+  | "promotion_review"
+  | "contradiction_resolution"
+  | "feedback_resolution";
+
 export interface AuditEvent {
-  kind: "promotion_review" | "contradiction_resolution";
+  kind: AuditKind;
   id: string;
   memory_id: string;
+  /** Only set for contradiction_resolution. */
   memory_b: string | null;
   outcome: string;
   detail: string | null;
+  /** Null for policy (auto) decisions — no human actor. */
   actor_id: string | null;
   at: string;
 }
 
-export async function auditTrail(cfg: ApiConfig, limit = 50): Promise<AuditEvent[]> {
-  const out = await call<{ events: AuditEvent[] }>(cfg, `/v1/audit?limit=${limit}`);
-  return out.events;
+export interface AuditPage {
+  events: AuditEvent[];
+  /**
+   * The full (filtered) feed length, independent of the page window —
+   * `events.length` is only ever the size of the page. A client that renders
+   * it as the backlog understates the moment the feed passes `limit`
+   * (default 50), the same bug `ContradictionQueuePage.total` exists to head
+   * off above.
+   */
+  total: number;
+}
+
+/** Reverse-chronological governance feed: promotion reviews, contradiction
+ *  resolutions, and dispute resolutions. See console.rs's `audit` handler —
+ *  `kind` narrows to one action type, `total` always describes the same
+ *  (filtered) set the page is drawn from. */
+export async function auditTrail(
+  cfg: ApiConfig,
+  opts: { limit?: number; offset?: number; kind?: AuditKind } = {},
+): Promise<AuditPage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit ?? 50));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  if (opts.kind) params.set("kind", opts.kind);
+  const out = await call<{ total: number; events: AuditEvent[] }>(
+    cfg,
+    `/v1/audit?${params.toString()}`,
+  );
+  return { events: out.events, total: out.total };
 }
 
 // ── disputed memories (feedback triage) ─────────────────────────────────

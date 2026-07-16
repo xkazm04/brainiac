@@ -73,6 +73,11 @@ export const PRODUCT_ROUTES: ProductRoute[] = [
   // teams' governed memories bound into one percept.
   { path: "/console?m=docs", segment: "docs", label: "pages", band: "gamma", group: "knowledge" },
   { path: "/console?m=reviews", segment: "reviews", label: "reviews", band: "alpha", group: "knowledge" },
+  // The governance ledger: what the reviews rail already claims is "ledgered
+  // and signed" (ReviewWorklist.tsx) but was, until now, viewable nowhere.
+  // Alpha — same "calm governance" band as reviews/health — because this is
+  // the record of THAT decision-making, not a new activity of its own.
+  { path: "/console?m=audit", segment: "audit", label: "audit", band: "alpha", group: "knowledge" },
   // The drift detector: where teams solved the same problem different ways
   // (theta, the divergence band — same family as disputes/contradiction work).
   // Label was "standards" until the Library claimed that word for the
@@ -103,6 +108,7 @@ export type ConsoleModuleId =
   | "health"
   | "docs"
   | "divergence"
+  | "audit"
   | "standards"
   | "skills"
   | "keys";

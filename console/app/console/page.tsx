@@ -6,6 +6,8 @@ import ModuleBoundary from "./ModuleBoundary";
 
 import AnalyticsModule from "./modules/analytics/Module";
 import AnalyticsSkeleton from "./modules/analytics/Skeleton";
+import AuditModule from "./modules/audit/Module";
+import AuditSkeleton from "./modules/audit/Skeleton";
 import DisputesModule from "./modules/disputes/Module";
 import DisputesSkeleton from "./modules/disputes/Skeleton";
 import DivergenceModule from "./modules/divergence/Module";
@@ -64,6 +66,7 @@ const MODULES: Record<
   }
 > = {
   analytics: { Module: AnalyticsModule, Skeleton: AnalyticsSkeleton },
+  audit: { Module: AuditModule, Skeleton: AuditSkeleton },
   reviews: { Module: ReviewsModule, Skeleton: ReviewsSkeleton },
   disputes: { Module: DisputesModule, Skeleton: DisputesSkeleton },
   graph: { Module: GraphModule, Skeleton: GraphSkeleton },

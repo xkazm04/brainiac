@@ -718,6 +718,21 @@
           "apiRoutes": []
         },
         {
+          "name": "Console: Audit Ledger",
+          "description": "Audit Ledger: reverse-chronological governance feed (promotion reviews, contradiction resolutions, dispute resolutions) from GET /v1/audit, with kind filtering and server-side paging on the real `total`. States plainly that the console gate is a shared org token, not per-user identity — actor_id names which token decided, never which person.",
+          "businessFeature": "Console: Audit Ledger",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/modules/audit/Module.tsx",
+            "console/app/console/modules/audit/Skeleton.tsx",
+            "console/app/console/modules/audit/AuditLedger.tsx",
+            "console/app/console/modules/audit/audit-data.ts",
+            "console/app/console/modules/audit/audit-data.test.ts"
+          ],
+          "target": null,
+          "apiRoutes": ["GET /v1/audit"]
+        },
+        {
           "name": "Analytics Observatory & Knowledge Graph",
           "description": "RETIRED 2026-07-15: superseded by the granular Console: * contexts after the module refactor. Kept as a tombstone; owns no files.",
           "businessFeature": "Analytics Observatory & Knowledge Graph",

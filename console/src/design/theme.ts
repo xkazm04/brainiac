@@ -38,6 +38,7 @@ export type BandKey = keyof typeof BAND_HUES;
 export const MODULE_BAND: Record<string, BandKey> = {
   home: "gamma",
   reviews: "alpha",
+  audit: "alpha", // the ledger of the same governance decisions reviews makes
   graph: "gamma",
   analytics: "beta",
   demo: "beta",
