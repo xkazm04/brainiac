@@ -1,0 +1,711 @@
+# GENERATED. merge_sets bind each team's dialect for a hub onto one canonical
+# node; negative_pairs are the ones that must stay apart.
+merge_sets:
+  - canonical: "ledger"
+    kind: service
+    difficulty: hard
+    members: [ent-hub-ledger-core-banking-0, ent-hub-ledger-core-banking-1, ent-hub-ledger-payments-0, ent-hub-ledger-payments-1, ent-hub-ledger-cards-0, ent-hub-ledger-data-0, ent-hub-ledger-risk-0]
+  - canonical: "customer record"
+    kind: concept
+    difficulty: hard
+    members: [ent-hub-customer-core-banking-0, ent-hub-customer-core-banking-1, ent-hub-customer-channels-0, ent-hub-customer-fincrime-0, ent-hub-customer-lending-0, ent-hub-customer-compliance-0]
+  - canonical: "payment rail"
+    kind: system
+    difficulty: hard
+    members: [ent-hub-rail-payments-0, ent-hub-rail-payments-1, ent-hub-rail-core-banking-0, ent-hub-rail-channels-0, ent-hub-rail-fincrime-0]
+  - canonical: "card scheme"
+    kind: system
+    difficulty: hard
+    members: [ent-hub-scheme-cards-0, ent-hub-scheme-cards-1, ent-hub-scheme-payments-0, ent-hub-scheme-fincrime-0, ent-hub-scheme-risk-0]
+  - canonical: "KYC decision"
+    kind: concept
+    difficulty: hard
+    members: [ent-hub-kyc-fincrime-0, ent-hub-kyc-fincrime-1, ent-hub-kyc-channels-0, ent-hub-kyc-lending-0, ent-hub-kyc-compliance-0]
+  - canonical: "psp-gateway"
+    kind: service
+    difficulty: easy
+    members: [ent-payments-psp-gateway]
+  - canonical: "refund-worker"
+    kind: service
+    difficulty: easy
+    members: [ent-payments-refund-worker]
+  - canonical: "sepa-adapter"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-sepa-adapter, ent-payments-sepa-adapter-eu]
+  - canonical: "swift-bridge"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-swift-bridge, ent-payments-swift-bridge-eu]
+  - canonical: "instant-router"
+    kind: service
+    difficulty: easy
+    members: [ent-payments-instant-router]
+  - canonical: "settlement-batcher"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-settlement-batcher, ent-payments-settlement-batcher-eu, ent-payments-settlement-batcher-uk, ent-payments-settlement-batcher-legacy]
+  - canonical: "chargeback-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-payments-chargeback-svc]
+  - canonical: "3ds-broker"
+    kind: service
+    difficulty: easy
+    members: [ent-payments-3ds-broker]
+  - canonical: "tokenizer"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-tokenizer, ent-payments-tokenizer-eu, ent-payments-tokenizer-uk, ent-payments-tokenizer-legacy]
+  - canonical: "clearing-poller"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-clearing-poller, ent-payments-clearing-poller-eu]
+  - canonical: "mandate-store"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-mandate-store, ent-payments-mandate-store-eu]
+  - canonical: "direct-debit-runner"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-direct-debit-runner, ent-payments-direct-debit-runner-eu]
+  - canonical: "fx-quoter"
+    kind: service
+    difficulty: medium
+    members: [ent-payments-fx-quoter, ent-payments-fx-quoter-eu, ent-payments-fx-quoter-uk, ent-payments-fx-quoter-legacy]
+  - canonical: "payout-scheduler"
+    kind: service
+    difficulty: easy
+    members: [ent-payments-payout-scheduler]
+  - canonical: "settlement window"
+    kind: concept
+    difficulty: easy
+    members: [ent-payments-settlement-window]
+  - canonical: "end-to-end id"
+    kind: concept
+    difficulty: easy
+    members: [ent-payments-end-to-end-id]
+  - canonical: "value date"
+    kind: concept
+    difficulty: easy
+    members: [ent-payments-value-date]
+  - canonical: "posting-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-posting-engine, ent-core-banking-posting-engine-eu]
+  - canonical: "interest-accrual"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-interest-accrual, ent-core-banking-interest-accrual-eu, ent-core-banking-interest-accrual-uk, ent-core-banking-interest-accrual-legacy]
+  - canonical: "eod-batch"
+    kind: service
+    difficulty: easy
+    members: [ent-core-banking-eod-batch]
+  - canonical: "account-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-account-svc, ent-core-banking-account-svc-eu, ent-core-banking-account-svc-uk, ent-core-banking-account-svc-legacy]
+  - canonical: "statement-gen"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-statement-gen, ent-core-banking-statement-gen-eu]
+  - canonical: "balance-cache"
+    kind: service
+    difficulty: easy
+    members: [ent-core-banking-balance-cache]
+  - canonical: "product-catalog"
+    kind: service
+    difficulty: easy
+    members: [ent-core-banking-product-catalog]
+  - canonical: "fee-engine"
+    kind: service
+    difficulty: easy
+    members: [ent-core-banking-fee-engine]
+  - canonical: "standing-order-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-core-banking-standing-order-svc]
+  - canonical: "overdraft-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-overdraft-engine, ent-core-banking-overdraft-engine-eu, ent-core-banking-overdraft-engine-uk, ent-core-banking-overdraft-engine-legacy]
+  - canonical: "gl-reconciler"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-gl-reconciler, ent-core-banking-gl-reconciler-eu]
+  - canonical: "calendar-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-core-banking-calendar-svc, ent-core-banking-calendar-svc-eu]
+  - canonical: "posting rule"
+    kind: concept
+    difficulty: easy
+    members: [ent-core-banking-posting-rule]
+  - canonical: "accrual basis"
+    kind: concept
+    difficulty: easy
+    members: [ent-core-banking-accrual-basis]
+  - canonical: "product calendar"
+    kind: concept
+    difficulty: easy
+    members: [ent-core-banking-product-calendar]
+  - canonical: "book balance"
+    kind: concept
+    difficulty: easy
+    members: [ent-core-banking-book-balance]
+  - canonical: "psp-gateway"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-psp-gateway]
+  - canonical: "refund-worker"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-refund-worker, ent-cards-refund-worker-eu, ent-cards-refund-worker-uk, ent-cards-refund-worker-legacy]
+  - canonical: "sepa-adapter"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-sepa-adapter]
+  - canonical: "swift-bridge"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-swift-bridge, ent-cards-swift-bridge-eu]
+  - canonical: "instant-router"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-instant-router, ent-cards-instant-router-eu]
+  - canonical: "settlement-batcher"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-settlement-batcher]
+  - canonical: "chargeback-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-chargeback-svc, ent-cards-chargeback-svc-eu, ent-cards-chargeback-svc-uk, ent-cards-chargeback-svc-legacy]
+  - canonical: "3ds-broker"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-3ds-broker, ent-cards-3ds-broker-eu, ent-cards-3ds-broker-uk, ent-cards-3ds-broker-legacy]
+  - canonical: "tokenizer"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-tokenizer]
+  - canonical: "clearing-poller"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-clearing-poller]
+  - canonical: "mandate-store"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-mandate-store]
+  - canonical: "direct-debit-runner"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-direct-debit-runner, ent-cards-direct-debit-runner-eu]
+  - canonical: "fx-quoter"
+    kind: service
+    difficulty: medium
+    members: [ent-cards-fx-quoter, ent-cards-fx-quoter-eu]
+  - canonical: "payout-scheduler"
+    kind: service
+    difficulty: easy
+    members: [ent-cards-payout-scheduler]
+  - canonical: "scheme fee"
+    kind: concept
+    difficulty: easy
+    members: [ent-cards-scheme-fee]
+  - canonical: "value date"
+    kind: concept
+    difficulty: easy
+    members: [ent-cards-value-date]
+  - canonical: "mobile-bff"
+    kind: service
+    difficulty: medium
+    members: [ent-channels-mobile-bff, ent-channels-mobile-bff-eu]
+  - canonical: "web-bff"
+    kind: service
+    difficulty: easy
+    members: [ent-channels-web-bff]
+  - canonical: "public-api"
+    kind: service
+    difficulty: medium
+    members: [ent-channels-public-api, ent-channels-public-api-eu]
+  - canonical: "session-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-channels-session-svc]
+  - canonical: "notification-hub"
+    kind: service
+    difficulty: easy
+    members: [ent-channels-notification-hub]
+  - canonical: "feature-flags"
+    kind: service
+    difficulty: easy
+    members: [ent-channels-feature-flags]
+  - canonical: "consent-ui"
+    kind: service
+    difficulty: medium
+    members: [ent-channels-consent-ui, ent-channels-consent-ui-eu, ent-channels-consent-ui-uk, ent-channels-consent-ui-legacy]
+  - canonical: "device-registry"
+    kind: service
+    difficulty: easy
+    members: [ent-channels-device-registry]
+  - canonical: "push-relay"
+    kind: service
+    difficulty: medium
+    members: [ent-channels-push-relay, ent-channels-push-relay-eu, ent-channels-push-relay-uk, ent-channels-push-relay-legacy]
+  - canonical: "webview-shell"
+    kind: service
+    difficulty: easy
+    members: [ent-channels-webview-shell]
+  - canonical: "session token"
+    kind: concept
+    difficulty: easy
+    members: [ent-channels-session-token]
+  - canonical: "feature-store"
+    kind: service
+    difficulty: easy
+    members: [ent-data-feature-store]
+  - canonical: "warehouse-etl"
+    kind: service
+    difficulty: easy
+    members: [ent-data-warehouse-etl]
+  - canonical: "event-bus"
+    kind: service
+    difficulty: easy
+    members: [ent-data-event-bus]
+  - canonical: "mesh-gateway"
+    kind: service
+    difficulty: easy
+    members: [ent-data-mesh-gateway]
+  - canonical: "deploy-ctl"
+    kind: service
+    difficulty: easy
+    members: [ent-data-deploy-ctl]
+  - canonical: "secret-broker"
+    kind: service
+    difficulty: easy
+    members: [ent-data-secret-broker]
+  - canonical: "iam-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-data-iam-svc]
+  - canonical: "dr-orchestrator"
+    kind: service
+    difficulty: medium
+    members: [ent-data-dr-orchestrator, ent-data-dr-orchestrator-eu]
+  - canonical: "schema-registry"
+    kind: service
+    difficulty: medium
+    members: [ent-data-schema-registry, ent-data-schema-registry-eu]
+  - canonical: "cost-reporter"
+    kind: service
+    difficulty: easy
+    members: [ent-data-cost-reporter]
+  - canonical: "trace-collector"
+    kind: service
+    difficulty: easy
+    members: [ent-data-trace-collector]
+  - canonical: "config-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-data-config-svc, ent-data-config-svc-eu, ent-data-config-svc-uk, ent-data-config-svc-legacy]
+  - canonical: "blast radius"
+    kind: concept
+    difficulty: easy
+    members: [ent-data-blast-radius]
+  - canonical: "retention window"
+    kind: concept
+    difficulty: easy
+    members: [ent-data-retention-window]
+  - canonical: "cost centre"
+    kind: concept
+    difficulty: easy
+    members: [ent-data-cost-centre]
+  - canonical: "feature-store"
+    kind: service
+    difficulty: easy
+    members: [ent-platform-feature-store]
+  - canonical: "warehouse-etl"
+    kind: service
+    difficulty: easy
+    members: [ent-platform-warehouse-etl]
+  - canonical: "event-bus"
+    kind: service
+    difficulty: easy
+    members: [ent-platform-event-bus]
+  - canonical: "mesh-gateway"
+    kind: service
+    difficulty: easy
+    members: [ent-platform-mesh-gateway]
+  - canonical: "deploy-ctl"
+    kind: service
+    difficulty: easy
+    members: [ent-platform-deploy-ctl]
+  - canonical: "secret-broker"
+    kind: service
+    difficulty: medium
+    members: [ent-platform-secret-broker, ent-platform-secret-broker-eu, ent-platform-secret-broker-uk, ent-platform-secret-broker-legacy]
+  - canonical: "iam-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-platform-iam-svc, ent-platform-iam-svc-eu, ent-platform-iam-svc-uk, ent-platform-iam-svc-legacy]
+  - canonical: "dr-orchestrator"
+    kind: service
+    difficulty: medium
+    members: [ent-platform-dr-orchestrator, ent-platform-dr-orchestrator-eu, ent-platform-dr-orchestrator-uk, ent-platform-dr-orchestrator-legacy]
+  - canonical: "schema-registry"
+    kind: service
+    difficulty: medium
+    members: [ent-platform-schema-registry, ent-platform-schema-registry-eu]
+  - canonical: "cost-reporter"
+    kind: service
+    difficulty: medium
+    members: [ent-platform-cost-reporter, ent-platform-cost-reporter-eu, ent-platform-cost-reporter-uk, ent-platform-cost-reporter-legacy]
+  - canonical: "trace-collector"
+    kind: service
+    difficulty: easy
+    members: [ent-platform-trace-collector]
+  - canonical: "config-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-platform-config-svc, ent-platform-config-svc-eu, ent-platform-config-svc-uk, ent-platform-config-svc-legacy]
+  - canonical: "rollout ring"
+    kind: concept
+    difficulty: easy
+    members: [ent-platform-rollout-ring]
+  - canonical: "cost centre"
+    kind: concept
+    difficulty: easy
+    members: [ent-platform-cost-centre]
+  - canonical: "origination-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-origination-svc, ent-lending-origination-svc-eu]
+  - canonical: "underwriting-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-underwriting-engine, ent-lending-underwriting-engine-eu, ent-lending-underwriting-engine-uk, ent-lending-underwriting-engine-legacy]
+  - canonical: "servicing-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-servicing-svc, ent-lending-servicing-svc-eu, ent-lending-servicing-svc-uk, ent-lending-servicing-svc-legacy]
+  - canonical: "collections-worker"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-collections-worker, ent-lending-collections-worker-eu, ent-lending-collections-worker-uk, ent-lending-collections-worker-legacy]
+  - canonical: "rate-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-rate-engine, ent-lending-rate-engine-eu, ent-lending-rate-engine-uk, ent-lending-rate-engine-legacy]
+  - canonical: "term-deposit-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-term-deposit-svc, ent-lending-term-deposit-svc-eu, ent-lending-term-deposit-svc-uk, ent-lending-term-deposit-svc-legacy]
+  - canonical: "offer-store"
+    kind: service
+    difficulty: easy
+    members: [ent-lending-offer-store]
+  - canonical: "affordability-calc"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-affordability-calc, ent-lending-affordability-calc-eu]
+  - canonical: "arrears-tracker"
+    kind: service
+    difficulty: medium
+    members: [ent-lending-arrears-tracker, ent-lending-arrears-tracker-eu, ent-lending-arrears-tracker-uk, ent-lending-arrears-tracker-legacy]
+  - canonical: "product-switch-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-lending-product-switch-svc]
+  - canonical: "sanctions-screen"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-sanctions-screen]
+  - canonical: "txn-monitor"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-txn-monitor]
+  - canonical: "case-manager"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-case-manager]
+  - canonical: "scoring-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-fincrime-scoring-svc, ent-fincrime-scoring-svc-eu]
+  - canonical: "limits-engine"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-limits-engine]
+  - canonical: "regreport-gen"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-regreport-gen]
+  - canonical: "audit-trail"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-audit-trail]
+  - canonical: "pep-screen"
+    kind: service
+    difficulty: medium
+    members: [ent-fincrime-pep-screen, ent-fincrime-pep-screen-eu, ent-fincrime-pep-screen-uk, ent-fincrime-pep-screen-legacy]
+  - canonical: "alert-router"
+    kind: service
+    difficulty: medium
+    members: [ent-fincrime-alert-router, ent-fincrime-alert-router-eu, ent-fincrime-alert-router-uk, ent-fincrime-alert-router-legacy]
+  - canonical: "sar-filer"
+    kind: service
+    difficulty: medium
+    members: [ent-fincrime-sar-filer, ent-fincrime-sar-filer-eu]
+  - canonical: "model-registry"
+    kind: service
+    difficulty: medium
+    members: [ent-fincrime-model-registry, ent-fincrime-model-registry-eu, ent-fincrime-model-registry-uk, ent-fincrime-model-registry-legacy]
+  - canonical: "exposure-calc"
+    kind: service
+    difficulty: easy
+    members: [ent-fincrime-exposure-calc]
+  - canonical: "sanctions list"
+    kind: concept
+    difficulty: easy
+    members: [ent-fincrime-sanctions-list]
+  - canonical: "risk appetite"
+    kind: concept
+    difficulty: easy
+    members: [ent-fincrime-risk-appetite]
+  - canonical: "sanctions-screen"
+    kind: service
+    difficulty: medium
+    members: [ent-risk-sanctions-screen, ent-risk-sanctions-screen-eu, ent-risk-sanctions-screen-uk, ent-risk-sanctions-screen-legacy]
+  - canonical: "txn-monitor"
+    kind: service
+    difficulty: easy
+    members: [ent-risk-txn-monitor]
+  - canonical: "case-manager"
+    kind: service
+    difficulty: medium
+    members: [ent-risk-case-manager, ent-risk-case-manager-eu, ent-risk-case-manager-uk, ent-risk-case-manager-legacy]
+  - canonical: "scoring-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-risk-scoring-svc, ent-risk-scoring-svc-eu, ent-risk-scoring-svc-uk, ent-risk-scoring-svc-legacy]
+  - canonical: "limits-engine"
+    kind: service
+    difficulty: easy
+    members: [ent-risk-limits-engine]
+  - canonical: "regreport-gen"
+    kind: service
+    difficulty: medium
+    members: [ent-risk-regreport-gen, ent-risk-regreport-gen-eu, ent-risk-regreport-gen-uk, ent-risk-regreport-gen-legacy]
+  - canonical: "audit-trail"
+    kind: service
+    difficulty: easy
+    members: [ent-risk-audit-trail]
+  - canonical: "pep-screen"
+    kind: service
+    difficulty: easy
+    members: [ent-risk-pep-screen]
+  - canonical: "alert-router"
+    kind: service
+    difficulty: medium
+    members: [ent-risk-alert-router, ent-risk-alert-router-eu]
+  - canonical: "sar-filer"
+    kind: service
+    difficulty: easy
+    members: [ent-risk-sar-filer]
+  - canonical: "model-registry"
+    kind: service
+    difficulty: medium
+    members: [ent-risk-model-registry, ent-risk-model-registry-eu]
+  - canonical: "exposure-calc"
+    kind: service
+    difficulty: easy
+    members: [ent-risk-exposure-calc]
+  - canonical: "alert threshold"
+    kind: concept
+    difficulty: easy
+    members: [ent-risk-alert-threshold]
+  - canonical: "case SLA"
+    kind: concept
+    difficulty: easy
+    members: [ent-risk-case-SLA]
+  - canonical: "risk appetite"
+    kind: concept
+    difficulty: easy
+    members: [ent-risk-risk-appetite]
+  - canonical: "origination-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-deposits-origination-svc, ent-deposits-origination-svc-eu]
+  - canonical: "underwriting-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-deposits-underwriting-engine, ent-deposits-underwriting-engine-eu]
+  - canonical: "servicing-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-deposits-servicing-svc]
+  - canonical: "collections-worker"
+    kind: service
+    difficulty: medium
+    members: [ent-deposits-collections-worker, ent-deposits-collections-worker-eu, ent-deposits-collections-worker-uk, ent-deposits-collections-worker-legacy]
+  - canonical: "rate-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-deposits-rate-engine, ent-deposits-rate-engine-eu]
+  - canonical: "term-deposit-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-deposits-term-deposit-svc]
+  - canonical: "offer-store"
+    kind: service
+    difficulty: medium
+    members: [ent-deposits-offer-store, ent-deposits-offer-store-eu]
+  - canonical: "affordability-calc"
+    kind: service
+    difficulty: easy
+    members: [ent-deposits-affordability-calc]
+  - canonical: "arrears-tracker"
+    kind: service
+    difficulty: easy
+    members: [ent-deposits-arrears-tracker]
+  - canonical: "product-switch-svc"
+    kind: service
+    difficulty: medium
+    members: [ent-deposits-product-switch-svc, ent-deposits-product-switch-svc-eu]
+  - canonical: "bureau score"
+    kind: concept
+    difficulty: easy
+    members: [ent-deposits-bureau-score]
+  - canonical: "affordability rule"
+    kind: concept
+    difficulty: easy
+    members: [ent-deposits-affordability-rule]
+  - canonical: "offer expiry"
+    kind: concept
+    difficulty: easy
+    members: [ent-deposits-offer-expiry]
+  - canonical: "sanctions-screen"
+    kind: service
+    difficulty: easy
+    members: [ent-compliance-sanctions-screen]
+  - canonical: "txn-monitor"
+    kind: service
+    difficulty: medium
+    members: [ent-compliance-txn-monitor, ent-compliance-txn-monitor-eu]
+  - canonical: "case-manager"
+    kind: service
+    difficulty: medium
+    members: [ent-compliance-case-manager, ent-compliance-case-manager-eu, ent-compliance-case-manager-uk, ent-compliance-case-manager-legacy]
+  - canonical: "scoring-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-compliance-scoring-svc]
+  - canonical: "limits-engine"
+    kind: service
+    difficulty: medium
+    members: [ent-compliance-limits-engine, ent-compliance-limits-engine-eu]
+  - canonical: "regreport-gen"
+    kind: service
+    difficulty: easy
+    members: [ent-compliance-regreport-gen]
+  - canonical: "audit-trail"
+    kind: service
+    difficulty: easy
+    members: [ent-compliance-audit-trail]
+  - canonical: "pep-screen"
+    kind: service
+    difficulty: medium
+    members: [ent-compliance-pep-screen, ent-compliance-pep-screen-eu]
+  - canonical: "alert-router"
+    kind: service
+    difficulty: medium
+    members: [ent-compliance-alert-router, ent-compliance-alert-router-eu, ent-compliance-alert-router-uk, ent-compliance-alert-router-legacy]
+  - canonical: "sar-filer"
+    kind: service
+    difficulty: medium
+    members: [ent-compliance-sar-filer, ent-compliance-sar-filer-eu]
+  - canonical: "model-registry"
+    kind: service
+    difficulty: easy
+    members: [ent-compliance-model-registry]
+  - canonical: "exposure-calc"
+    kind: service
+    difficulty: easy
+    members: [ent-compliance-exposure-calc]
+  - canonical: "sanctions list"
+    kind: concept
+    difficulty: easy
+    members: [ent-compliance-sanctions-list]
+  - canonical: "alert threshold"
+    kind: concept
+    difficulty: easy
+    members: [ent-compliance-alert-threshold]
+  - canonical: "feature-store"
+    kind: service
+    difficulty: medium
+    members: [ent-security-feature-store, ent-security-feature-store-eu]
+  - canonical: "warehouse-etl"
+    kind: service
+    difficulty: medium
+    members: [ent-security-warehouse-etl, ent-security-warehouse-etl-eu]
+  - canonical: "event-bus"
+    kind: service
+    difficulty: medium
+    members: [ent-security-event-bus, ent-security-event-bus-eu, ent-security-event-bus-uk, ent-security-event-bus-legacy]
+  - canonical: "mesh-gateway"
+    kind: service
+    difficulty: easy
+    members: [ent-security-mesh-gateway]
+  - canonical: "deploy-ctl"
+    kind: service
+    difficulty: easy
+    members: [ent-security-deploy-ctl]
+  - canonical: "secret-broker"
+    kind: service
+    difficulty: medium
+    members: [ent-security-secret-broker, ent-security-secret-broker-eu, ent-security-secret-broker-uk, ent-security-secret-broker-legacy]
+  - canonical: "iam-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-security-iam-svc]
+  - canonical: "dr-orchestrator"
+    kind: service
+    difficulty: medium
+    members: [ent-security-dr-orchestrator, ent-security-dr-orchestrator-eu]
+  - canonical: "schema-registry"
+    kind: service
+    difficulty: medium
+    members: [ent-security-schema-registry, ent-security-schema-registry-eu, ent-security-schema-registry-uk, ent-security-schema-registry-legacy]
+  - canonical: "cost-reporter"
+    kind: service
+    difficulty: easy
+    members: [ent-security-cost-reporter]
+  - canonical: "trace-collector"
+    kind: service
+    difficulty: medium
+    members: [ent-security-trace-collector, ent-security-trace-collector-eu]
+  - canonical: "config-svc"
+    kind: service
+    difficulty: easy
+    members: [ent-security-config-svc]
+  - canonical: "retention window"
+    kind: concept
+    difficulty: easy
+    members: [ent-security-retention-window]
+  - canonical: "cost centre"
+    kind: concept
+    difficulty: easy
+    members: [ent-security-cost-centre]
+negative_pairs:
+  - [ent-payments-psp-gateway, ent-platform-feature-store]
+  - [ent-core-banking-posting-engine, ent-lending-origination-svc]
+  - [ent-cards-psp-gateway, ent-fincrime-sanctions-screen]
+  - [ent-channels-mobile-bff, ent-risk-sanctions-screen]
+  - [ent-data-feature-store, ent-deposits-origination-svc]
+  - [ent-platform-feature-store, ent-compliance-sanctions-screen]
+  - [ent-lending-origination-svc, ent-security-feature-store]
+  - [ent-fincrime-sanctions-screen, ent-payments-psp-gateway]
+  - [ent-risk-sanctions-screen, ent-core-banking-posting-engine]
+  - [ent-deposits-origination-svc, ent-cards-psp-gateway]
+  - [ent-compliance-sanctions-screen, ent-channels-mobile-bff]

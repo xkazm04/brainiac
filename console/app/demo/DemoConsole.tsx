@@ -9,12 +9,20 @@
  * scroll reset — to swap static content the browser could have held all along.
  * The tour reads as one surface, so it is now one surface: the modules are tabs
  * over a content pane, exactly as the operator console's own module chrome works
- * (app/console/(modules)/layout.tsx).
+ * (app/console/layout.tsx).
  *
  * The URL still carries the module (`/demo?m=graph`), pushed with the History
  * API rather than the router — so deep links, the back button and a shared link
  * all keep working, and none of them cost a round trip. The old paths still
  * resolve: next.config.ts redirects /demo/<module> onto the query.
+ *
+ * WHAT A MODULE IS. Every one of them renders the operator's own component from
+ * app/console/modules/ — never a copy. The tour's job is to be the console on
+ * fixture data, so the only things this file adds are the tab bar, the fixture
+ * wiring, and ModuleIntro: the demo's framing copy, which is kept OUT of the
+ * shared components so /console never carries a word of pitch. `label` tracks
+ * the operator's nav (src/design/routes.ts) for the same reason — a visitor
+ * should learn the console's vocabulary here, not a demo dialect of it.
  *
  * Fixtures arrive as props from page.tsx (a server component) because one of
  * them — the disputes bench's — lives in a `server-only` module. That is the
@@ -25,27 +33,37 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
-import CortexMap from "../console/(modules)/graph/CortexMap";
-import type { CortexData } from "../console/(modules)/graph/cortex-data";
-import DisputeBench from "../console/(modules)/disputes/DisputeBench";
-import type { DisputeData } from "../console/(modules)/disputes/disputes-data";
-import Archive from "../console/(modules)/memories/Archive";
-import type { ArchiveData } from "../console/(modules)/memories/archive-data";
+import CortexMap from "../console/modules/graph/CortexMap";
+import type { CortexData } from "../console/modules/graph/cortex-data";
+import DisputeBench from "../console/modules/disputes/DisputeBench";
+import type { DisputeData } from "../console/modules/disputes/disputes-data";
+import Archive from "../console/modules/memories/Archive";
+import type { ArchiveData } from "../console/modules/memories/archive-data";
 
-import { band, FONT_MONO, GOLD, LABEL } from "@/design/theme";
+import { band, FONT_MONO, GOLD } from "@/design/theme";
 import type { ContradictionQueueItem, PromotionQueueItem } from "@/lib/governance-api";
 import type { KnowledgeHealth, PracticeDivergences } from "@/lib/types";
-import PracticeDivergenceReport from "@/divergence/PracticeDivergence";
+import DemoStandards from "./DemoStandards";
 import KnowledgeHealthReport from "@/health/KnowledgeHealth";
 import Observatory from "@/observatory/Observatory";
 import type { ObservatoryData } from "@/observatory/observatory-data";
 
-import ReviewGate from "./ReviewGate";
+import SkillsCatalog from "../console/modules/skills/SkillsCatalog";
+import { DEMO_SKILL_DETAILS, DEMO_SKILLS } from "../console/modules/skills/skills-data";
+import StandardsBoard from "../console/modules/standards/StandardsBoard";
+import {
+  DEMO_STANDARD_DETAILS,
+  DEMO_STANDARDS,
+} from "../console/modules/standards/standards-data";
+
+import DemoReviews from "./DemoReviews";
+import ModuleIntro, { type ModuleIntroCopy } from "./ModuleIntro";
 
 export interface DemoData {
   observatory: ObservatoryData;
   promotions: PromotionQueueItem[];
   contradictions: ContradictionQueueItem[];
+  counts: { status: string; count: number }[];
   disputes: DisputeData;
   cortex: CortexData;
   archive: ArchiveData;
@@ -54,101 +72,138 @@ export interface DemoData {
 }
 
 /*
- * The tour, in reading order. `title` is the document title the module claims
- * while it is on screen — the per-route <title>s the split pages used to own,
- * which a single route would otherwise have silently dropped.
+ * The tour, in reading order.
+ *
+ * `id` is the console's own module segment (/console/<id>), which is also what
+ * the ?m= query carries — the one exception is `memories`, which the operator
+ * nav labels "archive". `label` is that nav label, so the tour teaches the
+ * console's vocabulary. `docTitle` is what the module claims while it is on
+ * screen: the per-route <title>s the split pages used to own, which one route
+ * would otherwise drop. `title`/`description` are the demo's voice, and appear
+ * nowhere else in the product.
  */
-const MODULES = [
+const MODULES: (ModuleIntroCopy & {
+  id: string;
+  label: string;
+  blurb: string;
+  docTitle: string;
+})[] = [
   {
-    id: "overview",
-    label: "overview",
-    blurb: "governance health",
-    title: "Brainiac — the demo org",
+    id: "analytics",
+    width: "max-w-7xl",
+    label: "analytics",
+    blurb: "the wall",
+    docTitle: "Brainiac — the demo org",
+    title: "This is what your organization’s memory looks like once someone is accountable for it.",
+    description:
+      "Every number below was produced by the real pipeline — capture → extract → resolve → contradict → promote — running on a fixture org. The tabs above walk the same surfaces an operator uses. Plug in your own teams and the wall goes live.",
   },
   {
     id: "reviews",
-    label: "the gate",
+    width: "max-w-5xl",
+    label: "reviews",
     blurb: "promotions awaiting a human",
-    title: "Brainiac — demo · the review gate",
+    docTitle: "Brainiac — demo · the review gate",
+    title: "An agent proposes. A named human promotes.",
+    description:
+      "This is the row that is empty for every other memory product. Nothing here is org truth yet — a machine extracted it from a real session, policy routed it into this queue, and it waits until a maintainer signs for it. The controls below are inert in the demo; in the console they are the only way anything becomes canonical.",
   },
   {
     id: "disputes",
+    width: "max-w-6xl",
     label: "disputes",
     blurb: "contradictions, adjudicated",
-    title: "Brainiac — demo · disputes",
+    docTitle: "Brainiac — demo · disputes",
+    title: "A memory can be true the day it is written and false a quarter later.",
+    description:
+      "Every memory carries a half-life — the validity window its kind was given. A reader’s claim is evidence it is decaying faster than the clock says. The bench plots what is dying before anyone re-verified it, and answering pushes a memory back to healthy, collapses it now, or leaves it decaying on schedule.",
   },
   {
     id: "graph",
+    width: "max-w-7xl",
     label: "graph",
     blurb: "canonical entities",
-    title: "Brainiac — demo · cortex map",
+    docTitle: "Brainiac — demo · cortex map",
+    title: "Three teams, three names, one thing.",
+    description:
+      "Payments says “Kafka”, platform says “MSK cluster”, data says “the event bus”. Each is right locally, and none of them find each other. The graph binds the dialects into one canonical entity a query in any of them reaches — and permission, not the UI, still decides who sees what hangs off it.",
   },
   {
     id: "memories",
+    width: "max-w-6xl",
     label: "archive",
     blurb: "the corpus, as-of any date",
-    title: "Brainiac — demo · archive",
+    docTitle: "Brainiac — demo · archive",
+    title: "What did the org believe last April?",
+    description:
+      "Nothing here is ever deleted — a superseded memory is kept, dated, and outranked. That is what makes the archive answerable as of any date: scrub the clock back and you get the corpus the org was actually serving its agents then, not today’s corpus with the losers removed.",
   },
   {
     id: "health",
+    width: "max-w-5xl",
     label: "health",
     blurb: "is the knowledge rotting?",
-    title: "Brainiac — demo · knowledge health",
+    docTitle: "Brainiac — demo · knowledge health",
+    title: "One number a leader can be held to.",
+    description:
+      "Consistency, currency, liquidity, governance — four pillars folded into one composite, and one unresolved cross-team contradiction caps the grade no matter how many good memories sit under it. It is a gate, not a dashboard: publishing to the company wiki pauses while the score sits below threshold.",
   },
   {
     id: "divergence",
-    label: "standards",
+    width: "max-w-5xl",
+    label: "drift",
     blurb: "same problem, solved two ways",
-    title: "Brainiac — demo · standards",
+    docTitle: "Brainiac — demo · drift",
+    title: "Not a contradiction — a detune.",
+    description:
+      "Two teams solving the same problem slightly differently, each locally reasonable, the drift invisible from inside either one. A scheduled sweep listens across the whole field, names the practice, and proposes a single standard for a platform lead to ratify — with the provenance, and the model that adjudicated it, on the card.",
+  },
+  {
+    id: "standards",
+    width: "max-w-6xl",
+    label: "standards",
+    blurb: "the org's ratified rules",
+    docTitle: "Brainiac — demo · standards",
+    title: "A ratified drift becomes a rule — with the evidence still attached.",
+    description:
+      "The Library's rule shelf: one rule at a time, each carrying why it exists (the incident, the resolved dispute, the drift), how strongly it binds, and whether practice actually follows it — counted per team, never per person. Proposals wait at the gate; only what a named human adopted is ever served to an agent.",
+  },
+  {
+    id: "skills",
+    width: "max-w-5xl",
+    label: "skills",
+    blurb: "procedures agents pull and run",
+    docTitle: "Brainiac — demo · skills",
+    title: "The org's best prompts stop living in one person's dotfiles.",
+    description:
+      "A skill is a versioned bundle in the format coding agents already load — stored, governed, and served like everything else here. Drafts are listed and serve nothing until a named human signs one; the shelf ranks by pulse, so the skill nobody pulls is the first candidate to retire.",
   },
 ] as const;
 
 export type DemoModuleId = (typeof MODULES)[number]["id"];
 
-export const DEMO_MODULE_IDS: readonly string[] = MODULES.map((m) => m.id);
-
-const DEFAULT_MODULE: DemoModuleId = "overview";
+const DEFAULT_MODULE: DemoModuleId = "analytics";
 
 const parseModule = (raw: string | null): DemoModuleId =>
-  (MODULES.find((m) => m.id === raw)?.id ?? DEFAULT_MODULE) as DemoModuleId;
+  MODULES.find((m) => m.id === raw)?.id ?? DEFAULT_MODULE;
 
-/** The module's own URL — the overview is /demo bare, not /demo?m=overview. */
+/** The module's own URL — the entry module is /demo bare, not /demo?m=analytics. */
 const hrefFor = (id: DemoModuleId): string =>
   id === DEFAULT_MODULE ? "/demo" : `/demo?m=${id}`;
 
-function Overview({ data }: { data: ObservatoryData }) {
-  return (
-    <div>
-      <section className="mx-auto max-w-7xl px-6 pt-8">
-        <div className={LABEL} style={{ color: GOLD }}>
-          the overview
-        </div>
-        <h1 className="mt-2 max-w-3xl text-3xl font-semibold leading-tight tracking-tight text-white md:text-4xl">
-          This is what your organization&apos;s memory looks like once someone is
-          accountable for it.
-        </h1>
-        <p
-          className={`${FONT_MONO} mt-4 max-w-2xl text-sm leading-relaxed`}
-          style={{ color: "rgba(233,237,255,0.55)" }}
-        >
-          Every number below was produced by the real pipeline — capture → extract →
-          resolve → contradict → promote — running on a fixture org. The tabs above walk
-          the same surfaces an operator uses. Plug in your own teams and the wall goes
-          live.
-        </p>
-      </section>
-      <Observatory data={data} />
-    </div>
-  );
-}
-
 function Module({ id, data }: { id: DemoModuleId; data: DemoData }) {
   switch (id) {
+    // Each fixture carries live:false, which each component already honours: it
+    // synthesizes drill-in detail client-side rather than calling a gated /api
+    // route, and it disables its write controls.
     case "reviews":
-      return <ReviewGate promotions={data.promotions} contradictions={data.contradictions} />;
-    // DEMO_DISPUTES / DEMO_CORTEX / DEMO_ARCHIVE all carry live:false, which each
-    // component already honours: it synthesizes drill-in detail client-side rather
-    // than calling a gated /api route, and it disables its write controls.
+      return (
+        <DemoReviews
+          promotions={data.promotions}
+          contradictions={data.contradictions}
+          counts={data.counts}
+        />
+      );
     case "disputes":
       return <DisputeBench data={data.disputes} />;
     case "graph":
@@ -157,10 +212,23 @@ function Module({ id, data }: { id: DemoModuleId; data: DemoData }) {
       return <Archive data={data.archive} />;
     case "health":
       return <KnowledgeHealthReport data={data.health} />;
+    // The one module whose prototype round is still open — the switcher lives
+    // here because the dev org has no divergences to judge a layout against.
     case "divergence":
-      return <PracticeDivergenceReport data={data.divergences} />;
-    case "overview":
-      return <Overview data={data.observatory} />;
+      return <DemoStandards data={data.divergences} />;
+    // The Library modules render their own demo fixtures (imported statically —
+    // the same objects the console modules fall back to offline), with
+    // live=false so the gate's controls never mount over fabricated rules.
+    case "standards":
+      return (
+        <StandardsBoard standards={DEMO_STANDARDS} details={DEMO_STANDARD_DETAILS} live={false} />
+      );
+    case "skills":
+      return <SkillsCatalog skills={DEMO_SKILLS} details={DEMO_SKILL_DETAILS} />;
+    case "analytics":
+      return <Observatory data={data.observatory} />;
+    default:
+      return null;
   }
 }
 
@@ -180,9 +248,11 @@ export default function DemoConsole({ data }: { data: DemoData }) {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  const current = MODULES.find((m) => m.id === active) ?? MODULES[0];
+
   useEffect(() => {
-    document.title = MODULES.find((m) => m.id === active)?.title ?? MODULES[0].title;
-  }, [active]);
+    document.title = current.docTitle;
+  }, [current]);
 
   const go = useCallback(
     (id: DemoModuleId) => {
@@ -236,7 +306,10 @@ export default function DemoConsole({ data }: { data: DemoData }) {
 
       <div id="demo-panel" role="tabpanel">
         {reduce ? (
-          <Module id={active} data={data} />
+          <>
+            <ModuleIntro {...current} />
+            <Module id={active} data={data} />
+          </>
         ) : (
           <AnimatePresence mode="wait">
             <motion.div
@@ -246,6 +319,7 @@ export default function DemoConsole({ data }: { data: DemoData }) {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
+              <ModuleIntro {...current} />
               <Module id={active} data={data} />
             </motion.div>
           </AnimatePresence>

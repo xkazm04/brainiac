@@ -1,0 +1,19 @@
+# GENERATED extraction gold for cards.
+id: src-cards-001
+team: team-cards
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in cards today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "refund-worker-uk was moved behind the instant-payment router so the SEPA path and the instant path stop sharing a timeout budget"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-cards-0000
+    kind: decision
+    content_gist: "refund-worker-uk was moved behind the instant-payment router so the SEPA path an"
+    entities: [ent-cards-refund-worker-uk]
+    visibility: org
+distractors: []

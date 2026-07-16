@@ -1,0 +1,148 @@
+# GENERATED — a shape check, NOT a retrieval baseline. The queries are derived
+# from the memories they expect, so a score here measures the generator's
+# imagination. Keep eval baselines on fixtures/v1, which a human authored.
+queries:
+  - id: qa-001
+    stratum: semantic
+    query: "chargeback representment through posting engine is capped at one attempt per scheme rules"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0000, grade: 3}
+  - id: qa-002
+    stratum: exact id
+    query: "retrying against ledger-svc during a settlement window piles requests up faster than the p"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0001, grade: 3}
+  - id: qa-003
+    stratum: semantic
+    query: "posting engine publishes settlement batches at 14:00 UTC, and its latency triples for roug"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0004, grade: 3}
+  - id: qa-004
+    stratum: exact id
+    query: "chargeback representment through scheme fee is capped at one attempt per scheme rules"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0005, grade: 3}
+  - id: qa-005
+    stratum: semantic
+    query: "chargeback representment through posting engine is capped at one attempt per scheme rules"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0009, grade: 3}
+  - id: qa-006
+    stratum: exact id
+    query: "retrying against end-to-end id during a settlement window piles requests up faster than th"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0012, grade: 3}
+  - id: qa-007
+    stratum: semantic
+    query: "posting engine publishes settlement batches at 14:00 UTC, and its latency triples for roug"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0014, grade: 3}
+  - id: qa-008
+    stratum: exact id
+    query: "refund-worker was moved behind the instant-payment router so the SEPA path and the instant"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0016, grade: 3}
+  - id: qa-009
+    stratum: exact id
+    query: "replay a stuck batch through settlement-batcher-legacy with the settlement CLI, and never "
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0023, grade: 3}
+  - id: qa-010
+    stratum: exact id
+    query: "tokenizer-eu rejects any instruction whose end-to-end id is reused inside the idempotency "
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0027, grade: 3}
+  - id: qa-011
+    stratum: exact id
+    query: "ledger-svc was moved behind the instant-payment router so the SEPA path and the instant pa"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0042, grade: 3}
+  - id: qa-012
+    stratum: cross-team
+    query: "replay a stuck batch through end-to-end id with the settlement CLI, and never by re-submit"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0047, grade: 3}
+  - id: qa-013
+    stratum: semantic
+    query: "replay a stuck batch through scheme rail with the settlement CLI, and never by re-submitti"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0059, grade: 3}
+  - id: qa-014
+    stratum: cross-team
+    query: "chargeback representment through posting engine is capped at one attempt per scheme rules"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0060, grade: 3}
+  - id: qa-015
+    stratum: semantic
+    query: "chargeback representment through scheme rail is capped at one attempt per scheme rules"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0064, grade: 3}
+  - id: qa-016
+    stratum: exact id
+    query: "mandate-store-eu rejects any instruction whose end-to-end id is reused inside the idempote"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0066, grade: 3}
+  - id: qa-017
+    stratum: exact id
+    query: "replay a stuck batch through fx-quoter-eu with the settlement CLI, and never by re-submitt"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0069, grade: 3}
+  - id: qa-018
+    stratum: exact id
+    query: "retrying against posting engine during a settlement window piles requests up faster than t"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0073, grade: 3}
+  - id: qa-019
+    stratum: cross-team
+    query: "scheme rail was moved behind the instant-payment router so the SEPA path and the instant p"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0080, grade: 3}
+  - id: qa-020
+    stratum: cross-team
+    query: "scheme rail was moved behind the instant-payment router so the SEPA path and the instant p"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0084, grade: 3}
+  - id: qa-021
+    stratum: semantic
+    query: "retrying against refund-worker during a settlement window piles requests up faster than th"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0089, grade: 3}
+  - id: qa-022
+    stratum: exact id
+    query: "instant rail publishes settlement batches at 14:00 UTC, and its latency triples for roughl"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0090, grade: 3}
+  - id: qa-023
+    stratum: semantic
+    query: "retrying against value date during a settlement window piles requests up faster than the p"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0100, grade: 3}
+  - id: qa-024
+    stratum: exact id
+    query: "chargeback representment through settlement window is capped at one attempt per scheme rul"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    relevant:
+      - {memory: mem-payments-0104, grade: 3}

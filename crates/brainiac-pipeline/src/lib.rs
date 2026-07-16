@@ -10,9 +10,11 @@ pub mod compose;
 pub mod contradict;
 pub mod divergence;
 pub mod extract;
+pub mod library_sweep;
 pub mod policy;
 pub mod reembed;
 pub mod resolve;
+pub mod standards_page;
 pub mod worker;
 
 use brainiac_core::Principal;

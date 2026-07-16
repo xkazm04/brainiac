@@ -455,3 +455,51 @@ Hard invariants on every external target:
 1. Extraction quality variance across BYOM providers → the eval harness must run per-provider; publish a support matrix.
 2. Review-queue neglect (the behavioral risk from our earlier discussion) → analytics must expose it; consider Slack/Teams notification worker early.
 3. Entity-resolution precision on sparse early data → bias thresholds toward human review at first; loosen with data.
+
+---
+
+## 10. Library layer — standards & skills (the normative layer)
+
+The third module group (build plan: `docs/LIBRARY-PLAN.md`; substrate landed as
+migration 0028). Memories are the descriptive layer (what is true), the
+document layer §8 is the compiled layer (what we know, assembled), and the
+Library is the **normative** layer (what we should do): coding standards per
+tech stack and skills for coding agents, as governed artifacts.
+
+**The rule is the atom (L1).** A standard is ONE rule — `stack → category →
+slug`, a one-sentence `statement` (mirrors `memories.content`), `rationale`,
+good/bad examples in `detail_md` (§2.3's field, reused verbatim — no new
+rich-text mechanism), an `enforcement` level (`mandatory | recommended |
+experimental`) and a `lifecycle` (`proposed | adopted | deprecated`), each
+change a numbered `standard_versions` row. A "stack overview" is a projection
+over rules, never a stored document. Skills are versioned bundles in the open
+agent-skill format (manifest + markdown + resources), stored inline
+(`skill_versions`); only versions a named human published are ever served.
+
+**One intake, two sources (L2).** Mined candidates (sweeps over unclaimed
+practice divergences, feedback clusters, resolved contradictions) and
+agent-proposed patterns are both *source kinds* into the same candidate →
+triage → named-human gate. Two invariants live in the schema, not in code:
+
+1. **No unattributed rules** — a standard cannot leave `proposed` without
+   `standard_provenance` rows (kind `memory` or `divergence`) or an explicit
+   `decreed_by` naming the human who signed for an evidence-free rule
+   (deferred constraint trigger, checked at commit).
+2. **Never a leaderboard** — `library_usage_events` records `fetch | check |
+   apply` per **team**; the table has no user column, so per-person telemetry
+   is unrepresentable, not merely unqueried.
+
+**The divergence bridge (L6).** `practice_divergences` (the standardization
+sweep, migration 0016) is the Library's shipped ancestor: ratifying a
+divergence creates exactly one `proposed` standard carrying the divergence as
+provenance (idempotent by provenance, not slug), with the adjudicator's
+`recommended_standard` as the candidate statement.
+
+**Scoping (L7).** Token scopes `lib:read` (fetch rules/bundles, report usage),
+`lib:propose` (submit candidates — unminted until the active-contribution
+phase), `lib:publish` (adopt/deprecate/ratify). No org capability flag in v1:
+nothing in the Library leaves the building.
+
+**Deliberate refusals:** no auto-enforcement in v1 (the Library informs; it
+never blocks a merge), no agent writes a standard or skill directly, and
+usage telemetry can never rank a person.

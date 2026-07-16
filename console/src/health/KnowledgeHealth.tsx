@@ -16,6 +16,7 @@
  */
 
 import {
+  band,
   BORDER,
   FONT_DISPLAY,
   FONT_MONO,
@@ -25,7 +26,7 @@ import {
   LABEL,
   MAGENTA,
   PANEL,
-  band,
+  withAlpha,
 } from "@/design/theme";
 import type { KhAttention, KnowledgeHealth as Health } from "@/lib/types";
 
@@ -258,7 +259,7 @@ export default function KnowledgeHealthReport({ data }: { data: Health }) {
         </p>
         <div
           className="grid grid-cols-2 gap-6 rounded-lg p-6 sm:grid-cols-4"
-          style={{ background: PANEL, border: `1px solid ${propTone}44` }}
+          style={{ background: PANEL, border: `1px solid ${withAlpha(propTone, 0.27)}` }}
         >
           <Signal label="pages published" value={signals.pages_published} />
           <Signal label="recomposing (dirty)" value={signals.pages_dirty} />
@@ -278,6 +279,58 @@ export default function KnowledgeHealthReport({ data }: { data: Health }) {
             <>
               Nothing is behind: every memory change that landed has already been recomposed into
               the pages that cite it. This is what the promise looks like when it is kept.
+            </>
+          )}
+        </p>
+      </section>
+
+      {/* The library. Its anti-rot mechanism is not recomposition — a rule
+          cannot rebuild itself into being followed. The only test is whether
+          practice follows it, so the numbers that matter are dormancy and the
+          gate's own queue, not a volume count. */}
+      <section className="flex flex-col gap-5">
+        <h2 className={`${FONT_DISPLAY} text-xl`} style={{ color: INK }}>
+          The library on top
+        </h2>
+        <p className={`${FONT_MONO} text-[11px]`} style={{ color: INK_FAINT }}>
+          Pages can rebuild themselves; rules cannot. A standard is only as real as the practice
+          that follows it — so these are the numbers that say whether the org&rsquo;s ratified
+          judgment is alive or decorative.
+        </p>
+        <div
+          className="grid grid-cols-2 gap-6 rounded-lg p-6 sm:grid-cols-3 lg:grid-cols-6"
+          style={{
+            background: PANEL,
+            border: `1px solid ${withAlpha(signals.standards_dormant > 0 ? MAGENTA : BORDER, signals.standards_dormant > 0 ? 0.27 : 1)}`,
+          }}
+        >
+          <Signal label="rules adopted" value={signals.standards_adopted} />
+          <Signal label="dormant rules" value={signals.standards_dormant} />
+          <Signal label="at the gate" value={signals.standards_at_gate} />
+          <Signal label="oldest candidate" value={age(signals.oldest_gate_secs)} />
+          <Signal label="skills published" value={signals.skills_published} />
+          <Signal label="dormant skills" value={signals.skills_dormant} />
+        </div>
+        <p className="text-[14px] leading-relaxed" style={{ color: INK_DIM }}>
+          {signals.standards_dormant > 0 ? (
+            <>
+              <span style={{ color: MAGENTA }}>
+                {signals.standards_dormant}{" "}
+                {signals.standards_dormant === 1 ? "rule has" : "rules have"} gone quiet.
+              </span>{" "}
+              Ratified by a named human, and untouched by every agent and every check since. A
+              standard nobody follows is a wish that costs credibility — retire it in the open, or
+              find out why the org quietly stopped agreeing with it.
+            </>
+          ) : signals.standards_adopted > 0 ? (
+            <>
+              Every adopted rule has been fetched or checked against this month. The library is not
+              a folder of opinions — practice is actually reaching for it.
+            </>
+          ) : (
+            <>
+              No rules adopted yet. Ratify a drift from the board, or let the mining sweep propose
+              candidates from what the org already learned.
             </>
           )}
         </p>

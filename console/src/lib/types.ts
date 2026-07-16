@@ -63,6 +63,19 @@ export type KhTrendPoint = S["TrendPoint"];
 export type PracticeDivergences = S["PracticeDivergenceResponse"];
 export type PracticeDivergence = S["PracticeDivergence"];
 
+// ── library (standards + skills) ────────────────────────────────────────
+export type LibraryStandard = S["StandardView"];
+export type StandardsList = S["StandardsListResponse"];
+export type StandardDetail = S["StandardDetailResponse"];
+export type StandardProvenanceRef = S["ProvenanceView"];
+export type StandardVersion = S["StandardVersionView"];
+export type TeamUsage = S["TeamUsageView"];
+export type LibrarySkill = S["SkillView"];
+export type SkillsList = S["SkillsListResponse"];
+export type SkillDetail = S["SkillDetailResponse"];
+export type SkillVersionInfo = S["SkillVersionView"];
+export type SkillBundle = S["SkillBundleResponse"];
+
 // ── ops (sweeps) ────────────────────────────────────────────────────────
 export type Sweeps = S["SweepsResponse"];
 export type SweepSchedule = S["SweepSchedule"];

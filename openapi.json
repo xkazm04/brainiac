@@ -462,6 +462,400 @@
         }
       }
     },
+    "/v1/library/divergences/{id}/ratify": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "The L6 bridge: turn a detected practice divergence into a proposed standard candidate carrying the divergence as provenance. Idempotent. Takes lib:publish.",
+        "operationId": "divergence_ratify",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatifyResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/skills": {
+      "get": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "The org's skill catalog. Every skill is listed; only versions a named human published can be downloaded.",
+        "operationId": "skills_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/library/skills/{slug}": {
+      "get": {
+        "tags": [
+          "crate::library"
+        ],
+        "operationId": "skill_get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/skills/{slug}/download": {
+      "get": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "The current PUBLISHED bundle of a skill. A draft nobody signed is not served — the response is 404, exactly as if no version existed. Downloading records a fetch event, counted by team.",
+        "operationId": "skill_download",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillBundleResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/standards": {
+      "get": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "The org's coding standards, adopted rules by default — the set an agent should follow for a stack. RLS-scoped.",
+        "operationId": "standards_list",
+        "parameters": [
+          {
+            "name": "stack",
+            "in": "path",
+            "description": "Narrow to one tech stack (e.g. `rust`, `typescript`, `general`).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "lifecycle",
+            "in": "path",
+            "description": "`adopted` (default — what an agent should follow), `proposed`,\n`deprecated`, or `all`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/library/standards/propose": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Propose a standard candidate (lib:propose). The outcome is only ever a PROPOSED candidate — the gate stays human. Deduplicated against the whole corpus (a duplicate collapses onto the existing standard, whatever its lifecycle) and rate-limited per author.",
+        "operationId": "standard_propose",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposeResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "cited evidence memory not found"
+          },
+          "429": {
+            "description": "per-author hourly proposal budget spent"
+          }
+        }
+      }
+    },
+    "/v1/library/standards/{id}": {
+      "get": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "One rule with the provenance behind it — the memories, incidents, and divergences that motivated it, or the mark of the human who decreed it.",
+        "operationId": "standard_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/standards/{id}/adopt": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Adopt a proposed standard — the named-human gate. Takes lib:publish. Refused (409) when the rule has neither provenance nor a decree.",
+        "operationId": "standard_adopt",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdoptResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/standards/{id}/deprecate": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Retire an adopted standard, in the open. Takes lib:publish.",
+        "operationId": "standard_deprecate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdoptResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/standards/{id}/reject": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Reject a proposed candidate — kept, not deleted: the mining sweep dedups against rejections for the dedup window, so a maintainer who said no is not asked again next week. Takes lib:publish.",
+        "operationId": "standard_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdoptResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/library/usage": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Report a usage signal. Attributed to the caller's team — never to a person; the events table has no user column to fill.",
+        "operationId": "usage_record",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/memories": {
       "get": {
         "tags": [
@@ -942,7 +1336,7 @@
           {
             "name": "kind",
             "in": "path",
-            "description": "Sweep kind: divergence | health_snapshot | raw_ttl | alerts",
+            "description": "Sweep kind: divergence | health_snapshot | raw_ttl | alerts | library",
             "required": true,
             "schema": {
               "type": "string"
@@ -987,7 +1381,7 @@
           {
             "name": "kind",
             "in": "path",
-            "description": "Sweep kind: divergence | health_snapshot | raw_ttl | alerts",
+            "description": "Sweep kind: divergence | health_snapshot | raw_ttl | alerts | library",
             "required": true,
             "schema": {
               "type": "string"
@@ -1891,6 +2285,26 @@
   },
   "components": {
     "schemas": {
+      "AdoptRequest": {
+        "type": "object",
+        "properties": {
+          "decree": {
+            "type": "boolean",
+            "description": "Adopt WITHOUT evidence, signing for it by name. Absent a decree, a rule\nwith no provenance is refused — by the database, not this handler."
+          }
+        }
+      },
+      "AdoptResponse": {
+        "type": "object",
+        "required": [
+          "adopted"
+        ],
+        "properties": {
+          "adopted": {
+            "type": "boolean"
+          }
+        }
+      },
       "AnalyticsGraph": {
         "type": "object",
         "required": [
@@ -3350,7 +3764,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "contradiction | staleness | silo | governance"
+            "description": "contradiction | staleness | silo | governance | library"
           },
           "severity": {
             "type": "string",
@@ -3406,6 +3820,12 @@
           "agent_page_reads_30d",
           "dirty_page_reads_30d",
           "pages_never_read",
+          "standards_adopted",
+          "standards_at_gate",
+          "oldest_gate_secs",
+          "standards_dormant",
+          "skills_published",
+          "skills_dormant",
           "org_wide",
           "team_only",
           "siloed_private",
@@ -3447,6 +3867,11 @@
             "type": "integer",
             "format": "int64",
             "description": "How long the most overdue page has been out of date, in seconds. THE\npropagation SLA: the product's promise is that a resolved contradiction\nreaches every page automatically, and this is the number that says\nwhether \"automatically\" means minutes or means never."
+          },
+          "oldest_gate_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the oldest candidate has waited, in seconds. Mining and agents\nboth file into this queue; a queue nobody works makes the whole intake\ntheatre, and the number says which it is."
           },
           "oldest_review_secs": {
             "type": "integer",
@@ -3492,10 +3917,34 @@
             "type": "integer",
             "format": "int64"
           },
+          "skills_dormant": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Published skills nobody has fetched in a month."
+          },
+          "skills_published": {
+            "type": "integer",
+            "format": "int64"
+          },
           "stale_beliefs": {
             "type": "integer",
             "format": "int64",
             "description": "Superseded/expired beliefs still sitting in the corpus (landmines)."
+          },
+          "standards_adopted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Adopted rules — the org's live, ratified judgment."
+          },
+          "standards_at_gate": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Candidates waiting at the gate (mined, ratified, or agent-proposed)."
+          },
+          "standards_dormant": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Adopted rules the org has had time to use and hasn't touched in a\nmonth. THE Library signal: a standard nobody follows is a wish, and\nthis is the number that says so without anyone having to notice."
           },
           "team_only": {
             "type": "integer",
@@ -4412,6 +4861,77 @@
           }
         }
       },
+      "ProposeRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "statement"
+        ],
+        "properties": {
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A memory backing the proposal. Optional — but without evidence the\nrule can only ever be adopted by an explicit signed decree."
+          },
+          "examples_md": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Good/bad examples, verbatim markdown."
+          },
+          "name": {
+            "type": "string",
+            "description": "Short practice name (the dedup key), e.g. \"service retry policy\"."
+          },
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stack": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "statement": {
+            "type": "string",
+            "description": "The rule, in one sentence."
+          }
+        }
+      },
+      "ProposeResponse": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "standard_id",
+          "lifecycle"
+        ],
+        "properties": {
+          "lifecycle": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`created` (a fresh candidate waits at the gate) or `duplicate`\n(collapsed onto an existing standard — see `lifecycle` for what the\norg already decided about this idea)."
+          },
+          "standard_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "ProvenanceSource": {
         "type": "object",
         "description": "The originating source, with a bounded excerpt of its raw text. `null` when\nthe memory carries no source; `excerpt` is `null` when the source has no\ntext.",
@@ -4428,6 +4948,23 @@
           },
           "kind": {
             "type": "string"
+          }
+        }
+      },
+      "ProvenanceView": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref_id"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`memory` or `divergence` — the evidence class behind the rule."
+          },
+          "ref_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -4558,6 +5095,19 @@
           "ready": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "RatifyResponse": {
+        "type": "object",
+        "required": [
+          "standard_id"
+        ],
+        "properties": {
+          "standard_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The standard candidate carrying this divergence as provenance. Stable:\nratifying the same divergence again returns the same candidate."
           }
         }
       },
@@ -4925,6 +5475,152 @@
           }
         }
       },
+      "SkillBundleResponse": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name",
+          "semver",
+          "manifest",
+          "content_md",
+          "resources"
+        ],
+        "properties": {
+          "content_md": {
+            "type": "string"
+          },
+          "manifest": {
+            "description": "The open agent-skill bundle: manifest front-matter, markdown body,\nauxiliary resources — exactly as the named human published it."
+          },
+          "name": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resources": {},
+          "semver": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillDetailResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SkillView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "versions",
+              "usage"
+            ],
+            "properties": {
+              "usage": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TeamUsageView"
+                },
+                "description": "The skill's pulse: fetches/applies per team."
+              },
+              "versions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SkillVersionView"
+                },
+                "description": "Version history, newest first — drafts included, marked as such."
+              }
+            }
+          }
+        ]
+      },
+      "SkillVersionView": {
+        "type": "object",
+        "required": [
+          "semver",
+          "published",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "published": {
+            "type": "boolean",
+            "description": "A version nobody signed is a draft; it is listed here for maintainers\nbut never served as content."
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "semver": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillView": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "maturity",
+          "downloadable"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "downloadable": {
+            "type": "boolean",
+            "description": "Whether a published version exists to download. A draft-only skill is\nlisted (it exists) but serves no bundle."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "maturity": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillsListResponse": {
+        "type": "object",
+        "required": [
+          "skills"
+        ],
+        "properties": {
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillView"
+            }
+          }
+        }
+      },
       "SnapshotResponse": {
         "type": "object",
         "required": [
@@ -5132,6 +5828,147 @@
           }
         }
       },
+      "StandardDetailResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StandardView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "provenance",
+              "usage",
+              "versions"
+            ],
+            "properties": {
+              "provenance": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ProvenanceView"
+                },
+                "description": "Why this rule exists. Empty only for a decreed rule."
+              },
+              "usage": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TeamUsageView"
+                },
+                "description": "The rule's pulse: fetches/checks per team."
+              },
+              "versions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StandardVersionView"
+                },
+                "description": "Version history, newest first."
+              }
+            }
+          }
+        ]
+      },
+      "StandardVersionView": {
+        "type": "object",
+        "required": [
+          "rev",
+          "statement",
+          "enforcement",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "enforcement": {
+            "type": "string"
+          },
+          "rev": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "statement": {
+            "type": "string"
+          }
+        }
+      },
+      "StandardView": {
+        "type": "object",
+        "required": [
+          "id",
+          "origin",
+          "stack",
+          "category",
+          "slug",
+          "statement",
+          "enforcement",
+          "lifecycle",
+          "decreed"
+        ],
+        "properties": {
+          "adopted_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "decreed": {
+            "type": "boolean",
+            "description": "Set only for an evidence-free rule a named human signed for."
+          },
+          "detail_md": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Good/bad examples — served verbatim, never re-typed by a model."
+          },
+          "enforcement": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "description": "Who created it: `human` (console/ratify), `sweep` (mining), `agent`\n(a mid-session proposal). Triage renders this — trust needs a source."
+          },
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "stack": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          }
+        }
+      },
+      "StandardsListResponse": {
+        "type": "object",
+        "required": [
+          "standards"
+        ],
+        "properties": {
+          "standards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StandardView"
+            }
+          }
+        }
+      },
       "StatusCount": {
         "type": "object",
         "description": "`{status, count}` — the shape every status histogram in this module emits\n(memories-by-status, contradiction tabs).",
@@ -5211,7 +6048,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts'."
+            "description": "'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts' | 'library'."
           },
           "last_detail": {
             "type": [
@@ -5315,6 +6152,26 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "TeamUsageView": {
+        "type": "object",
+        "description": "Usage totals for one artifact, per team. There is deliberately no finer\ngrain to ask for — the storage cannot name a person.",
+        "required": [
+          "uses"
+        ],
+        "properties": {
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Team name; `null` groups events from org-scoped (teamless) tokens."
+          },
+          "uses": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -5519,6 +6376,45 @@
               "null"
             ],
             "description": "Turn the sweep's schedule on or off."
+          }
+        }
+      },
+      "UsageRequest": {
+        "type": "object",
+        "required": [
+          "artifact_kind",
+          "artifact_id",
+          "event"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "artifact_kind": {
+            "type": "string",
+            "description": "`standard` or `skill`."
+          },
+          "event": {
+            "type": "string",
+            "description": "`fetch`, `check` (compared work against a standard), or `apply` (ran a skill)."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "required": [
+          "recorded"
+        ],
+        "properties": {
+          "recorded": {
+            "type": "boolean"
           }
         }
       },

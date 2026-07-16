@@ -9,7 +9,12 @@
 
 import { useState, useTransition } from "react";
 
-import { band, FONT_MONO, MAGENTA } from "@/design/theme";
+import {
+  band,
+  FONT_MONO,
+  MAGENTA,
+  withAlpha,
+} from "@/design/theme";
 
 import { resolveDisputeAction, type DecisionResult } from "./actions";
 import { DECISIONS, type Resolution } from "./disputes-data";
@@ -56,7 +61,7 @@ export default function DecisionBar({
           title={live ? dcn.gloss : "demo data — connect the API to answer claims"}
           onClick={() => decide(memoryId, dcn.id)}
           className={`rounded-full border ${pad} transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/5`}
-          style={{ borderColor: `${TONE[dcn.id]}66`, color: TONE[dcn.id] }}
+          style={{ borderColor: withAlpha(TONE[dcn.id], 0.4), color: TONE[dcn.id] }}
         >
           {dcn.verb}
         </button>

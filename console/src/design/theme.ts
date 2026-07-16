@@ -44,10 +44,44 @@ export const MODULE_BAND: Record<string, BandKey> = {
   memories: "delta",
   ingest: "theta",
   disputes: "theta", // contested memories — theta IS the contradiction band
+  standards: "theta", // a rule is a ratified drift — same band as the detector
+  skills: "beta", // procedures agents actively pull and run — active recall
 };
 
 export const band = (key: BandKey, lightness = 68, alpha = 1) =>
   `hsla(${BAND_HUES[key]}, 90%, ${lightness}%, ${alpha})`;
+
+/**
+ * A translucent edge/wash of any theme colour. Always use this to fade one.
+ *
+ * The trick it replaces was appending a two-digit hex alpha to an interpolated
+ * colour. That is only valid CSS when the colour is a hex literal, and half this
+ * palette is not: everything from band() is an hsla() string, so appending "14"
+ * to GOLD emitted "hsla(46, 90%, 68%, 1)14" — which the browser rejects and
+ * drops. The property then silently falls back (a border to currentColor, a
+ * background to transparent), so the mistake read as a design choice rather than
+ * a bug. It shipped that way in the standards impact badges: medium and low lost
+ * their wash entirely, and high looked fine only because MAGENTA happens to be
+ * hex. Verified in-browser 2026-07-15, then swept out of ~50 call sites.
+ *
+ * Handles hex (#rgb / #rrggbb), hsl(a) and rgb(a).
+ */
+export const withAlpha = (color: string, a: number): string => {
+  const c = color.trim();
+  if (c.startsWith("#")) {
+    const raw = c.slice(1);
+    const hex = raw.length === 3 ? raw.replace(/./g, (d) => d + d) : raw.slice(0, 6);
+    const n = parseInt(hex, 16);
+    if (Number.isNaN(n)) return c;
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+  }
+  const m = c.match(/^(hsla?|rgba?)\(([^)]+)\)$/i);
+  if (!m) return c;
+  const parts = m[2].split(",").map((p) => p.trim());
+  const [x, y, z] = parts; // hsl: h,s,l — rgb: r,g,b (the 4th, if any, is alpha)
+  const fn = m[1].toLowerCase().startsWith("hsl") ? "hsla" : "rgba";
+  return `${fn}(${x}, ${y}, ${z}, ${a})`;
+};
 
 export const bandGlow = (key: BandKey, alpha = 0.35) =>
   `hsla(${BAND_HUES[key]}, 90%, 60%, ${alpha})`;

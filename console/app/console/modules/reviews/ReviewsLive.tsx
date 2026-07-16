@@ -1,0 +1,58 @@
+"use client";
+
+/*
+ * The operator's review surface, wired to the real decision path.
+ *
+ * This file exists for one structural reason: ReviewWorklist is a client
+ * component (it owns keyboard triage and a focus cursor), and a server
+ * component cannot hand a render prop to a client one. So the decision buttons
+ * are imported HERE rather than passed down from page.tsx.
+ *
+ * That is safe in this direction and only this direction: /console is gated, and
+ * nothing under /demo imports this file — which is what keeps the server actions
+ * out of the public bundle entirely (see app/demo/DemoReviews.tsx for the other
+ * half of that boundary).
+ */
+
+import ReviewWorklist from "./ReviewWorklist";
+import { ContradictionButtons, PromotionButtons } from "./review-buttons";
+import type {
+  ContradictionQueueItem,
+  ContradictionStatus,
+  PromotionQueueItem,
+} from "@/lib/governance-api";
+
+export default function ReviewsLive({
+  promotions,
+  contradictions,
+  counts,
+  cstatus,
+}: {
+  promotions: PromotionQueueItem[];
+  contradictions: ContradictionQueueItem[];
+  counts: { status: string; count: number }[];
+  cstatus: ContradictionStatus;
+}) {
+  return (
+    <ReviewWorklist
+      promotions={promotions}
+      contradictions={contradictions}
+      counts={counts}
+      cstatus={cstatus}
+      promotionControls={(p) => <PromotionButtons promotionId={p.id} />}
+      contradictionControls={(c) => (
+        <ContradictionButtons
+          contradictionId={c.id}
+          memoryAId={c.memory_a.id}
+          memoryBId={c.memory_b.id}
+        />
+      )}
+      // Filtering is a server round trip: the status is a query param the page
+      // re-queries on, so the tabs are links rather than callbacks.
+      statusHref={(s) => `/console?m=reviews&cstatus=${s}#contradictions-h`}
+      // No onBulk: there is no bulk endpoint, and looping N single approvals
+      // behind one button is not a decision this surface has earned. The rail
+      // says so rather than offering a control that cannot fire.
+    />
+  );
+}

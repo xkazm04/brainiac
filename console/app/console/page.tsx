@@ -1,83 +1,105 @@
-import Home, { type LiveStats } from "@/home/Home";
-import {
-  configFromEnv,
-  getAnalytics,
-  getGraphOverview,
-  getKnowledgeHealth,
-  getPracticeDivergence,
-  listDocs,
-  pendingPromotions,
-} from "@/lib/api";
+import { Suspense } from "react";
+
+import { CONSOLE_MODULES, parseModule, type ConsoleModuleId } from "@/design/routes";
+
+import ModuleBoundary from "./ModuleBoundary";
+
+import AnalyticsModule from "./modules/analytics/Module";
+import AnalyticsSkeleton from "./modules/analytics/Skeleton";
+import DisputesModule from "./modules/disputes/Module";
+import DisputesSkeleton from "./modules/disputes/Skeleton";
+import DivergenceModule from "./modules/divergence/Module";
+import DivergenceSkeleton from "./modules/divergence/Skeleton";
+import DocsModule from "./modules/docs/Module";
+import DocsSkeleton from "./modules/docs/Skeleton";
+import GraphModule from "./modules/graph/Module";
+import GraphSkeleton from "./modules/graph/Skeleton";
+import HealthModule from "./modules/health/Module";
+import HealthSkeleton from "./modules/health/Skeleton";
+import IngestModule from "./modules/ingest/Module";
+import IngestSkeleton from "./modules/ingest/Skeleton";
+import KeysModule from "./modules/keys/Module";
+import KeysSkeleton from "./modules/keys/Skeleton";
+import MemoriesModule from "./modules/memories/Module";
+import MemoriesSkeleton from "./modules/memories/Skeleton";
+import ReviewsModule from "./modules/reviews/Module";
+import ReviewsSkeleton from "./modules/reviews/Skeleton";
+import SkillsModule from "./modules/skills/Module";
+import SkillsSkeleton from "./modules/skills/Skeleton";
+import StandardsModule from "./modules/standards/Module";
+import StandardsSkeleton from "./modules/standards/Skeleton";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
-  title: "Brainiac — Console",
+/*
+ * The console — one route, ten modules, ?m= to choose.
+ *
+ * WHAT THIS IS NOT. It is not the tab-swap the public tour does. /demo holds
+ * every fixture in the page and switches with no round trip because none of its
+ * modules fetch anything. Every module here does, so a tab change is a soft
+ * navigation that re-renders THIS page on the server and fetches only the module
+ * asked for. The win is the URL and the chrome, not the latency: you still wait
+ * for the data you actually asked for, which is the honest trade for not
+ * fetching all ten on every visit (2026-07-15 decision).
+ *
+ * WHAT THE ROUTE GAVE AWAY, and how it is paid back:
+ *  - error.tsx per segment → ModuleBoundary, keyed per module.
+ *  - loading.tsx per segment → each module's Skeleton, in a keyed Suspense.
+ *  - template.tsx entry motion → ModuleBoundary.
+ * Both boundaries are keyed by module id, so switching tabs shows the incoming
+ * module's own skeleton rather than holding the outgoing one's frame.
+ *
+ * The cost worth naming: one route means one client chunk, so a visit ships
+ * every module's client code rather than just the module opened. Modest for an
+ * internal operator console; the alternative was ten routes.
+ */
+
+const MODULES: Record<
+  ConsoleModuleId,
+  {
+    Module: (props: {
+      searchParams: Record<string, string | string[] | undefined>;
+    }) => Promise<React.JSX.Element> | React.JSX.Element;
+    Skeleton: () => React.JSX.Element;
+  }
+> = {
+  analytics: { Module: AnalyticsModule, Skeleton: AnalyticsSkeleton },
+  reviews: { Module: ReviewsModule, Skeleton: ReviewsSkeleton },
+  disputes: { Module: DisputesModule, Skeleton: DisputesSkeleton },
+  graph: { Module: GraphModule, Skeleton: GraphSkeleton },
+  memories: { Module: MemoriesModule, Skeleton: MemoriesSkeleton },
+  ingest: { Module: IngestModule, Skeleton: IngestSkeleton },
+  health: { Module: HealthModule, Skeleton: HealthSkeleton },
+  docs: { Module: DocsModule, Skeleton: DocsSkeleton },
+  divergence: { Module: DivergenceModule, Skeleton: DivergenceSkeleton },
+  standards: { Module: StandardsModule, Skeleton: StandardsSkeleton },
+  skills: { Module: SkillsModule, Skeleton: SkillsSkeleton },
+  keys: { Module: KeysModule, Skeleton: KeysSkeleton },
 };
 
-// The operator home. Real org data — reachable only behind the console gate
-// (see middleware.ts). The public root ("/") is the pitch, and it never calls
-// the API at all.
-//
-// The hero runs on demo physics regardless; the stats strip goes live when the
-// brainiac server is reachable, and degrades silently when not.
-async function liveStats(): Promise<LiveStats | null> {
-  try {
-    const cfg = configFromEnv();
-    // The core three decide live-vs-demo (any failure → null → demo field).
-    // The second-movement three degrade individually: a health/divergence/docs
-    // hiccup costs that one station its live artifact, never the whole page.
-    const [analytics, pending, overview, health, divergences, docs] = await Promise.all([
-      getAnalytics(cfg),
-      pendingPromotions(cfg),
-      getGraphOverview(cfg),
-      getKnowledgeHealth(cfg).catch(() => null),
-      getPracticeDivergence(cfg).catch(() => null),
-      listDocs(cfg).catch(() => null),
-    ]);
-    const teams = overview.teams
-      .map((t) => ({ name: t.name, memories: t.memories }))
-      .sort((a, b) => b.memories - a.memories);
-    // Most-bound canonical (widest team span, then largest) — the strongest
-    // real example of "constructive" binding for the third story station.
-    const top = [...overview.canonicals].sort(
-      (a, b) => b.teams - a.teams || b.memories - a.memories,
-    )[0];
-    return {
-      pendingPromotions: pending.length,
-      openContradictions: analytics.reviews.open_contradictions,
-      canonicalCount:
-        analytics.memories_by_status.find((r) => r.status === "canonical")?.count ?? 0,
-      embeddingModel: analytics.embedding_model,
-      teams,
-      topCanonical: top ? { name: top.name, teams: top.teams } : null,
-      totalMemories: teams.reduce((sum, t) => sum + t.memories, 0),
-      health: health
-        ? {
-            score: health.score,
-            grade: health.grade,
-            crossTeamContradictions: health.signals.cross_team_contradictions,
-          }
-        : null,
-      divergence: divergences
-        ? {
-            count: divergences.divergences.length,
-            // The server orders by impact, so [0] is the headline finding.
-            top: divergences.divergences[0]
-              ? {
-                  practice: divergences.divergences[0].practice,
-                  impact: divergences.divergences[0].impact,
-                }
-              : null,
-          }
-        : null,
-      docsPages: docs ? docs.length : null,
-    };
-  } catch {
-    return null;
-  }
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const m = parseModule((await searchParams).m);
+  const label = CONSOLE_MODULES.find((r) => r.segment === m)?.label ?? m;
+  return { title: `Brainiac — ${label}` };
 }
 
-export default async function ConsoleHomePage() {
-  return <Home live={await liveStats()} />;
+export default async function ConsolePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const m = parseModule(params.m);
+  const { Module, Skeleton } = MODULES[m];
+  return (
+    <ModuleBoundary key={m}>
+      <Suspense key={m} fallback={<Skeleton />}>
+        <Module searchParams={params} />
+      </Suspense>
+    </ModuleBoundary>
+  );
 }

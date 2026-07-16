@@ -1,10 +1,14 @@
 import type { NextConfig } from "next";
 
-// The operator modules moved from top-level routes into the /console parent
-// (app/console/(modules)/ — one persistent chrome, SPA-style module swaps).
-// These keep every old bookmark and inbound link working. Temporary (307) on
-// purpose: the auth gate sits behind them and a cached 308 would outlive any
-// future reshuffle.
+// The operator modules stopped being routes: the console is one page and the
+// module is a query param (/console?m=reviews). These keep every old inbound
+// link working — both the original top-level /reviews and the /console/reviews
+// it briefly became. Temporary (307) on purpose: the auth gate sits behind them
+// and a cached 308 would outlive any future reshuffle.
+//
+// /console/docs/<slug> is deliberately NOT in this list. A document is a real
+// page with its own URL worth sharing, so it stayed a route; only the bare
+// /console/docs index folds into the tab.
 const MOVED_MODULES = [
   "reviews",
   "disputes",
@@ -32,11 +36,13 @@ const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   async redirects() {
     return [
-      ...MOVED_MODULES.map((m) => ({
-        source: `/${m}/:path*`,
-        destination: `/console/${m}/:path*`,
-        permanent: false,
-      })),
+      // /reviews and /console/reviews → /console?m=reviews
+      ...MOVED_MODULES.flatMap((m) => [
+        { source: `/${m}`, destination: `/console?m=${m}`, permanent: false },
+        { source: `/console/${m}`, destination: `/console?m=${m}`, permanent: false },
+      ]),
+      // The document sub-route survives the move; its old top-level form does not.
+      { source: "/docs/:slug", destination: "/console/docs/:slug", permanent: false },
       ...DEMO_MODULES.map((m) => ({
         source: `/demo/${m}`,
         destination: `/demo?m=${m}`,

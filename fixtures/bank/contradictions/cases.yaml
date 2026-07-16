@@ -1,0 +1,200 @@
+# GENERATED. Every case sits on a team boundary (docs/BANK-CORPUS.md §2.6),
+# never scattered at random: 4 genuine supersessions per seam, then a coexist
+# and a dismissed as the traps.
+cases:
+  - id: con-0-0
+    memory_a: mem-seam-0-0-a
+    memory_b: mem-seam-0-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-0-1
+    memory_a: mem-seam-0-1-a
+    memory_b: mem-seam-0-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-0-2
+    memory_a: mem-seam-0-2-a
+    memory_b: mem-seam-0-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-0-3
+    memory_a: mem-seam-0-3-a
+    memory_b: mem-seam-0-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-0-4
+    memory_a: mem-seam-0-4-a
+    memory_b: mem-seam-0-4-b
+    expected: resolved_coexist
+  - id: con-0-5
+    memory_a: mem-seam-0-5-a
+    memory_b: mem-seam-0-5-b
+    expected: dismissed
+  - id: con-1-0
+    memory_a: mem-seam-1-0-a
+    memory_b: mem-seam-1-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-1-1
+    memory_a: mem-seam-1-1-a
+    memory_b: mem-seam-1-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-1-2
+    memory_a: mem-seam-1-2-a
+    memory_b: mem-seam-1-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-1-3
+    memory_a: mem-seam-1-3-a
+    memory_b: mem-seam-1-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-1-4
+    memory_a: mem-seam-1-4-a
+    memory_b: mem-seam-1-4-b
+    expected: resolved_coexist
+  - id: con-1-5
+    memory_a: mem-seam-1-5-a
+    memory_b: mem-seam-1-5-b
+    expected: dismissed
+  - id: con-2-0
+    memory_a: mem-seam-2-0-a
+    memory_b: mem-seam-2-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-2-1
+    memory_a: mem-seam-2-1-a
+    memory_b: mem-seam-2-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-2-2
+    memory_a: mem-seam-2-2-a
+    memory_b: mem-seam-2-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-2-3
+    memory_a: mem-seam-2-3-a
+    memory_b: mem-seam-2-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-2-4
+    memory_a: mem-seam-2-4-a
+    memory_b: mem-seam-2-4-b
+    expected: resolved_coexist
+  - id: con-2-5
+    memory_a: mem-seam-2-5-a
+    memory_b: mem-seam-2-5-b
+    expected: dismissed
+  - id: con-3-0
+    memory_a: mem-seam-3-0-a
+    memory_b: mem-seam-3-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-3-1
+    memory_a: mem-seam-3-1-a
+    memory_b: mem-seam-3-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-3-2
+    memory_a: mem-seam-3-2-a
+    memory_b: mem-seam-3-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-3-3
+    memory_a: mem-seam-3-3-a
+    memory_b: mem-seam-3-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-3-4
+    memory_a: mem-seam-3-4-a
+    memory_b: mem-seam-3-4-b
+    expected: resolved_coexist
+  - id: con-3-5
+    memory_a: mem-seam-3-5-a
+    memory_b: mem-seam-3-5-b
+    expected: dismissed
+  - id: con-4-0
+    memory_a: mem-seam-4-0-a
+    memory_b: mem-seam-4-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-4-1
+    memory_a: mem-seam-4-1-a
+    memory_b: mem-seam-4-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-4-2
+    memory_a: mem-seam-4-2-a
+    memory_b: mem-seam-4-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-4-3
+    memory_a: mem-seam-4-3-a
+    memory_b: mem-seam-4-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-4-4
+    memory_a: mem-seam-4-4-a
+    memory_b: mem-seam-4-4-b
+    expected: resolved_coexist
+  - id: con-4-5
+    memory_a: mem-seam-4-5-a
+    memory_b: mem-seam-4-5-b
+    expected: dismissed
+  - id: con-5-0
+    memory_a: mem-seam-5-0-a
+    memory_b: mem-seam-5-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-5-1
+    memory_a: mem-seam-5-1-a
+    memory_b: mem-seam-5-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-5-2
+    memory_a: mem-seam-5-2-a
+    memory_b: mem-seam-5-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-5-3
+    memory_a: mem-seam-5-3-a
+    memory_b: mem-seam-5-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-5-4
+    memory_a: mem-seam-5-4-a
+    memory_b: mem-seam-5-4-b
+    expected: resolved_coexist
+  - id: con-5-5
+    memory_a: mem-seam-5-5-a
+    memory_b: mem-seam-5-5-b
+    expected: dismissed
+  - id: con-6-0
+    memory_a: mem-seam-6-0-a
+    memory_b: mem-seam-6-0-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-6-1
+    memory_a: mem-seam-6-1-a
+    memory_b: mem-seam-6-1-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-6-2
+    memory_a: mem-seam-6-2-a
+    memory_b: mem-seam-6-2-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-6-3
+    memory_a: mem-seam-6-3-a
+    memory_b: mem-seam-6-3-b
+    expected: resolved_supersede
+    supersede_direction: b_over_a
+  - id: con-6-4
+    memory_a: mem-seam-6-4-a
+    memory_b: mem-seam-6-4-b
+    expected: resolved_coexist
+  - id: con-6-5
+    memory_a: mem-seam-6-5-a
+    memory_b: mem-seam-6-5-b
+    expected: dismissed

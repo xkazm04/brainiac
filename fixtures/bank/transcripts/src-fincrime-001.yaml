@@ -1,0 +1,19 @@
+# GENERATED extraction gold for fincrime.
+id: src-fincrime-001
+team: team-fincrime
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in fincrime today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "tuning the monitored flow's threshold down floods the case queue faster than the team can work it, and the backlog itself becomes the risk"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-fincrime-0001
+    kind: pitfall
+    content_gist: "tuning the monitored flow's threshold down floods the case queue faster than the"
+    entities: [ent-hub-rail-fincrime-0]
+    visibility: org
+distractors: []

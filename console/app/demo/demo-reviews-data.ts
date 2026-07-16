@@ -1,14 +1,22 @@
 /*
- * Fixtures for the PUBLIC review gate.
+ * Fixtures for the PUBLIC review queue.
  *
- * The operator /reviews page deliberately has no demo fallback: it is a write
- * surface, and a fabricated queue wired to real approve/reject actions would be
- * dangerous (see src/lib/demo-fallback.ts). So the showcase gets its own
- * read-only fixtures instead of borrowing that page's machinery.
+ * The operator /console/reviews page deliberately has no demo fallback: it is a
+ * write surface, and a fabricated queue wired to real approve/reject actions
+ * would be dangerous (see src/lib/demo-fallback.ts). So the showcase brings its
+ * own read-only fixtures rather than borrowing that page's DATA path.
+ *
+ * It does share that page's SURFACE — both render ReviewQueue — because the two
+ * looking identical is the entire value of the tour. What the showcase never
+ * gets is the write path: app/demo/DemoReviews.tsx passes inert stamps where the
+ * operator passes the real controls, so the server actions are never linked into
+ * a public bundle at all.
  *
  * The content tracks the Meridian fixture org used everywhere else — the same
  * payments/platform/data teams, the same refund-worker and PSP-timeout story the
  * eval harness and the UAT trial run on — so the demo tells one coherent story.
+ * DEMO_COUNTS mirrors the status tallies the live queue endpoint returns for the
+ * filter tabs; it must stay consistent with DEMO_CONTRADICTIONS above.
  */
 
 import type { ContradictionQueueItem, PromotionQueueItem } from "@/lib/governance-api";

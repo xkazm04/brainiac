@@ -27,6 +27,7 @@
 import { useState } from "react";
 
 import {
+  band,
   BORDER,
   FONT_DISPLAY,
   FONT_MONO,
@@ -36,7 +37,7 @@ import {
   LABEL,
   MAGENTA,
   PANEL,
-  band,
+  withAlpha,
 } from "@/design/theme";
 import type { DocCitation, DocSection, MemoryLifecycle } from "@/lib/types";
 
@@ -87,8 +88,8 @@ function Cite({ node, ctx, k }: { node: Extract<InlineNode, { t: "cite" }>; ctx:
         className={`${FONT_MONO} mx-[2px] cursor-pointer rounded-[4px] border px-[5px] align-super text-[10px] leading-[15px] transition hover:brightness-125`}
         style={{
           color: accent,
-          borderColor: `${accent}55`,
-          background: isOpen ? `${accent}22` : "transparent",
+          borderColor: withAlpha(accent, 0.33),
+          background: isOpen ? withAlpha(accent, 0.13) : "transparent",
         }}
       >
         {mem ? node.n : "?"}
@@ -132,7 +133,7 @@ function CitationCard({ c, n }: { c: Cited; n: number }) {
         </span>
         <span
           className={`${FONT_MONO} rounded-full border px-2 py-[1px] text-[10px] uppercase tracking-[0.14em]`}
-          style={{ color: accent, borderColor: `${accent}55` }}
+          style={{ color: accent, borderColor: withAlpha(accent, 0.33) }}
         >
           {c.lifecycle.replace("_", " ")}
         </span>
@@ -404,7 +405,7 @@ export default function DocReader({
         {(unshipped.length > 0 || unresolved.length > 0) && (
           <div
             className="mb-6 rounded-lg border p-4"
-            style={{ borderColor: `${band("gamma")}40`, background: `${band("gamma")}0d` }}
+            style={{ borderColor: withAlpha(band("gamma"), 0.25), background: withAlpha(band("gamma"), 0.05) }}
           >
             <span className={LABEL} style={{ color: band("gamma") }}>
               read with care
@@ -443,7 +444,7 @@ export default function DocReader({
             <div
               key={i}
               className="relative my-1 border-l-2 pl-4"
-              style={{ borderColor: `${accent}66` }}
+              style={{ borderColor: withAlpha(accent, 0.4) }}
             >
               <BlockView b={b} ctx={ctx} path={`b${i}`} />
               <span

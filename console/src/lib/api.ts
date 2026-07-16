@@ -20,6 +20,8 @@ import type {
   Graph,
   GraphOverview,
   KnowledgeHealth,
+  LibrarySkill,
+  LibraryStandard,
   MemoriesList,
   MemoryDetail,
   MintedToken,
@@ -31,7 +33,11 @@ import type {
   QueueHealth,
   ReviewedPromotion,
   SearchHit,
+  SkillDetail,
+  SkillsList,
   SourceFeedItem,
+  StandardDetail,
+  StandardsList,
   SweepSchedule,
   Sweeps,
   TokenPreview,
@@ -281,6 +287,63 @@ export async function getGraphCanonical(
   id: string,
 ): Promise<CanonicalDetail> {
   return call(cfg, "GET", `/v1/graph/canonical/${id}`);
+}
+
+// ── library (LB1/LB2): standards + skills ───────────────────────────────
+
+/** All rules regardless of lifecycle — the console's board view. Agents use
+ *  the adopted-only default; a maintainer's board must see proposals too. */
+export async function listStandards(
+  cfg: ApiConfig,
+  lifecycle: "proposed" | "adopted" | "deprecated" | "all" = "all",
+): Promise<LibraryStandard[]> {
+  const out = await call<StandardsList>(
+    cfg,
+    "GET",
+    `/v1/library/standards?lifecycle=${lifecycle}`,
+  );
+  return out.standards;
+}
+
+export async function getStandard(cfg: ApiConfig, id: string): Promise<StandardDetail> {
+  return call(cfg, "GET", `/v1/library/standards/${encodeURIComponent(id)}`);
+}
+
+/** Adopt a proposed rule (lib:publish). `decree` signs for an evidence-free
+ *  rule by name; without it the backend answers 409 for such a rule. */
+export async function adoptStandard(
+  cfg: ApiConfig,
+  id: string,
+  decree = false,
+): Promise<{ adopted: boolean }> {
+  return call(cfg, "POST", `/v1/library/standards/${encodeURIComponent(id)}/adopt`, {
+    decree,
+  });
+}
+
+export async function deprecateStandard(
+  cfg: ApiConfig,
+  id: string,
+): Promise<{ adopted: boolean }> {
+  return call(cfg, "POST", `/v1/library/standards/${encodeURIComponent(id)}/deprecate`);
+}
+
+/** Reject a proposed candidate — kept, not deleted: the mining sweep dedups
+ *  against rejections, so saying no once means not being asked again. */
+export async function rejectStandard(
+  cfg: ApiConfig,
+  id: string,
+): Promise<{ adopted: boolean }> {
+  return call(cfg, "POST", `/v1/library/standards/${encodeURIComponent(id)}/reject`);
+}
+
+export async function listSkills(cfg: ApiConfig): Promise<LibrarySkill[]> {
+  const out = await call<SkillsList>(cfg, "GET", "/v1/library/skills");
+  return out.skills;
+}
+
+export async function getSkillDetail(cfg: ApiConfig, slug: string): Promise<SkillDetail> {
+  return call(cfg, "GET", `/v1/library/skills/${encodeURIComponent(slug)}`);
 }
 
 // ── documents (KB2) ─────────────────────────────────────────────────────

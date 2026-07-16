@@ -59,7 +59,7 @@ fn clip_detail(s: &str) -> String {
 
 #[derive(Serialize, ToSchema)]
 pub struct SweepSchedule {
-    /// 'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts'.
+    /// 'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts' | 'library'.
     pub kind: String,
     /// Whether the scheduler runs this sweep on its cadence.
     pub enabled: bool,
@@ -144,7 +144,7 @@ pub(crate) async fn sweeps_list(
     put,
     path = "/v1/ops/sweeps/{kind}",
     tag = "ops",
-    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot | raw_ttl | alerts")),
+    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot | raw_ttl | alerts | library")),
     request_body = UpdateSweepBody,
     description = "Enable/disable a sweep or retune its cadence. Enabling schedules it to run on the next scheduler tick. Admin scope.",
     responses(
@@ -195,7 +195,7 @@ pub(crate) async fn sweep_update(
     post,
     path = "/v1/ops/sweeps/{kind}/run",
     tag = "ops",
-    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot | raw_ttl | alerts")),
+    params(("kind" = String, Path, description = "Sweep kind: divergence | health_snapshot | raw_ttl | alerts | library")),
     description = "Trigger a one-shot run now — marks the sweep due so the worker picks it up within ~20s. Works whether or not the sweep is enabled. Admin scope.",
     responses(
         (status = 200, description = "Run queued", body = RunSweepResponse),
@@ -291,6 +291,30 @@ async fn execute(admin: PgPool, provider: Arc<dyn ChatProvider>, kind: String) {
         // Evaluate every org's health breaches and push them to the operator
         // webhook — the sweep that makes "nothing went red" impossible.
         "alerts" => crate::alerts::alert_sweep(&admin).await,
+        // LB3: mine candidates for the Library from signal the org already
+        // produced (unclaimed drifts, reinforced practices, settled
+        // contradictions). A generator, never an authority: everything lands
+        // as `proposed`, and rejected signals stay out for the dedup window.
+        "library" => {
+            let window = std::env::var("BRAINIAC_LIBRARY_DEDUP_DAYS")
+                .ok()
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .filter(|d| *d > 0)
+                .unwrap_or(brainiac_pipeline::library_sweep::DEFAULT_DEDUP_WINDOW_DAYS);
+            brainiac_pipeline::library_sweep::mine_all(&admin, window)
+                .await
+                .map(|s| {
+                    format!(
+                        "{} candidates across {} orgs ({} drift, {} reinforced, {} convention; {} deduped)",
+                        s.candidates(),
+                        s.orgs,
+                        s.from_divergence,
+                        s.from_feedback,
+                        s.from_contradiction,
+                        s.deduped
+                    )
+                })
+        }
         other => Err(anyhow::anyhow!("unknown sweep kind '{other}'")),
     };
     let ms = start.elapsed().as_millis() as i64;

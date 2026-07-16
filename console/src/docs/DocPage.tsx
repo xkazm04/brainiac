@@ -9,6 +9,7 @@
 import Link from "next/link";
 
 import {
+  band,
   BORDER,
   FONT_DISPLAY,
   FONT_MONO,
@@ -18,7 +19,7 @@ import {
   LABEL,
   MAGENTA,
   PANEL,
-  band,
+  withAlpha,
 } from "@/design/theme";
 import type { DocDetail, DocRevisionSummary, RevisionPolicy } from "@/lib/types";
 
@@ -53,7 +54,7 @@ function Chip({ children, accent }: { children: React.ReactNode; accent: string 
   return (
     <span
       className={`${FONT_MONO} rounded-full border px-2.5 py-[2px] text-[10px] uppercase tracking-[0.14em]`}
-      style={{ color: accent, borderColor: `${accent}55` }}
+      style={{ color: accent, borderColor: withAlpha(accent, 0.33) }}
     >
       {children}
     </span>
@@ -117,7 +118,7 @@ export default function DocPage({ detail, revisions, approve, edit }: DocPagePro
             // Offline: state the fact, but never wire a publish button to demo data.
             <div
               className="rounded-lg border p-5"
-              style={{ borderColor: `${accent}40`, background: `${accent}0d` }}
+              style={{ borderColor: withAlpha(accent, 0.25), background: withAlpha(accent, 0.05) }}
             >
               <span className={LABEL} style={{ color: accent }}>
                 revision awaiting review
@@ -181,7 +182,7 @@ export default function DocPage({ detail, revisions, approve, edit }: DocPagePro
                 className="flex flex-wrap items-center justify-between gap-3 rounded-lg p-4"
                 style={{
                   background: PANEL,
-                  border: `1px solid ${isCurrent ? `${p.accent}55` : BORDER}`,
+                  border: `1px solid ${isCurrent ? withAlpha(p.accent, 0.33) : BORDER}`,
                 }}
               >
                 <div className="flex items-center gap-3">

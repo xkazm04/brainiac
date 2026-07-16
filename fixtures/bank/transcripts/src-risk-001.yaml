@@ -1,0 +1,19 @@
+# GENERATED extraction gold for risk.
+id: src-risk-001
+team: team-risk
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in risk today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "exposure ledger must retain every screening decision for five years, including the ones that cleared"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-risk-0002
+    kind: fact
+    content_gist: "exposure ledger must retain every screening decision for five years, including t"
+    entities: [ent-hub-ledger-risk-0]
+    visibility: org
+distractors: []

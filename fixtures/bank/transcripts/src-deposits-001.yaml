@@ -1,0 +1,19 @@
+# GENERATED extraction gold for deposits.
+id: src-deposits-001
+team: team-deposits
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in deposits today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "bureau score takes the bureau score at application time and freezes it for the life of the decision"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-deposits-0005
+    kind: decision
+    content_gist: "bureau score takes the bureau score at application time and freezes it for the l"
+    entities: [ent-deposits-bureau-score]
+    visibility: org
+distractors: []

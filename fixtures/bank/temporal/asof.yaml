@@ -1,0 +1,100 @@
+# GENERATED from the supersession chains: at the old memory's midpoint IT is
+# the answer; at the new one's midpoint the new one is. Both instants sit
+# inside their memory's validity window by construction.
+cases:
+  - id: tmp-001
+    question: "replay a stuck batch through tokenizer-uk with the settlement CLI, and"
+    as_of: "2026-06-18T12:00:00Z"
+    expected_memory: mem-payments-0008
+  - id: tmp-002
+    question: "replay a stuck batch through tokenizer-uk with the settlement CLI, and"
+    as_of: "2026-11-30T12:00:00Z"
+    expected_memory: mem-payments-0008-v2
+  - id: tmp-003
+    question: "3ds-broker publishes settlement batches at 14:00 UTC, and its latency "
+    as_of: "2026-04-12T00:00:00Z"
+    expected_memory: mem-payments-0010
+  - id: tmp-004
+    question: "3ds-broker publishes settlement batches at 14:00 UTC, and its latency "
+    as_of: "2026-09-28T12:00:00Z"
+    expected_memory: mem-payments-0010-v2
+  - id: tmp-005
+    question: "chargeback representment through 3ds-broker is capped at one attempt p"
+    as_of: "2025-02-21T12:00:00Z"
+    expected_memory: mem-payments-0019
+  - id: tmp-006
+    question: "chargeback representment through 3ds-broker is capped at one attempt p"
+    as_of: "2026-10-12T12:00:00Z"
+    expected_memory: mem-payments-0019-v2
+  - id: tmp-007
+    question: "retrying against posting engine during a settlement window piles reque"
+    as_of: "2026-02-03T12:00:00Z"
+    expected_memory: mem-payments-0021
+  - id: tmp-008
+    question: "retrying against posting engine during a settlement window piles reque"
+    as_of: "2026-11-22T12:00:00Z"
+    expected_memory: mem-payments-0021-v2
+  - id: tmp-009
+    question: "instant rail publishes settlement batches at 14:00 UTC, and its latenc"
+    as_of: "2025-04-04T12:00:00Z"
+    expected_memory: mem-payments-0051
+  - id: tmp-010
+    question: "instant rail publishes settlement batches at 14:00 UTC, and its latenc"
+    as_of: "2026-12-30T12:00:00Z"
+    expected_memory: mem-payments-0051-v2
+  - id: tmp-011
+    question: "settlement-batcher-uk publishes settlement batches at 14:00 UTC, and i"
+    as_of: "2026-04-10T12:00:00Z"
+    expected_memory: mem-payments-0058
+  - id: tmp-012
+    question: "settlement-batcher-uk publishes settlement batches at 14:00 UTC, and i"
+    as_of: "2027-04-05T12:00:00Z"
+    expected_memory: mem-payments-0058-v2
+  - id: tmp-013
+    question: "replay a stuck batch through instant rail with the settlement CLI, and"
+    as_of: "2024-11-21T12:00:00Z"
+    expected_memory: mem-payments-0067
+  - id: tmp-014
+    question: "replay a stuck batch through instant rail with the settlement CLI, and"
+    as_of: "2026-04-26T00:00:00Z"
+    expected_memory: mem-payments-0067-v2
+  - id: tmp-015
+    question: "settlement-batcher-legacy publishes settlement batches at 14:00 UTC, a"
+    as_of: "2025-03-01T12:00:00Z"
+    expected_memory: mem-payments-0070
+  - id: tmp-016
+    question: "settlement-batcher-legacy publishes settlement batches at 14:00 UTC, a"
+    as_of: "2026-08-31T12:00:00Z"
+    expected_memory: mem-payments-0070-v2
+  - id: tmp-017
+    question: "replay a stuck batch through settlement-batcher-eu with the settlement"
+    as_of: "2026-03-01T12:00:00Z"
+    expected_memory: mem-payments-0081
+  - id: tmp-018
+    question: "replay a stuck batch through settlement-batcher-eu with the settlement"
+    as_of: "2026-12-12T12:00:00Z"
+    expected_memory: mem-payments-0081-v2
+  - id: tmp-019
+    question: "retrying against settlement-batcher during a settlement window piles r"
+    as_of: "2026-03-17T12:00:00Z"
+    expected_memory: mem-payments-0093
+  - id: tmp-020
+    question: "retrying against settlement-batcher during a settlement window piles r"
+    as_of: "2026-10-18T12:00:00Z"
+    expected_memory: mem-payments-0093-v2
+  - id: tmp-021
+    question: "scheme rail rejects any instruction whose end-to-end id is reused insi"
+    as_of: "2025-03-20T12:00:00Z"
+    expected_memory: mem-payments-0106
+  - id: tmp-022
+    question: "scheme rail rejects any instruction whose end-to-end id is reused insi"
+    as_of: "2026-12-19T00:00:00Z"
+    expected_memory: mem-payments-0106-v2
+  - id: tmp-023
+    question: "retrying against posting engine during a settlement window piles reque"
+    as_of: "2026-03-16T12:00:00Z"
+    expected_memory: mem-payments-0110
+  - id: tmp-024
+    question: "retrying against posting engine during a settlement window piles reque"
+    as_of: "2027-06-03T00:00:00Z"
+    expected_memory: mem-payments-0110-v2

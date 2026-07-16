@@ -1,0 +1,19 @@
+# GENERATED extraction gold for channels.
+id: src-channels-001
+team: team-channels
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in channels today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "onboarding check caches the customer profile for 15 minutes, so a KYC status change is invisible to the app until it expires"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-channels-0000
+    kind: pitfall
+    content_gist: "onboarding check caches the customer profile for 15 minutes, so a KYC status cha"
+    entities: [ent-hub-kyc-channels-0]
+    visibility: org
+distractors: []

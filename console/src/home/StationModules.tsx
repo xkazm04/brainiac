@@ -31,7 +31,14 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
 
 import { CANONICAL_DEMO, CONTRADICTION, QUEUE } from "../design/demo-data";
-import { band, FONT_MONO, GOLD, LABEL, MAGENTA } from "../design/theme";
+import {
+  band,
+  FONT_MONO,
+  GOLD,
+  LABEL,
+  MAGENTA,
+  withAlpha,
+} from "../design/theme";
 
 export type StationModuleKind =
   | "gate"
@@ -39,7 +46,8 @@ export type StationModuleKind =
   | "cortex"
   | "divergence"
   | "page"
-  | "health";
+  | "health"
+  | "library";
 
 const dim = (a: number) => `rgba(233,237,255,${a})`;
 const ALPHA = band("alpha");
@@ -49,7 +57,7 @@ const DELTA = band("delta");
 
 /**
  * Translucent edge of an accent. The palette mixes hex (MAGENTA) and hsla
- * (everything from band()), so the `${tone}55` hex-append trick used elsewhere
+ * (everything from band()), so the withAlpha(tone, 0.33) hex-append trick used elsewhere
  * in the console silently produces invalid CSS for half the theme. This does
  * not.
  */
@@ -146,98 +154,135 @@ const KIND_TONE: Record<string, string> = {
   howto: BETA,
 };
 
-const GATE_DWELL = 2800;
+const GATE_DWELL = 2600;
 
 /**
- * A window of three over an endless queue. The card at the head is *in the
- * gate*: the reviewer's clock runs across it, it is signed, and it leaves —
- * the queue shifts up and the next proposal arrives from below. The approve /
- * reject pair is the read-only stamp the demo reviews page uses: nothing is
- * wired behind it, here least of all.
+ * The triage rail, minimized — the shape of the surface an operator actually
+ * works (app/console/modules/reviews/ReviewWorklist.tsx, which won the
+ * 2026-07-15 round over batch-signing).
+ *
+ * It is a rail and not a stack of cards for the same reason the module is: the
+ * queue is long, so a reviewer needs the shape of the backlog on screen and one
+ * item under the head — not their scroll position standing in for both. The
+ * cursor walks; the row under it opens in the pane beside it and is signed.
+ * The approve/reject pair is the demo's inert stamp: nothing is wired behind it.
  */
 function GateFigure({ tone, caption, active }: FigureProps) {
   const step = useStep(QUEUE.length, GATE_DWELL, active);
   const reduce = !!useReducedMotion();
+  const focused = QUEUE[step % QUEUE.length];
 
   return (
-    <Frame title="review gate · pending" tone={tone} caption={caption}>
-      <div className="flex flex-col gap-2">
-        <AnimatePresence initial={false} mode="popLayout">
-          {[0, 1, 2].map((k) => {
-            const abs = step + k;
-            const q = QUEUE[abs % QUEUE.length];
-            const head = k === 0;
+    <Frame title="review gate · the rail" tone={tone} caption={caption}>
+      <div className="flex flex-col gap-3">
+        {/* the rail: every pending decision, one line each */}
+        {/* min-w-0: without it a grid/flex child refuses to shrink below its
+            content, and `truncate` never fires — the rail just overflows. */}
+        <div className="flex min-w-0 flex-col gap-px">
+          <div
+            className={`${LABEL} flex items-center justify-between pb-1.5`}
+            style={{ color: dim(0.3) }}
+          >
+            <span>queue</span>
+            <span>{QUEUE.length} pending</span>
+          </div>
+          {QUEUE.map((q, i) => {
+            const on = i === step % QUEUE.length;
             return (
-              <motion.article
-                key={abs}
-                layout
-                initial={{ opacity: 0, y: 24, scale: 0.96 }}
-                animate={{ opacity: head ? 1 : 0.5 - k * 0.14, y: 0, scale: 1 }}
-                exit={{ opacity: 0, x: 48, filter: "blur(3px)" }}
-                transition={{ duration: 0.45, ease: "easeOut" }}
-                className="rounded-lg border p-2.5"
-                style={{
-                  borderColor: head ? soft(ALPHA, 0.4) : "rgba(255,255,255,0.07)",
-                  background: head ? soft(ALPHA, 0.05) : "transparent",
+              <motion.div
+                key={q.id}
+                className="relative flex items-center gap-2 rounded-md px-2 py-1.5"
+                animate={{
+                  backgroundColor: on ? soft(ALPHA, 0.1) : "rgba(0,0,0,0)",
                 }}
+                transition={{ duration: 0.25 }}
               >
-                <div className="flex items-center gap-1.5">
-                  <Chip tone={KIND_TONE[q.kind]}>{q.kind}</Chip>
-                  <Chip>team {q.team}</Chip>
-                  <span
-                    className={`${FONT_MONO} ml-auto text-[10px]`}
-                    style={{ color: dim(0.3) }}
-                  >
-                    waiting {q.age}
-                  </span>
-                </div>
-                <p
-                  className={`${FONT_MONO} mt-2 line-clamp-2 text-[12px] leading-relaxed`}
-                  style={{ color: dim(head ? 0.8 : 0.4) }}
+                {/* the head: which row the keyboard is on */}
+                <motion.span
+                  className="absolute left-0 top-1/2 h-[70%] w-[2px] -translate-y-1/2 rounded-full"
+                  style={{ background: ALPHA }}
+                  animate={{ opacity: on ? 1 : 0 }}
+                  transition={{ duration: 0.2 }}
+                />
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-sm"
+                  style={{ background: KIND_TONE[q.kind] ?? dim(0.3) }}
+                />
+                <span
+                  className={`${FONT_MONO} min-w-0 flex-1 truncate text-[11px]`}
+                  style={{ color: dim(on ? 0.85 : 0.4) }}
                 >
                   {q.content}
-                </p>
-                {head && (
-                  <>
-                    <div className="mt-2.5 flex items-center gap-2 border-t border-white/[0.07] pt-2.5">
-                      <span
-                        className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-[10px]`}
-                        style={{ borderColor: soft(GOLD, 0.35), color: soft(GOLD, 0.75) }}
-                      >
-                        approve
-                      </span>
-                      <span
-                        className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-[10px]`}
-                        style={{ borderColor: soft(MAGENTA, 0.3), color: soft(MAGENTA, 0.65) }}
-                      >
-                        reject
-                      </span>
-                      <span
-                        className={`${FONT_MONO} ml-auto text-[10px]`}
-                        style={{ color: dim(0.3) }}
-                      >
-                        {q.rule}
-                      </span>
-                    </div>
-                    {/* the gate: a named human is signing, and the SLO clock runs */}
-                    <div
-                      className="mt-2.5 h-[2px] w-full overflow-hidden rounded-full"
-                      style={{ background: "rgba(255,255,255,0.07)" }}
-                    >
-                      <motion.div
-                        className="h-full rounded-full"
-                        style={{ background: GOLD }}
-                        initial={{ width: reduce ? "100%" : "0%" }}
-                        animate={{ width: "100%" }}
-                        transition={{ duration: reduce ? 0 : GATE_DWELL / 1000, ease: "linear" }}
-                      />
-                    </div>
-                  </>
-                )}
-              </motion.article>
+                </span>
+                <span
+                  className={`${FONT_MONO} ml-auto shrink-0 text-[10px]`}
+                  style={{ color: dim(on ? 0.45 : 0.25) }}
+                >
+                  {q.age}
+                </span>
+              </motion.div>
             );
           })}
-        </AnimatePresence>
+          <div
+            className={`${FONT_MONO} mt-1.5 flex gap-2 border-t border-white/[0.07] pt-1.5 text-[10px]`}
+            style={{ color: dim(0.28) }}
+          >
+            <span>j/k move</span>
+            <span>a approve</span>
+            <span>r reject</span>
+          </div>
+        </div>
+
+        {/* the pane: the one item under the head, in full */}
+        <motion.div
+          key={focused.id}
+          initial={reduce ? false : { opacity: 0, x: 6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+          className="rounded-lg border p-2.5"
+          style={{ borderColor: soft(ALPHA, 0.3), background: soft(ALPHA, 0.04) }}
+        >
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Chip tone={KIND_TONE[focused.kind]}>{focused.kind}</Chip>
+            <Chip>team {focused.team}</Chip>
+          </div>
+          <p
+            className={`${FONT_MONO} mt-2 text-[12px] leading-relaxed`}
+            style={{ color: dim(0.8) }}
+          >
+            {focused.content}
+          </p>
+          <p className={`${FONT_MONO} mt-2 text-[10px]`} style={{ color: dim(0.35) }}>
+            {focused.rule} · waiting {focused.age}
+          </p>
+          <div className="mt-2.5 flex items-center gap-2 border-t border-white/[0.07] pt-2.5">
+            <span
+              className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-[10px]`}
+              style={{ borderColor: soft(GOLD, 0.35), color: soft(GOLD, 0.75) }}
+            >
+              approve
+            </span>
+            <span
+              className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-[10px]`}
+              style={{ borderColor: soft(MAGENTA, 0.3), color: soft(MAGENTA, 0.65) }}
+            >
+              reject
+            </span>
+          </div>
+          {/* the SLO clock on the item in the gate */}
+          <div
+            className="mt-2.5 h-[2px] w-full overflow-hidden rounded-full"
+            style={{ background: "rgba(255,255,255,0.07)" }}
+          >
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: GOLD }}
+              initial={{ width: reduce ? "100%" : "0%" }}
+              animate={{ width: "100%" }}
+              transition={{ duration: reduce ? 0 : GATE_DWELL / 1000, ease: "linear" }}
+            />
+          </div>
+        </motion.div>
       </div>
     </Frame>
   );
@@ -879,6 +924,93 @@ function HealthFigure({ tone, caption }: FigureProps) {
 
 // ── the switchboard ──────────────────────────────────────────────────────────
 
+/** The Library station: a proposed rule waits at the gate, a named human
+ *  adopts it, and an agent fetches it — the three-beat loop of the normative
+ *  layer (LIBRARY-PLAN), told with the same vocabulary the console uses. */
+function LibraryFigure({ tone, caption, active }: FigureProps) {
+  const step = useStep(3, 2600, active);
+  const adopted = step >= 1;
+  const fetched = step === 2;
+
+  return (
+    <Frame title="library · a rule" tone={tone} caption={caption}>
+      <div className={LABEL} style={{ color: dim(0.35) }}>
+        the rule shelf
+      </div>
+      <div className="mt-2 flex flex-col gap-1.5">
+        <div
+          className="flex items-center gap-2 rounded-md border px-2 py-1.5"
+          style={{ borderColor: "rgba(255,255,255,0.08)" }}
+        >
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: BETA }} />
+          <span className={`${FONT_MONO} text-[11px]`} style={{ color: dim(0.72) }}>
+            no-unwrap-in-handlers · mandatory
+          </span>
+        </div>
+        <motion.div
+          className="flex items-center gap-2 rounded-md border px-2 py-1.5"
+          animate={{
+            borderColor: adopted ? soft(BETA, 0.35) : soft(GOLD, 0.45),
+            backgroundColor: adopted ? soft(BETA, 0.04) : soft(GOLD, 0.05),
+          }}
+          transition={{ duration: 0.4 }}
+          style={{ borderStyle: adopted ? "solid" : "dashed" }}
+        >
+          <motion.span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            animate={{ backgroundColor: adopted ? BETA : GOLD }}
+          />
+          <span className={`${FONT_MONO} text-[11px]`} style={{ color: dim(0.72) }}>
+            service-retry-policy
+          </span>
+          <motion.span
+            key={adopted ? "adopted" : "gate"}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className={`${FONT_MONO} ml-auto text-[10px]`}
+            style={{ color: adopted ? BETA : GOLD }}
+          >
+            {adopted ? "adopted · signed" : "at the gate — a human decides"}
+          </motion.span>
+        </motion.div>
+      </div>
+
+      <div
+        className={`${LABEL} mt-3 flex items-center gap-2`}
+        style={{ color: fetched ? THETA : dim(0.3) }}
+      >
+        <motion.span
+          animate={{ y: fetched ? [0, 3, 0] : 0 }}
+          transition={{ duration: 0.6, repeat: fetched ? Infinity : 0 }}
+        >
+          ↓
+        </motion.span>
+        served — adopted rules only
+      </div>
+
+      <motion.div
+        className="mt-2 flex items-center gap-2 rounded-lg border p-3"
+        animate={{
+          borderColor: fetched ? soft(THETA, 0.35) : "rgba(255,255,255,0.08)",
+          backgroundColor: fetched ? soft(THETA, 0.04) : "rgba(255,255,255,0)",
+        }}
+        transition={{ duration: 0.4 }}
+      >
+        <span className={`${FONT_MONO} text-[11px]`} style={{ color: dim(0.72) }}>
+          coding agent · standards_for(&quot;rust&quot;)
+        </span>
+        <motion.span
+          className={`${FONT_MONO} ml-auto text-[10px]`}
+          animate={{ opacity: fetched ? 1 : 0 }}
+          style={{ color: THETA }}
+        >
+          2 rules · usage → team, never a name
+        </motion.span>
+      </motion.div>
+    </Frame>
+  );
+}
+
 const FIGURES: Record<StationModuleKind, (p: FigureProps) => ReactNode> = {
   gate: GateFigure,
   contradiction: ContradictionFigure,
@@ -886,6 +1018,7 @@ const FIGURES: Record<StationModuleKind, (p: FigureProps) => ReactNode> = {
   divergence: DivergenceFigure,
   page: PageFigure,
   health: HealthFigure,
+  library: LibraryFigure,
 };
 
 export default function StationModule({

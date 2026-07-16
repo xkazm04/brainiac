@@ -107,6 +107,7 @@ pub async fn router(
         .route("/v1/queue/dead-letters", get(queue_dead_letters))
         .route("/v1/queue/dead-letters/{id}/requeue", post(queue_requeue))
         .merge(crate::console::routes())
+        .merge(crate::library::routes())
         .merge(crate::provision::routes())
         // Explicit request-body cap. The largest free-text field REST accepts
         // is `memory_add` content (MAX_CONTENT_CHARS = 8000 chars ≈ 32 KiB of

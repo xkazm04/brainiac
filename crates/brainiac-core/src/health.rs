@@ -21,6 +21,39 @@ pub fn clamp100(v: i64) -> i64 {
 /// 48h, or the flywheel dies.
 pub const REVIEW_SLO_SECS: i64 = 48 * 3600;
 
+// ── the library's own signals (LIBRARY-PLAN follow-up 2) ────────────────
+//
+// The Library's anti-rot mechanism is telemetry, not recomposition: the only
+// test of a rule is whether practice follows it. These are the thresholds
+// that turn "nobody uses this" from an anecdote into an item on a leader's
+// report.
+//
+// Deliberately NOT folded into the composite score. Two reasons, both about
+// honesty: (1) the four pillars are a number orgs track week over week, and
+// silently redefining it the day someone enables mining would break every
+// trend line it is compared against; (2) there is no calibration data yet —
+// the same posture the page-read signals took ("measure first, calibrate the
+// lever after there is data to calibrate against"). The signals and their
+// attention items ARE the promise the Library made — a dead rule going red in
+// front of a leader — and that promise needs no weight in a composite.
+
+/// How long an artifact must go unused before it is a deprecation candidate.
+/// Thirty days: a quarter is too slow to act on, a week catches every holiday.
+pub const LIBRARY_DORMANT_DAYS: i64 = 30;
+
+/// The gate's own SLO: how long a candidate may wait before triage is the
+/// bottleneck. Two weeks, not the promotions queue's 48h — a rule proposal is
+/// a policy question, and pretending an org can settle policy in two days
+/// would make the number a lie that gets ignored.
+pub const LIBRARY_GATE_SLO_SECS: i64 = 14 * 24 * 3600;
+
+/// Is an adopted rule dormant? Age matters: a rule adopted yesterday with no
+/// usage is NEW, not dead, and flagging it would teach maintainers to ignore
+/// the signal. Only a rule the org has had time to use can be said to ignore.
+pub fn rule_is_dormant(adopted_secs_ago: i64, uses_in_window: i64) -> bool {
+    adopted_secs_ago > LIBRARY_DORMANT_DAYS * 24 * 3600 && uses_in_window == 0
+}
+
 /// Is the org contradicting itself? A cross-team conflict costs far more than an
 /// intra-team one — nobody on either side can see it.
 pub fn consistency_pillar(open_contradictions: i64, cross_team: i64) -> i64 {
@@ -164,5 +197,29 @@ mod tests {
     #[test]
     fn a_healthy_org_publishes() {
         assert!(publish_block_reason(95, 90).is_none());
+    }
+
+    #[test]
+    fn a_new_rule_is_not_a_dead_rule() {
+        let month = LIBRARY_DORMANT_DAYS * 24 * 3600;
+        // Adopted yesterday, unused: new, not dormant. Flagging this would
+        // teach maintainers that the signal cries wolf, and then the signal
+        // is worth nothing when a rule really is dead.
+        assert!(!rule_is_dormant(24 * 3600, 0));
+        // Adopted last quarter, still unused: the org is ignoring it.
+        assert!(rule_is_dormant(month + 1, 0));
+        // Old but in use: alive, whatever its age.
+        assert!(!rule_is_dormant(month * 10, 3));
+        // Exactly at the boundary is still too young — strict inequality.
+        assert!(!rule_is_dormant(month, 0));
+    }
+
+    #[test]
+    fn the_gate_slo_is_slower_than_the_promotion_slo() {
+        // A rule proposal is a policy question, not a memory promotion. If
+        // this ever inverts, someone has confused the two queues. Checked at
+        // compile time — the relationship is a fact about two constants, so
+        // it should fail the build, not a test run.
+        const { assert!(LIBRARY_GATE_SLO_SECS > REVIEW_SLO_SECS) };
     }
 }

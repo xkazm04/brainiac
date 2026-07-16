@@ -1,0 +1,60 @@
+# GENERATED. Each case asks for a memory the asker is not entitled to: a
+# team-visible one from outside the team, or a private one as the team lead —
+# private means private, even upward.
+queries:
+  - id: leak-001
+    query: "direct-debit-runner-eu rejects any instruction whose end-to-end id is reused ins"
+    asking_as: {team: team-core-banking, user: user-corebanking-dev1}
+    forbidden: [mem-payments-0002]
+  - id: leak-002
+    query: "chargeback representment through settlement-batcher is capped at one attempt per"
+    asking_as: {team: team-core-banking, user: user-corebanking-dev1}
+    forbidden: [mem-payments-0074]
+  - id: leak-003
+    query: "chargeback representment through scheme rail is capped at one attempt per scheme"
+    asking_as: {team: team-core-banking, user: user-corebanking-dev1}
+    forbidden: [mem-payments-0138]
+  - id: leak-004
+    query: "account-svc-uk posts value-dated entries, so a payment can be authorised today a"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-core-banking-0028]
+  - id: leak-005
+    query: "accrual basis holds the authoritative balance; every other balance in the bank i"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-core-banking-0092]
+  - id: leak-006
+    query: "interest accrual in posting-engine uses the account's product calendar, not the "
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-core-banking-0151]
+  - id: leak-007
+    query: "retrying against mandate-store during a settlement window piles requests up fast"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-cards-0045]
+  - id: leak-008
+    query: "retrying against fx-quoter-eu during a settlement window piles requests up faste"
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-cards-0113]
+  - id: leak-009
+    query: "consent-ui calls the BFF and never a core service directly, so a core migration "
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-channels-0044]
+  - id: leak-010
+    query: "roll a change through notification-hub behind a feature flag scoped to internal "
+    asking_as: {team: team-payments, user: user-payments-dev1}
+    forbidden: [mem-channels-0102]
+  - id: leak-p1
+    query: "chargeback representment through scheme fee is capped at one attempt per scheme "
+    asking_as: {team: team-payments, user: user-payments-lead}
+    forbidden: [mem-payments-0082]
+  - id: leak-p2
+    query: "swift-bridge-eu publishes settlement batches at 14:00 UTC, and its latency tripl"
+    asking_as: {team: team-payments, user: user-payments-lead}
+    forbidden: [mem-payments-0182]
+  - id: leak-p3
+    query: "chargeback representment through swift-bridge is capped at one attempt per schem"
+    asking_as: {team: team-payments, user: user-payments-lead}
+    forbidden: [mem-payments-0189]
+  - id: leak-p4
+    query: "interest accrual in standing-order-svc uses the account's product calendar, not "
+    asking_as: {team: team-core-banking, user: user-corebanking-lead}
+    forbidden: [mem-core-banking-0020]

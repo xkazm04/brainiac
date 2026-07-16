@@ -1,0 +1,19 @@
+# GENERATED extraction gold for platform.
+id: src-platform-001
+team: team-platform
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in platform today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "rotate a credential in schema-registry and roll the consumers before revoking the old one — revoke-first causes an outage"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-platform-0008
+    kind: howto
+    content_gist: "rotate a credential in schema-registry and roll the consumers before revoking th"
+    entities: [ent-platform-schema-registry]
+    visibility: org
+distractors: []

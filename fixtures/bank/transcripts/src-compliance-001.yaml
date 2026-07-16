@@ -1,0 +1,19 @@
+# GENERATED extraction gold for compliance.
+id: src-compliance-001
+team: team-compliance
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in compliance today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "a personal data export from alert-router-legacy must complete within thirty days of the request"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-compliance-0000
+    kind: fact
+    content_gist: "a personal data export from alert-router-legacy must complete within thirty days"
+    entities: [ent-compliance-alert-router-legacy]
+    visibility: org
+distractors: []

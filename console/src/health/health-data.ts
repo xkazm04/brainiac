@@ -34,6 +34,22 @@ export const DEMO_HEALTH: KnowledgeHealth = {
     pages_dirty: 2,
     pages_pending_review: 1,
     oldest_dirty_secs: 69_000,
+    // Page-read analytics (migration 0025). Consistent with the story above:
+    // pages are read, mostly by agents, and one dirty page was read while
+    // stale — the signal that ranks rot.
+    page_reads_30d: 96,
+    agent_page_reads_30d: 61,
+    dirty_page_reads_30d: 7,
+    pages_never_read: 3,
+    // The library. Consistent with "Watch": the shelf is real and mostly
+    // used, one rule has gone quiet, and a candidate has been at the gate
+    // long enough to be worth naming.
+    standards_adopted: 9,
+    standards_at_gate: 2,
+    oldest_gate_secs: 1_900_000,
+    standards_dormant: 1,
+    skills_published: 3,
+    skills_dormant: 1,
   },
   attention: [
     {

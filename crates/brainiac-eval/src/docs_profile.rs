@@ -400,6 +400,7 @@ pub async fn run(
                     .collect(),
                 query: b.query.clone(),
                 window_days: None,
+                stack: None,
                 max_items: 12,
             });
             brainiac_store::documents::insert_section(

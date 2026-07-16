@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 // No global chrome here: the operator header lives in the console-module
-// layout (app/console/(modules)/layout.tsx) and the public shells own theirs —
+// layout (app/console/layout.tsx) and the public shells own theirs —
 // route structure now draws the boundary that used to be path-matching.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

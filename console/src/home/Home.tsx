@@ -75,6 +75,7 @@ const PUBLIC_NAV = [
   { path: "/pitch", label: "the pitch" },
   { path: "/demo", label: "live demo" },
   { path: "/kb", label: "knowledge base" },
+  { path: "/library", label: "library" },
   { path: "/console", label: "console →" },
 ];
 
@@ -365,6 +366,18 @@ export default function Home({
     },
     {
       n: "06",
+      title: "Judgment ships to the agents.",
+      body: "Detected drift becomes a proposed rule; a named human adopts it; agents fetch the org's standards for their stack — and its packaged skills — before writing a line. Usage flows back per team, never per person, so a rule nobody follows retires out loud.",
+      artifact:
+        "an agent asks standards_for(\"rust\") and gets only what a named human adopted — proposals never ship as policy.",
+      tone: band("beta", 74),
+      wave: "quantized" as const,
+      module: "library" as const,
+      href: isPublic ? "/demo?m=standards" : "/console?m=standards",
+      cta: isPublic ? "browse the library" : "open the library",
+    },
+    {
+      n: "07",
       title: "The org has a vital sign.",
       body: "Consistency, currency, liquidity, governance — four pillars folded into one score a leader can hold the org to. One unresolved cross-team contradiction caps the grade: no volume of good memories can outvote it. Track the trend, and ignore any single reading.",
       artifact:
@@ -623,7 +636,7 @@ export default function Home({
   );
 }
 
-type WaveKind = "in" | "anti" | "locked" | "beat" | "composed" | "trace";
+type WaveKind = "in" | "anti" | "locked" | "beat" | "composed" | "trace" | "quantized";
 
 /**
  * Station mini-figures, one physics idea each:
@@ -702,6 +715,40 @@ function StationWave({ kind, tone }: { kind: WaveKind; tone: string }) {
         </text>
         <text x="4" y="152" fontSize="10" fill={tone} style={labelStyle}>
           one page — recompiled on change
+        </text>
+      </svg>
+    );
+  }
+
+  if (kind === "quantized") {
+    // Practice, quantized: each team's noisy waveform above, and below it the
+    // same signal snapped to the adopted rule's levels — judgment as a
+    // carrier every agent can lock onto.
+    const noisy = (x: number) =>
+      55 +
+      Math.sin((x / w) * Math.PI * 6) * 16 +
+      Math.sin((x / w) * Math.PI * 15 + 1.2) * 7 +
+      Math.sin((x / w) * Math.PI * 29 + 0.4) * 3.5;
+    const LEVELS = 4;
+    const snapped = (x: number) => {
+      const v = noisy(x) - 55; // centre, quantize, re-centre lower
+      const q = Math.round((v / 27) * ((LEVELS - 1) / 2)) * (27 / ((LEVELS - 1) / 2));
+      return 172 + q;
+    };
+    return (
+      <svg viewBox={`0 0 ${w} 220`} className="w-full max-w-md" role="img" aria-label="A noisy practice waveform quantized onto an adopted standard's levels">
+        <motion.path d={mkFn(noisy)} {...wave} stroke="hsla(224,90%,72%,0.5)" {...inView} transition={{ duration: 0.9 }} />
+        <line x1="0" y1="132" x2={w} y2="132" stroke="rgba(255,255,255,0.12)" strokeDasharray="3 5" />
+        {/* the rule's levels — the grid practice snaps to */}
+        {Array.from({ length: LEVELS }, (_, i) => 145 + i * 18).map((y) => (
+          <line key={y} x1="0" y1={y} x2={w} y2={y} stroke="rgba(255,255,255,0.07)" strokeDasharray="2 6" />
+        ))}
+        <motion.path d={mkFn(snapped)} fill="none" stroke={tone} strokeWidth="2.4" {...sumView} transition={{ duration: 1.1, delay: 0.5 }} />
+        <text x="4" y="20" fontSize="10" fill="rgba(255,255,255,0.4)" style={labelStyle}>
+          practice · each team its own way
+        </text>
+        <text x="4" y="212" fontSize="10" fill={tone} style={labelStyle}>
+          quantized — one adopted rule, served to every agent
         </text>
       </svg>
     );

@@ -15,22 +15,25 @@ import { band, GROUND, type BandKey } from "./theme";
 export type RouteBand = BandKey | "ground";
 
 /**
- * The two halves of the product, and the reason the nav is grouped at all.
+ * The three layers of the product, and the reason the nav is grouped at all.
  *
  * "memory" is the substrate: what the org captured, what it disagrees about,
  * what it resolved to, and what is arriving. "knowledge" is what the field
  * computes on top of it — the review gate, the health composite, the compiled
- * pages, the standards board. Ten flat links made those read as one
- * undifferentiated pile; they are two different jobs, often two different people.
+ * pages, the drift board. "library" is the normative layer computed above
+ * both (LIBRARY-PLAN LB2): the org's ratified judgment — coding standards and
+ * agent skills. Flat links made those read as one undifferentiated pile; they
+ * are different jobs, often different people.
  *
- * `keys` is in neither. It is access, not knowledge — it sits with sign-out on
- * the right, where the identity affordances live.
+ * `keys` is in none of them. It is access, not knowledge — it sits with
+ * sign-out on the right, where the identity affordances live.
  */
-export type NavGroup = "memory" | "knowledge";
+export type NavGroup = "memory" | "knowledge" | "library";
 
 export const NAV_GROUPS: { id: NavGroup; label: string }[] = [
   { id: "memory", label: "memory" },
   { id: "knowledge", label: "knowledge" },
+  { id: "library", label: "library" },
 ];
 
 export interface ProductRoute {
@@ -70,9 +73,18 @@ export const PRODUCT_ROUTES: ProductRoute[] = [
   // teams' governed memories bound into one percept.
   { path: "/console?m=docs", segment: "docs", label: "pages", band: "gamma", group: "knowledge" },
   { path: "/console?m=reviews", segment: "reviews", label: "reviews", band: "alpha", group: "knowledge" },
-  // Standardization: where teams solved the same problem different ways (theta,
-  // the divergence band — same family as disputes/contradiction work).
-  { path: "/console?m=divergence", segment: "divergence", label: "standards", band: "theta", group: "knowledge" },
+  // The drift detector: where teams solved the same problem different ways
+  // (theta, the divergence band — same family as disputes/contradiction work).
+  // Label was "standards" until the Library claimed that word for the
+  // ARTIFACT (an adopted rule); this board is the DETECTOR that feeds it.
+  { path: "/console?m=divergence", segment: "divergence", label: "drift", band: "theta", group: "knowledge" },
+
+  // ── library: the normative layer — ratified judgment, distributed ───────
+  // Standards stay on theta: a rule is a ratified drift, same family, one
+  // band from detector to artifact. Skills are procedures agents actively
+  // pull and run — beta, the active-recall band.
+  { path: "/console?m=standards", segment: "standards", label: "standards", band: "theta", group: "library" },
+  { path: "/console?m=skills", segment: "skills", label: "skills", band: "beta", group: "library" },
 
   // ── access: grouped with sign-out, not with the knowledge ──────────────
   { path: "/console?m=keys", segment: "keys", label: "keys", band: "ground" },
@@ -91,6 +103,8 @@ export type ConsoleModuleId =
   | "health"
   | "docs"
   | "divergence"
+  | "standards"
+  | "skills"
   | "keys";
 
 /** The module /console opens on when ?m= is absent or junk. */
@@ -132,8 +146,8 @@ export const routeForPath = (pathname: string): ProductRoute | undefined =>
  */
 const PUBLIC_PATHS = new Set<string>(["/", "/login", "/signup"]);
 
-/** Public subtrees — each renders its own shell (pitch, demo tour, wiki). */
-const PUBLIC_SUBTREES = ["/pitch", "/demo", "/kb"];
+/** Public subtrees — each renders its own shell (pitch, demo tour, wiki, library). */
+const PUBLIC_SUBTREES = ["/pitch", "/demo", "/kb", "/library"];
 
 const inSubtree = (pathname: string, root: string): boolean =>
   pathname === root || pathname.startsWith(`${root}/`);

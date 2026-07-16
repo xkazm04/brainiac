@@ -23,6 +23,7 @@ import {
   LABEL,
   MAGENTA,
   PANEL,
+  withAlpha,
 } from "@/design/theme";
 import type { SweepSchedule } from "@/lib/types";
 import { runSweepAction, updateSweepAction } from "@/ops/sweep-actions";
@@ -134,7 +135,7 @@ export default function SweepControl({
             style={{
               color: schedule.enabled ? band("beta") : INK_DIM,
               border: `1px solid ${schedule.enabled ? band("beta") : BORDER}`,
-              background: schedule.enabled ? `${band("beta")}14` : "transparent",
+              background: schedule.enabled ? withAlpha(band("beta"), 0.08) : "transparent",
             }}
           >
             {schedule.enabled ? "scheduled ✓" : "schedule off"}
@@ -160,7 +161,7 @@ export default function SweepControl({
                 style={{
                   color: active ? band("gamma") : INK_DIM,
                   border: `1px solid ${active ? band("gamma") : BORDER}`,
-                  background: active ? `${band("gamma")}14` : "transparent",
+                  background: active ? withAlpha(band("gamma"), 0.08) : "transparent",
                 }}
               >
                 {c.label}

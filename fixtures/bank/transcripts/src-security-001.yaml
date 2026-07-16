@@ -1,0 +1,19 @@
+# GENERATED extraction gold for security.
+id: src-security-001
+team: team-security
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in security today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "dr-orchestrator-eu is the only supported path to production; the previous pipeline is frozen"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-security-0001
+    kind: decision
+    content_gist: "dr-orchestrator-eu is the only supported path to production; the previous pipeli"
+    entities: [ent-security-dr-orchestrator-eu]
+    visibility: org
+distractors: []

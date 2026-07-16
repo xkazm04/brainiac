@@ -319,6 +319,23 @@ async fn compose_section(
         .binding
         .clone()
         .context("composed section without a binding (schema check should prevent this)")?;
+
+    // A standards section is PROJECTED, not composed (LIBRARY-PLAN L8). The
+    // model is never called: a rule's statement is a sentence a named human
+    // ratified, and re-wording it would fork the org's own commitment. The
+    // render is deterministic, so a revision diff means "the org's judgment
+    // changed" — never "the model phrased it differently today".
+    if let Some(stack) = binding.stack.as_deref() {
+        let rendered = crate::standards_page::render_stack(conn, stack).await?;
+        return Ok(ComposedSection {
+            markdown: rendered.markdown,
+            cited: rendered.cited,
+            // Nothing to police: every sentence came from the Library, not a
+            // model. There is no such thing as an unbacked claim here.
+            unbacked: false,
+        });
+    }
+
     let mems = bound_memories(conn, pool, embedder, embedding_version, doc, &binding).await?;
 
     if mems.is_empty() {
@@ -707,6 +724,7 @@ pub async fn scaffold_entity_pages(
                         lifecycle,
                         query: name.clone(),
                         window_days: None,
+                        stack: None,
                         max_items: 10,
                     }),
                     pinned_content: None,

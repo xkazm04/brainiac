@@ -12,7 +12,14 @@ import { useState, useTransition } from "react";
 
 import type { ActionResult } from "./actions";
 import { resolveContradictionAction, reviewPromotionAction } from "./actions";
-import { band, FONT_MONO, GOLD, INK_DIM, MAGENTA } from "@/design/theme";
+import {
+  band,
+  FONT_MONO,
+  GOLD,
+  INK_DIM,
+  MAGENTA,
+  withAlpha,
+} from "@/design/theme";
 import type { ContradictionResolution } from "@/lib/types";
 
 const PILL =
@@ -48,7 +55,7 @@ export function PromotionButtons({ promotionId }: { promotionId: string }) {
         disabled={pending}
         onClick={() => run(() => reviewPromotionAction(promotionId, "approve"))}
         className={PILL}
-        style={{ borderColor: `${GOLD}66`, color: GOLD }}
+        style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
       >
         approve
       </button>
@@ -87,7 +94,7 @@ export function ContradictionButtons({
         title="A supersedes B"
         onClick={() => resolve("supersede", memoryAId)}
         className={PILL}
-        style={{ borderColor: `${GOLD}66`, color: GOLD }}
+        style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
       >
         A wins
       </button>
@@ -97,7 +104,7 @@ export function ContradictionButtons({
         title="B supersedes A"
         onClick={() => resolve("supersede", memoryBId)}
         className={PILL}
-        style={{ borderColor: `${GOLD}66`, color: GOLD }}
+        style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
       >
         B wins
       </button>
@@ -107,7 +114,7 @@ export function ContradictionButtons({
         title="Both stand — no contradiction"
         onClick={() => resolve("coexist")}
         className={PILL}
-        style={{ borderColor: `${ALPHA}66`, color: ALPHA }}
+        style={{ borderColor: withAlpha(ALPHA, 0.4), color: ALPHA }}
       >
         coexist
       </button>

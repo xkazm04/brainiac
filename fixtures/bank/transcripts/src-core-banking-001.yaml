@@ -1,0 +1,19 @@
+# GENERATED extraction gold for core-banking.
+id: src-core-banking-001
+team: team-core-banking
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in core-banking today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "book balance posts value-dated entries, so a payment can be authorised today and posted with yesterday's date"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-core-banking-0000
+    kind: decision
+    content_gist: "book balance posts value-dated entries, so a payment can be authorised today and"
+    entities: [ent-core-banking-book-balance]
+    visibility: org
+distractors: []

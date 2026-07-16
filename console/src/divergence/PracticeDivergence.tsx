@@ -25,6 +25,7 @@ import {
   LABEL,
   MAGENTA,
   PANEL,
+  withAlpha,
 } from "@/design/theme";
 import type { PracticeDivergence, PracticeDivergences } from "@/lib/types";
 
@@ -77,7 +78,7 @@ function DivergenceCard({ d }: { d: PracticeDivergence }) {
       >
         <span
           className={`${FONT_MONO} rounded-md px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]`}
-          style={{ color: accent, border: `1px solid ${accent}`, background: `${accent}14` }}
+          style={{ color: accent, border: `1px solid ${accent}`, background: withAlpha(accent, 0.08) }}
         >
           {d.impact} impact
         </span>

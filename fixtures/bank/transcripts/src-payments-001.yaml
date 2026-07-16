@@ -1,0 +1,19 @@
+# GENERATED extraction gold for payments.
+id: src-payments-001
+team: team-payments
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in payments today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "chargeback representment through posting engine is capped at one attempt per scheme rules"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-payments-0000
+    kind: decision
+    content_gist: "chargeback representment through posting engine is capped at one attempt per sch"
+    entities: [ent-hub-ledger-payments-0]
+    visibility: org
+distractors: []

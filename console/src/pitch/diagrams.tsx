@@ -22,7 +22,11 @@
 
 import { motion } from "framer-motion";
 
-import { band, MAGENTA } from "../design/theme";
+import {
+  band,
+  MAGENTA,
+  withAlpha,
+} from "../design/theme";
 
 const GOLD = band("gamma");
 const ALPHA = band("alpha");
@@ -458,7 +462,7 @@ export function ProvenanceFigure() {
             width={74}
             height={48}
             rx={6}
-            fill={`${c.tone}12`}
+            fill={withAlpha(c.tone, 0.07)}
             stroke={c.tone}
             strokeWidth={1.1}
           />
@@ -626,7 +630,7 @@ export function GateFigure() {
             width={100}
             height={46}
             rx={6}
-            fill={`${s.tone}14`}
+            fill={withAlpha(s.tone, 0.08)}
             stroke={s.tone}
             strokeWidth={1.2}
             strokeDasharray={i === 0 ? "4 3" : undefined}
@@ -702,7 +706,7 @@ export function ByomFigure() {
         { x: 152, y: 118, label: "your model", tone: MINT },
       ].map((n) => (
         <motion.g key={n.label} variants={fade}>
-          <rect x={n.x} y={n.y} width={112} height={42} rx={5} fill={`${n.tone}10`} stroke={n.tone} strokeWidth={1.1} />
+          <rect x={n.x} y={n.y} width={112} height={42} rx={5} fill={withAlpha(n.tone, 0.06)} stroke={n.tone} strokeWidth={1.1} />
           <text x={n.x + 56} y={n.y + 26} fill={n.tone} fontSize={9} fontFamily={MONO} textAnchor="middle">
             {n.label}
           </text>

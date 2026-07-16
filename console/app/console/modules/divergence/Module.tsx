@@ -25,6 +25,11 @@ async function sweepFor(kind: string): Promise<SweepSchedule | null> {
 
 // Live when `brainiac serve` is reachable; the demo board behind a DemoBanner
 // when not — a leader must never read fabricated divergences as their org's.
+//
+// The board's prototype round is still OPEN, and it is not running here: the dev
+// org has no divergences, so there is nothing to judge a layout against. The
+// switcher lives on the tour instead, where the fixture org does have a corpus
+// — /demo?m=divergence (app/demo/DemoStandards.tsx).
 export default async function DivergencePage() {
   const { data, live } = await withDemoFallback<PracticeDivergences>(
     () => getPracticeDivergence(configFromEnv()),

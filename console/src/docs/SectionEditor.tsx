@@ -21,7 +21,17 @@
 
 import { useState, useTransition } from "react";
 
-import { BORDER, FONT_MONO, INK, INK_DIM, INK_FAINT, LABEL, MAGENTA, band } from "@/design/theme";
+import {
+  band,
+  BORDER,
+  FONT_MONO,
+  INK,
+  INK_DIM,
+  INK_FAINT,
+  LABEL,
+  MAGENTA,
+  withAlpha,
+} from "@/design/theme";
 import type { DocSection } from "@/lib/types";
 
 import { INTENT, OUTCOME, asMode, asOutcome, type EditOutcomeCopy } from "./edit-copy";
@@ -61,7 +71,7 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
         type="button"
         onClick={() => setOpen(true)}
         className={`${FONT_MONO} mt-2 rounded-full border px-3 py-[3px] text-[10px] uppercase tracking-[0.14em] transition hover:bg-white/5`}
-        style={{ color: accent, borderColor: `${accent}55` }}
+        style={{ color: accent, borderColor: withAlpha(accent, 0.33) }}
       >
         {composed ? "propose a change" : "edit this prose"}
       </button>
@@ -75,7 +85,7 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
   return (
     <div
       className="mt-4 rounded-lg border p-5"
-      style={{ borderColor: `${accent}55`, background: `${accent}0d` }}
+      style={{ borderColor: withAlpha(accent, 0.33), background: withAlpha(accent, 0.05) }}
     >
       <span className={LABEL} style={{ color: accent }}>
         {intent.label}
@@ -148,7 +158,7 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
                 })
               }
               className={`${FONT_MONO} rounded-full border px-5 py-2 text-sm transition hover:bg-white/5 disabled:opacity-40`}
-              style={{ borderColor: `${accent}77`, color: accent }}
+              style={{ borderColor: withAlpha(accent, 0.47), color: accent }}
             >
               {pending ? intent.cta_pending : intent.cta}
             </button>

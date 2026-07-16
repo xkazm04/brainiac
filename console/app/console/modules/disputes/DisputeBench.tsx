@@ -20,7 +20,14 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
-import { band, bandGlow, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
+import {
+  band,
+  bandGlow,
+  FONT_MONO,
+  LABEL,
+  MAGENTA,
+  withAlpha,
+} from "@/design/theme";
 
 import DecisionBar from "./DecisionBar";
 import {
@@ -63,23 +70,30 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
+      {/* No headline and no standfirst. An operator opens this module already
+          knowing what it is; the prose that used to sit here was explaining the
+          product, which is the tour's job, not the console's — it lives in the
+          demo's own intro element (app/demo/ModuleIntro.tsx) and nowhere else.
+          The one thing that paragraph carried that was NOT pitch — how many
+          memories are already past their window — was a real number, so it moved
+          down onto the bench rather than out. */}
       <div className={LABEL} style={{ color: THETA }}>
         θ · disputes · half-life
       </div>
-      <h1 className={`${FONT_DISPLAY} mt-1 text-3xl font-semibold tracking-tight text-white`}>
-        What is decaying faster than the clock says.
-      </h1>
-      <p className={`${FONT_MONO} mt-2 max-w-2xl text-sm leading-relaxed text-[#e9edff]/55`}>
-        Each memory carries a half-life — the validity window its kind was given. A reader&apos;s
-        claim is evidence it is already dead. {dark > 0 ? `${dark} sit past their window` : "None are past their window yet"};
-        the rest are still being served while disputed.
-      </p>
 
       {/* the bench */}
-      <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+      <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-5">
         <div className={`${LABEL} flex items-center justify-between`} style={{ color: "rgba(233,237,255,0.35)" }}>
           <span>decay axis · time until the validity window closes</span>
-          <span>{rows.length} disputed</span>
+          <span>
+            {rows.length} disputed
+            {dark > 0 && (
+              <>
+                {" · "}
+                <span style={{ color: MAGENTA }}>{dark} past window</span>
+              </>
+            )}
+          </span>
         </div>
 
         <div className="relative mt-6 h-[240px]">
@@ -93,7 +107,7 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
               <div
                 className="h-full border-l"
                 style={{
-                  borderColor: t.at === 0 ? `${MAGENTA}66` : "rgba(233,237,255,0.07)",
+                  borderColor: t.at === 0 ? withAlpha(MAGENTA, 0.4) : "rgba(233,237,255,0.07)",
                 }}
               />
               <span
@@ -126,9 +140,13 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
                   top: `${y}%`,
                   width: size,
                   height: size,
-                  background: `${tone}${isSel ? "cc" : "55"}`,
+                  // The last of the hex-suffix bugs, and the loudest: `tone` is
+                  // MAGENTA (hex) for a dying memory but THETA (hsla) for a
+                  // living one, so every non-expired nucleus on this bench was
+                  // rendering with no fill at all — only its 1px border.
+                  background: withAlpha(tone, isSel ? 0.8 : 0.33),
                   border: `1px solid ${tone}`,
-                  boxShadow: isSel ? `0 0 18px ${tone}` : `0 0 8px ${tone}44`,
+                  boxShadow: isSel ? `0 0 18px ${tone}` : `0 0 8px ${withAlpha(tone, 0.27)}`,
                 }}
                 initial={reduced ? false : { opacity: 0, scale: 0.4 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -166,7 +184,7 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
           transition={{ duration: 0.25 }}
           className="mt-4 rounded-xl border p-5"
           style={{
-            borderColor: active.claims.wrong > 0 ? `${MAGENTA}44` : "rgba(233,237,255,0.12)",
+            borderColor: active.claims.wrong > 0 ? withAlpha(MAGENTA, 0.27) : "rgba(233,237,255,0.12)",
             background: `linear-gradient(180deg, ${bandGlow("theta", 0.05)}, transparent)`,
           }}
         >
@@ -191,7 +209,7 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
             {active.claims.wrong}× wrong · {active.claims.outdated}× outdated
           </div>
           {active.notes.length > 0 ? (
-            <ul className={`${FONT_MONO} mt-2 space-y-1.5 border-l-2 pl-3 text-sm text-[#e9edff]/65`} style={{ borderColor: `${MAGENTA}55` }}>
+            <ul className={`${FONT_MONO} mt-2 space-y-1.5 border-l-2 pl-3 text-sm text-[#e9edff]/65`} style={{ borderColor: withAlpha(MAGENTA, 0.33) }}>
               {active.notes.map((n, k) => (
                 <li key={k}>“{n}”</li>
               ))}

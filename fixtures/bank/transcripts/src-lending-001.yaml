@@ -1,0 +1,19 @@
+# GENERATED extraction gold for lending.
+id: src-lending-001
+team: team-lending
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in lending today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "re-scoring in servicing-svc-eu after an offer is issued produces an offer the applicant was never shown"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-lending-0003
+    kind: pitfall
+    content_gist: "re-scoring in servicing-svc-eu after an offer is issued produces an offer the ap"
+    entities: [ent-lending-servicing-svc-eu]
+    visibility: org
+distractors: []

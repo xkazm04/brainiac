@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { getGraphOverview, type ApiConfig } from "./api";
 import { withDemoFallback } from "./demo-fallback";
-import { DEMO_CORTEX } from "../../app/console/(modules)/graph/cortex-data";
+import { DEMO_CORTEX } from "../../app/console/modules/graph/cortex-data";
 
 describe("withDemoFallback", () => {
   const DEMO = { live: false as const, value: "fixture" };

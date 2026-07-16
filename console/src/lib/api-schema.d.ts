@@ -322,6 +322,192 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/library/divergences/{id}/ratify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The L6 bridge: turn a detected practice divergence into a proposed standard candidate carrying the divergence as provenance. Idempotent. Takes lib:publish. */
+        post: operations["divergence_ratify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The org's skill catalog. Every skill is listed; only versions a named human published can be downloaded. */
+        get: operations["skills_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/skills/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["skill_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/skills/{slug}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The current PUBLISHED bundle of a skill. A draft nobody signed is not served — the response is 404, exactly as if no version existed. Downloading records a fetch event, counted by team. */
+        get: operations["skill_download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/standards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The org's coding standards, adopted rules by default — the set an agent should follow for a stack. RLS-scoped. */
+        get: operations["standards_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/standards/propose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Propose a standard candidate (lib:propose). The outcome is only ever a PROPOSED candidate — the gate stays human. Deduplicated against the whole corpus (a duplicate collapses onto the existing standard, whatever its lifecycle) and rate-limited per author. */
+        post: operations["standard_propose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/standards/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One rule with the provenance behind it — the memories, incidents, and divergences that motivated it, or the mark of the human who decreed it. */
+        get: operations["standard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/standards/{id}/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Adopt a proposed standard — the named-human gate. Takes lib:publish. Refused (409) when the rule has neither provenance nor a decree. */
+        post: operations["standard_adopt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/standards/{id}/deprecate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Retire an adopted standard, in the open. Takes lib:publish. */
+        post: operations["standard_deprecate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/standards/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Reject a proposed candidate — kept, not deleted: the mining sweep dedups against rejections for the dedup window, so a maintainer who said no is not asked again next week. Takes lib:publish. */
+        post: operations["standard_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Report a usage signal. Attributed to the caller's team — never to a person; the events table has no user column to fill. */
+        post: operations["usage_record"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memories": {
         parameters: {
             query?: never;
@@ -890,6 +1076,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AdoptRequest: {
+            /**
+             * @description Adopt WITHOUT evidence, signing for it by name. Absent a decree, a rule
+             *     with no provenance is refused — by the database, not this handler.
+             */
+            decree?: boolean;
+        };
+        AdoptResponse: {
+            adopted: boolean;
+        };
         AnalyticsGraph: {
             /** Format: int64 */
             canonicals: number;
@@ -1447,7 +1643,7 @@ export interface components {
         KhAttention: {
             detail: string;
             headline: string;
-            /** @description contradiction | staleness | silo | governance */
+            /** @description contradiction | staleness | silo | governance | library */
             kind: string;
             /** @description critical | warning | info — encodes urgency in form, not just number. */
             severity: string;
@@ -1514,6 +1710,13 @@ export interface components {
              *     whether "automatically" means minutes or means never.
              */
             oldest_dirty_secs: number;
+            /**
+             * Format: int64
+             * @description How long the oldest candidate has waited, in seconds. Mining and agents
+             *     both file into this queue; a queue nobody works makes the whole intake
+             *     theatre, and the number says which it is.
+             */
+            oldest_gate_secs: number;
             /** Format: int64 */
             oldest_review_secs: number;
             /** Format: int64 */
@@ -1552,9 +1755,33 @@ export interface components {
             siloed_private: number;
             /**
              * Format: int64
+             * @description Published skills nobody has fetched in a month.
+             */
+            skills_dormant: number;
+            /** Format: int64 */
+            skills_published: number;
+            /**
+             * Format: int64
              * @description Superseded/expired beliefs still sitting in the corpus (landmines).
              */
             stale_beliefs: number;
+            /**
+             * Format: int64
+             * @description Adopted rules — the org's live, ratified judgment.
+             */
+            standards_adopted: number;
+            /**
+             * Format: int64
+             * @description Candidates waiting at the gate (mined, ratified, or agent-proposed).
+             */
+            standards_at_gate: number;
+            /**
+             * Format: int64
+             * @description Adopted rules the org has had time to use and hasn't touched in a
+             *     month. THE Library signal: a standard nobody follows is a wish, and
+             *     this is the number that says so without anyone having to notice.
+             */
+            standards_dormant: number;
             /** Format: int64 */
             team_only: number;
             /** Format: int64 */
@@ -1852,6 +2079,34 @@ export interface components {
              */
             total: number;
         };
+        ProposeRequest: {
+            category?: string | null;
+            /**
+             * Format: uuid
+             * @description A memory backing the proposal. Optional — but without evidence the
+             *     rule can only ever be adopted by an explicit signed decree.
+             */
+            evidence_memory_id?: string | null;
+            /** @description Good/bad examples, verbatim markdown. */
+            examples_md?: string | null;
+            /** @description Short practice name (the dedup key), e.g. "service retry policy". */
+            name: string;
+            rationale?: string | null;
+            stack?: string | null;
+            /** @description The rule, in one sentence. */
+            statement: string;
+        };
+        ProposeResponse: {
+            lifecycle: string;
+            /**
+             * @description `created` (a fresh candidate waits at the gate) or `duplicate`
+             *     (collapsed onto an existing standard — see `lifecycle` for what the
+             *     org already decided about this idea).
+             */
+            outcome: string;
+            /** Format: uuid */
+            standard_id: string;
+        };
         /**
          * @description The originating source, with a bounded excerpt of its raw text. `null` when
          *     the memory carries no source; `excerpt` is `null` when the source has no
@@ -1864,6 +2119,12 @@ export interface components {
              */
             excerpt?: string | null;
             kind: string;
+        };
+        ProvenanceView: {
+            /** @description `memory` or `divergence` — the evidence class behind the rule. */
+            kind: string;
+            /** Format: uuid */
+            ref_id: string;
         };
         /** @description A verified federated identity, plus what to do with it. */
         ProvisionBody: {
@@ -1922,6 +2183,14 @@ export interface components {
             queue: string;
             /** Format: int64 */
             ready: number;
+        };
+        RatifyResponse: {
+            /**
+             * Format: uuid
+             * @description The standard candidate carrying this divergence as provenance. Stable:
+             *     ratifying the same divergence again returns the same candidate.
+             */
+            standard_id: string;
         };
         /** @description Confirmation of a requeue; `requeued` is always `true` (a miss 404s). */
         RequeueResponse: {
@@ -2070,6 +2339,52 @@ export interface components {
         SearchResponse: {
             hits: components["schemas"]["SearchHit"][];
         };
+        SkillBundleResponse: {
+            content_md: string;
+            /**
+             * @description The open agent-skill bundle: manifest front-matter, markdown body,
+             *     auxiliary resources — exactly as the named human published it.
+             */
+            manifest: unknown;
+            name: string;
+            published_at?: string | null;
+            resources: unknown;
+            semver: string;
+            slug: string;
+        };
+        SkillDetailResponse: components["schemas"]["SkillView"] & {
+            /** @description The skill's pulse: fetches/applies per team. */
+            usage: components["schemas"]["TeamUsageView"][];
+            /** @description Version history, newest first — drafts included, marked as such. */
+            versions: components["schemas"]["SkillVersionView"][];
+        };
+        SkillVersionView: {
+            created_at: string;
+            /**
+             * @description A version nobody signed is a draft; it is listed here for maintainers
+             *     but never served as content.
+             */
+            published: boolean;
+            published_at?: string | null;
+            semver: string;
+        };
+        SkillView: {
+            description?: string | null;
+            domain?: string | null;
+            /**
+             * @description Whether a published version exists to download. A draft-only skill is
+             *     listed (it exists) but serves no bundle.
+             */
+            downloadable: boolean;
+            /** Format: uuid */
+            id: string;
+            maturity: string;
+            name: string;
+            slug: string;
+        };
+        SkillsListResponse: {
+            skills: components["schemas"]["SkillView"][];
+        };
         SnapshotResponse: {
             /** Format: date-time */
             captured_at: string;
@@ -2148,6 +2463,45 @@ export interface components {
             /** @description One-word rollup: queued|retrying|processed|failed|unknown. */
             status: string;
         };
+        StandardDetailResponse: components["schemas"]["StandardView"] & {
+            /** @description Why this rule exists. Empty only for a decreed rule. */
+            provenance: components["schemas"]["ProvenanceView"][];
+            /** @description The rule's pulse: fetches/checks per team. */
+            usage: components["schemas"]["TeamUsageView"][];
+            /** @description Version history, newest first. */
+            versions: components["schemas"]["StandardVersionView"][];
+        };
+        StandardVersionView: {
+            created_at: string;
+            enforcement: string;
+            /** Format: int32 */
+            rev: number;
+            statement: string;
+        };
+        StandardView: {
+            adopted_at?: string | null;
+            category: string;
+            /** @description Set only for an evidence-free rule a named human signed for. */
+            decreed: boolean;
+            /** @description Good/bad examples — served verbatim, never re-typed by a model. */
+            detail_md?: string | null;
+            enforcement: string;
+            /** Format: uuid */
+            id: string;
+            lifecycle: string;
+            /**
+             * @description Who created it: `human` (console/ratify), `sweep` (mining), `agent`
+             *     (a mid-session proposal). Triage renders this — trust needs a source.
+             */
+            origin: string;
+            rationale?: string | null;
+            slug: string;
+            stack: string;
+            statement: string;
+        };
+        StandardsListResponse: {
+            standards: components["schemas"]["StandardView"][];
+        };
         /**
          * @description `{status, count}` — the shape every status histogram in this module emits
          *     (memories-by-status, contradiction tabs).
@@ -2181,7 +2535,7 @@ export interface components {
             cadence_secs: number;
             /** @description Whether the scheduler runs this sweep on its cadence. */
             enabled: boolean;
-            /** @description 'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts'. */
+            /** @description 'divergence' | 'health_snapshot' | 'raw_ttl' | 'alerts' | 'library'. */
             kind: string;
             /** @description Human summary of the last run ("7 clusters, 1 divergences") or its error. */
             last_detail?: string | null;
@@ -2225,6 +2579,16 @@ export interface components {
             /** Format: int64 */
             memories: number;
             name: string;
+        };
+        /**
+         * @description Usage totals for one artifact, per team. There is deliberately no finer
+         *     grain to ask for — the storage cannot name a person.
+         */
+        TeamUsageView: {
+            /** @description Team name; `null` groups events from org-scoped (teamless) tokens. */
+            team?: string | null;
+            /** Format: int64 */
+            uses: number;
         };
         TokenListResponse: {
             tokens: components["schemas"]["TokenSummary"][];
@@ -2294,6 +2658,18 @@ export interface components {
             cadence_secs?: number | null;
             /** @description Turn the sweep's schedule on or off. */
             enabled?: boolean | null;
+        };
+        UsageRequest: {
+            /** Format: uuid */
+            artifact_id: string;
+            /** @description `standard` or `skill`. */
+            artifact_kind: string;
+            /** @description `fetch`, `check` (compared work against a standard), or `apply` (ran a skill). */
+            event: string;
+            version?: string | null;
+        };
+        UsageResponse: {
+            recorded: boolean;
         };
         /**
          * @description One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the
@@ -2689,6 +3065,317 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["GraphOverviewResponse"];
                 };
+            };
+        };
+    };
+    divergence_ratify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RatifyResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skills_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsListResponse"];
+                };
+            };
+        };
+    };
+    skill_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDetailResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skill_download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillBundleResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    standards_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Narrow to one tech stack (e.g. `rust`, `typescript`, `general`). */
+                stack: string | null;
+                /**
+                 * @description `adopted` (default — what an agent should follow), `proposed`,
+                 *     `deprecated`, or `all`.
+                 */
+                lifecycle: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardsListResponse"];
+                };
+            };
+        };
+    };
+    standard_propose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposeResponse"];
+                };
+            };
+            /** @description cited evidence memory not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description per-author hourly proposal budget spent */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    standard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardDetailResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    standard_adopt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdoptResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    standard_deprecate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdoptResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    standard_reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdoptResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    usage_record: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsageRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -3098,7 +3785,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Sweep kind: divergence | health_snapshot | raw_ttl | alerts */
+                /** @description Sweep kind: divergence | health_snapshot | raw_ttl | alerts | library */
                 kind: string;
             };
             cookie?: never;
@@ -3132,7 +3819,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Sweep kind: divergence | health_snapshot | raw_ttl | alerts */
+                /** @description Sweep kind: divergence | health_snapshot | raw_ttl | alerts | library */
                 kind: string;
             };
             cookie?: never;

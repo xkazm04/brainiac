@@ -29,8 +29,31 @@
 
 export const SESSION_COOKIE = "bx_console";
 
-/** Cookie lifetime. Short enough that a leaked laptop cookie expires. */
-export const SESSION_MAX_AGE = 60 * 60 * 24 * 14; // 14 days
+/**
+ * Cookie lifetime — how long "remembered" lasts.
+ *
+ * Asked for on 2026-07-15 as "store the passcode in localStorage so it is
+ * remembered until storage is erased". This is that feature, built the other way
+ * round, and the difference is worth stating because it is the whole security
+ * posture of this file: the passcode is ONE shared secret that unlocks the live
+ * org for everybody, and localStorage is readable by any script on the origin.
+ * Putting it there would mean a single XSS — in any dependency, on any console
+ * page — exfiltrates the org's key, permanently and for every operator, and no
+ * rotation short of changing the passcode helps.
+ *
+ * The cookie already does what was actually wanted. It is httpOnly (script
+ * cannot read it), it carries a signed digest rather than the passcode itself,
+ * and it dies when the operator clears site data — the same "until storage is
+ * erased" behaviour, minus the secret. So the fix was a number, not a mechanism.
+ *
+ * 400 days is Chrome's ceiling on cookie lifetime; anything larger is silently
+ * clamped, so asking for more would only be a comment that lies. The trade this
+ * accepts, deliberately: a stolen laptop stays signed in far longer than the old
+ * 14 days. `logout` (the sign-out control) still clears it on demand, and
+ * rotating CONSOLE_PASSCODE invalidates every issued cookie at once, because the
+ * signature is derived from it.
+ */
+export const SESSION_MAX_AGE = 60 * 60 * 24 * 400; // 400 days — the browser cap
 
 const DOMAIN_SEPARATOR = "brainiac-console:v1:";
 

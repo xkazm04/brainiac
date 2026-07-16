@@ -68,6 +68,16 @@ function ChartTip({
 }
 
 export default function Observatory({ data }: { data: ObservatoryData }) {
+  /* The lifecycle, in order — raw arrives, candidate is proposed, canonical is
+     signed for, deprecated is kept and outranked. Gold marks the only tier the
+     org actually stands behind. */
+  const STATUS_ROWS = [
+    { key: "canonical", label: "canonical", tone: band("gamma") },
+    { key: "candidate", label: "candidate", tone: band("alpha") },
+    { key: "raw", label: "raw", tone: band("theta") },
+    { key: "deprecated", label: "superseded", tone: "rgba(233,237,255,0.5)" },
+  ];
+
   const teams = [...new Set(data.byKind.map((k) => k.team))].sort();
   const kinds = [...new Set(data.byKind.map((k) => k.kind))].sort();
   const kindCount = (kind: string, team: string) =>
@@ -75,6 +85,7 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
   const maxKind = Math.max(1, ...data.byKind.map((k) => k.count));
   const totalMemories = Object.values(data.totals).reduce((a, b) => a + b, 0);
   const promotionRate = data.review.reviewed + data.review.autoPromoted;
+  const corpusTotal = STATUS_ROWS.reduce((s, r) => s + (data.totals[r.key] ?? 0), 0);
 
   return (
     <motion.div initial="hidden" animate="visible" variants={stagger} className="mx-auto max-w-7xl px-6 py-8">
@@ -109,6 +120,20 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
         })}
       </motion.div>
 
+      {/*
+       * One grid, two rows, three columns:
+       *
+       *   ┌ knowledge flow (2) ─────┬ governance ┐
+       *   ├ loudest themes  (2) ─────┤  (rows 1-2) │
+       *   └──────────────────────────┴─────────────┘
+       *   ┌ kind × team — its own full-width row ──┐
+       *
+       * Kind × team used to sit in this grid's third column, which was fine at
+       * three teams and unreadable at twelve: a matrix's width grows with the
+       * org, so it cannot share a row with anything. It gets the full width
+       * below. Governance inherits the space that frees up — it is a list of
+       * numbers, so it grows down happily where the matrix could not grow across.
+       */}
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         {/* flow */}
         <motion.div variants={rise} className={`${TILE} lg:col-span-2`}>
@@ -137,8 +162,8 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
           </div>
         </motion.div>
 
-        {/* governance column */}
-        <motion.div variants={rise} className={TILE}>
+        {/* governance column — spans both rows of this grid */}
+        <motion.div variants={rise} className={`${TILE} lg:row-span-2 lg:flex lg:flex-col`}>
           <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>Governance</h2>
           <dl className={`${FONT_MONO} mt-3 space-y-2.5 text-sm`}>
             <div className="flex justify-between">
@@ -190,14 +215,61 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
               </dd>
             </div>
           </dl>
-          <div className={`${LABEL} mt-4 border-t border-white/10 pt-3`} style={{ color: "rgba(233,237,255,0.35)" }}>
+
+          {/*
+           * The corpus itself. This column got twice the height when the matrix
+           * moved out, and the honest way to spend it is the breakdown the tiles
+           * above only total: how much of what the org "knows" has actually been
+           * signed for, versus still sitting raw.
+           *
+           * Everything here is already in the observatory payload. The stats a
+           * governance panel most wants — rubber-stamp rate, contradiction
+           * dismiss rate, flagged memories — are computed by the server but only
+           * exposed on /v1/analytics, not /v1/observatory, so surfacing them is
+           * an API change rather than a UI one. Worth doing; not smuggled in here.
+           */}
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <div className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+              the corpus
+            </div>
+            <dl className={`${FONT_MONO} mt-3 space-y-2.5 text-sm`}>
+              {STATUS_ROWS.map((s) => {
+                const n = data.totals[s.key] ?? 0;
+                const share = corpusTotal ? Math.round((n / corpusTotal) * 100) : 0;
+                return (
+                  <div key={s.key} className="flex items-baseline justify-between gap-3">
+                    <dt className="text-white/45">{s.label}</dt>
+                    <dd className="flex items-baseline gap-2">
+                      {/* The bar makes the pyramid legible: a corpus that is 80%
+                          canonical is governed; one that is 80% raw is a pile. */}
+                      <span
+                        className="hidden h-1 rounded-full sm:inline-block"
+                        style={{
+                          width: `${Math.max(2, share * 0.6)}px`,
+                          background: s.tone,
+                          opacity: n ? 0.75 : 0.15,
+                        }}
+                      />
+                      <span style={{ color: n ? s.tone : "rgba(233,237,255,0.25)" }}>{n}</span>
+                      <span className="w-9 text-right text-white/30">{share}%</span>
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+
+          {/* mt-auto: the footer sits at the bottom of the taller column rather
+              than floating under the list. */}
+          <div
+            className={`${LABEL} mt-4 border-t border-white/10 pt-3 lg:mt-auto`}
+            style={{ color: "rgba(233,237,255,0.35)" }}
+          >
             {promotionRate} promotions ledgered · SLO &lt; 48h
           </div>
         </motion.div>
-      </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-3">
-        {/* themes */}
+        {/* themes — row 2 of the same grid, beside the governance column */}
         <motion.div variants={rise} className={`${TILE} lg:col-span-2`}>
           <div className="flex items-baseline justify-between">
             <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>Loudest themes</h2>
@@ -240,16 +312,27 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
             <span className="text-white/25">■</span> 1 team — brightness = binding
           </div>
         </motion.div>
+      </div>
 
-        {/* kind × team matrix */}
+      {/* kind × team matrix — its own full-width row (see the note above) */}
+      <div className="mt-3">
         <motion.div variants={rise} className={TILE}>
-          <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>Kind × team</h2>
-          <table className={`${FONT_MONO} mt-3 w-full text-xs`}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>Kind × team</h2>
+            <span className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+              {teams.length} teams · where each kind of knowledge lives
+            </span>
+          </div>
+          {/* A matrix gets one more column per team the org grows, so the width
+              is not ours to control — it scrolls in its own box rather than
+              crushing the labels or pushing the page sideways. */}
+          <div className="mt-3 overflow-x-auto">
+            <table className={`${FONT_MONO} w-full min-w-[42rem] text-xs`}>
             <thead>
               <tr>
                 <th className="pb-2 text-left font-normal text-white/35"></th>
                 {teams.map((t) => (
-                  <th key={t} className={`${LABEL} pb-2 text-right font-normal`} style={{ color: "rgba(233,237,255,0.4)" }}>
+                  <th key={t} className={`${LABEL} pb-2 text-right font-normal`} style={{ color: "rgba(233,237,255,0.4)" }} title={t}>
                     {t.slice(0, 4)}
                   </th>
                 ))}
@@ -280,7 +363,8 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
           <div className={`${LABEL} mt-3 border-t border-white/10 pt-3`} style={{ color: "rgba(233,237,255,0.35)" }}>
             embeddings: {data.embeddingModel}
             {!data.live && " · demo data"}

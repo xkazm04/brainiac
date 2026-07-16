@@ -20,6 +20,7 @@
           "filePaths": [
             "crates/brainiac-server/src/docs.rs",
             "crates/brainiac-server/src/sweeps.rs",
+            "crates/brainiac-server/src/alerts.rs",
             "crates/brainiac-server/src/openapi.rs",
             "crates/brainiac-server/tests/docs_pg.rs",
             "crates/brainiac-server/tests/doc_edit_pg.rs",
@@ -115,6 +116,28 @@
             "/v1/memories/search",
             "/v1/memories",
             "/v1/reviews/promotions"
+          ]
+        },
+        {
+          "name": "Server: Library Distribution API",
+          "description": "Library distribution surface (LIBRARY-PLAN LB1): REST /v1/library/* (lib:read reads + usage, lib:publish adopt/deprecate/ratify) and the MCP tools standards_for / skill_search / skill_fetch / skill_report_usage; integration-tested over real HTTP and JSON-RPC.",
+          "businessFeature": "Server: Library Distribution API",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/library.rs",
+            "crates/brainiac-server/tests/library_pg.rs"
+          ],
+          "target": null,
+          "apiRoutes": [
+            "/v1/library/standards",
+            "/v1/library/standards/:id",
+            "/v1/library/standards/:id/adopt",
+            "/v1/library/standards/:id/deprecate",
+            "/v1/library/divergences/:id/ratify",
+            "/v1/library/skills",
+            "/v1/library/skills/:slug",
+            "/v1/library/skills/:slug/download",
+            "/v1/library/usage"
           ]
         }
       ]
@@ -219,6 +242,32 @@
           ],
           "target": null,
           "apiRoutes": []
+        },
+        {
+          "name": "Pipeline: Library Mining Sweep",
+          "description": "LB3 passive mining (LIBRARY-PLAN): deterministic sweeps proposing standard candidates from unclaimed drifts, reinforced practices, and settled contradictions; dedup honors rejections for a window (rejection is knowledge). Sweep kind `library` on the schedule table.",
+          "businessFeature": "Pipeline: Library Mining Sweep",
+          "category": "pipeline",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/library_sweep.rs",
+            "crates/brainiac-pipeline/tests/library_sweep_pg.rs",
+            "migrations/0029_library_mining.sql"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Pipeline: Standards Pages (L8)",
+          "description": "LIBRARY-PLAN L8: the org's adopted rules rendered as a per-stack KB page. Rides the whole document layer (dirty-marking, revisions, review gate, health breaker, Confluence) but is PROJECTED deterministically — no LLM: a ratified sentence must never be re-worded by a model.",
+          "businessFeature": "Pipeline: Standards Pages (L8)",
+          "category": "pipeline",
+          "filePaths": [
+            "crates/brainiac-pipeline/src/standards_page.rs",
+            "crates/brainiac-pipeline/tests/standards_page_pg.rs",
+            "migrations/0031_standards_pages.sql"
+          ],
+          "target": null,
+          "apiRoutes": []
         }
       ]
     },
@@ -281,6 +330,7 @@
             "crates/brainiac-store/src/entities.rs",
             "crates/brainiac-store/src/governance.rs",
             "crates/brainiac-store/src/lib.rs",
+            "crates/brainiac-store/src/test_support.rs",
             "crates/brainiac-store/tests/store_pg.rs"
           ],
           "target": null,
@@ -338,6 +388,7 @@
             "crates/brainiac-store/src/entities.rs",
             "crates/brainiac-store/src/governance.rs",
             "crates/brainiac-store/src/lib.rs",
+            "crates/brainiac-store/src/test_support.rs",
             "crates/brainiac-store/tests/store_pg.rs"
           ],
           "target": null,
@@ -352,6 +403,25 @@
             "crates/brainiac-store/src/memories.rs",
             "crates/brainiac-store/src/retrieval.rs",
             "crates/brainiac-store/src/queue.rs"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Store: Library (Standards + Skills + Usage)",
+          "description": "Library-layer data plane (LIBRARY-PLAN LB0, migration 0028): standards as rule-atoms with versions and provenance, the divergence-ratification bridge, versioned skill bundles (drafts never served), and team-attributed usage events; org-scoped RLS.",
+          "businessFeature": "Store: Library (Standards + Skills + Usage)",
+          "category": "store",
+          "filePaths": [
+            "crates/brainiac-store/src/library/mod.rs",
+            "crates/brainiac-store/src/library/standards.rs",
+            "crates/brainiac-store/src/library/bridge.rs",
+            "crates/brainiac-store/src/library/skills.rs",
+            "crates/brainiac-store/src/library/usage.rs",
+            "crates/brainiac-core/src/library.rs",
+            "migrations/0028_library_substrate.sql",
+            "crates/brainiac-store/src/library/proposals.rs",
+            "migrations/0030_library_proposals.sql"
           ],
           "target": null,
           "apiRoutes": []
@@ -683,6 +753,31 @@
           ],
           "target": null,
           "apiRoutes": []
+        },
+        {
+          "name": "Console: Library Modules (Standards + Skills)",
+          "description": "Library console station (LIBRARY-PLAN LB2): standards board (stack/category/rule tree, rule detail with provenance + per-team pulse + versions, triage gate with decree flow) and skills catalog (pulse-ranked cards, drafts marked unservable); live/demo via withDemoFallback; also wired into the /demo tour and home station 06.",
+          "businessFeature": "Console: Library Modules (Standards + Skills)",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/modules/standards/Module.tsx",
+            "console/app/console/modules/standards/Skeleton.tsx",
+            "console/app/console/modules/standards/StandardsBoard.tsx",
+            "console/app/console/modules/standards/RuleDetail.tsx",
+            "console/app/console/modules/standards/TriageControls.tsx",
+            "console/app/console/modules/standards/actions.ts",
+            "console/app/console/modules/standards/tree.ts",
+            "console/app/console/modules/standards/tree.test.ts",
+            "console/app/console/modules/standards/triage.ts",
+            "console/app/console/modules/standards/standards-data.ts",
+            "console/app/console/modules/skills/Module.tsx",
+            "console/app/console/modules/skills/Skeleton.tsx",
+            "console/app/console/modules/skills/SkillsCatalog.tsx",
+            "console/app/console/modules/skills/skills-data.ts",
+            "console/src/design/routes.test.ts"
+          ],
+          "target": null,
+          "apiRoutes": []
         }
       ]
     },
@@ -884,6 +979,36 @@
           ],
           "target": null,
           "apiRoutes": []
+        },
+        {
+          "name": "Console: Library Explainer",
+          "description": "Library explainer (/library): public page for the normative layer (coding standards per stack + agent skills) with deterministic SVG diagrams and honesty-guard tests pinned to docs/LIBRARY-PLAN.md.",
+          "businessFeature": "Console: Library Explainer",
+          "category": "ui",
+          "filePaths": [
+            "console/app/library/page.tsx",
+            "console/app/library/layout.tsx",
+            "console/src/library/Library.tsx",
+            "console/src/library/library-data.ts",
+            "console/src/library/library-data.test.ts",
+            "console/src/library/primitives.tsx",
+            "console/src/library/sections/Drift.tsx",
+            "console/src/library/sections/Layers.tsx",
+            "console/src/library/sections/Anatomy.tsx",
+            "console/src/library/sections/Loop.tsx",
+            "console/src/library/sections/Agents.tsx",
+            "console/src/library/sections/Never.tsx",
+            "console/src/library/sections/StatusLadder.tsx",
+            "console/src/library/sections/Finale.tsx",
+            "console/src/library/figures/frame.tsx",
+            "console/src/library/figures/hero.tsx",
+            "console/src/library/figures/layers.tsx",
+            "console/src/library/figures/anatomy.tsx",
+            "console/src/library/figures/rail.tsx",
+            "console/src/library/figures/never.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
         }
       ]
     }
@@ -977,24 +1102,30 @@
     "Console: API Client & Platform › Brainiac API Client & Types [lib] — 4 files",
     "Server: Publishing › Publish: Render + Confluence + Git [publish] — 4 files",
     "Console: Marketing & Explainers › Console: Pitch / Marketing [ui] — 11 files",
-    "Console: Marketing & Explainers › Console: Knowledge Base Explainer [ui] — 8 files"
+    "Console: Marketing & Explainers › Console: Knowledge Base Explainer [ui] — 8 files",
+    "Console: Marketing & Explainers › Console: Library Explainer [ui] — 6 files",
+    "Server: Storage & Retrieval › Store: Library (Standards + Skills + Usage) [store] — 9 files",
+    "Server: Agent & API Surface › Server: Library Distribution API [api] — 2 files",
+    "Console: Governance Workbench › Console: Library Modules (Standards + Skills) [ui] — 15 files",
+    "Server: Knowledge Pipeline & Model Gateway › Pipeline: Library Mining Sweep [pipeline] — 3 files",
+    "Server: Knowledge Pipeline & Model Gateway › Pipeline: Standards Pages (L8) [pipeline] — 3 files"
   ],
   "summary": {
     "totalGroups": 8,
-    "totalContexts": 51,
-    "totalFiles": 310,
+    "totalContexts": 57,
+    "totalFiles": 362,
     "categories": {
-      "api": 8,
+      "api": 9,
       "gateway": 1,
-      "pipeline": 3,
+      "pipeline": 5,
       "lib": 7,
       "core": 2,
-      "store": 3,
+      "store": 4,
       "data": 4,
       "eval": 3,
       "config": 2,
       "test": 1,
-      "ui": 16,
+      "ui": 18,
       "publish": 1
     },
     "domains": {

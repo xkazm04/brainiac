@@ -635,14 +635,24 @@ async fn console_reviews_graph_analytics() {
     assert!(r.status().is_success());
     let body: serde_json::Value = r.json().await.expect("json");
     let sweeps = body["sweeps"].as_array().expect("sweeps");
-    assert_eq!(sweeps.len(), 4, "four seeded sweeps (0007, 0024): {body}");
+    assert_eq!(
+        sweeps.len(),
+        5,
+        "five seeded sweeps (0007, 0024, 0029): {body}"
+    );
     assert!(
         sweeps
             .iter()
             .all(|s| s["enabled"] == false && s["last_status"].is_null()),
         "seeded sweeps start disabled and unrun: {body}"
     );
-    for kind in ["divergence", "health_snapshot", "raw_ttl", "alerts"] {
+    for kind in [
+        "divergence",
+        "health_snapshot",
+        "raw_ttl",
+        "alerts",
+        "library",
+    ] {
         assert!(
             sweeps.iter().any(|s| s["kind"] == kind),
             "sweep kind {kind} present: {body}"

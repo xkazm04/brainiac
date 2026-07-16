@@ -1,0 +1,19 @@
+# GENERATED extraction gold for data.
+id: src-data-001
+team: team-data
+kind: session_transcript
+language: en
+turns:
+  - role: user
+    text: "We hit this again in data today. Can you write down what we concluded so the next person does not rediscover it?"
+  - role: assistant
+    text: "ledger stream replicates cross-region asynchronously, so a regional failover can lose the last few seconds of writes"
+  - role: user
+    text: "Yes — that is exactly it. Capture that."
+gold_memories:
+  - id: mem-data-0000
+    kind: fact
+    content_gist: "ledger stream replicates cross-region asynchronously, so a regional failover can"
+    entities: [ent-hub-ledger-data-0]
+    visibility: org
+distractors: []

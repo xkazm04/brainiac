@@ -10,14 +10,13 @@
 import type { MemoryDetail } from "@/lib/types";
 import { band, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
+import { fmtDate } from "./archive-data";
+
 const VIOLET = band("delta");
 
-// Nullable-and-optional: the generated API types mark Option<T> fields as
-// optional (utoipa's default), though the server always emits them as null.
-export function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return new Date(iso).toISOString().slice(0, 10);
-}
+/** Re-exported: this was fmtDate's home before archive-index (pure, DOM-free)
+ *  needed it too. Importers here are unaffected. */
+export { fmtDate };
 
 export function statusTone(status: string): string {
   if (status === "canonical") return band("gamma");
@@ -56,7 +55,20 @@ export default function MemoryInspector({
           </>
         )}
       </div>
-      <p className={`${FONT_DISPLAY} text-xl leading-snug text-white`}>{m.content}</p>
+      {/* The title is a LABEL; the content is the claim. Where the table can
+          only afford one of them, the record shows both — and when there is no
+          title (nullable forever: nothing before migration 0023 has one), the
+          claim simply takes the headline, which is what it was always doing. */}
+      <div className="space-y-1.5">
+        {m.title?.trim() && (
+          <p className={`${FONT_DISPLAY} text-xl leading-snug text-white`}>{m.title}</p>
+        )}
+        <p
+          className={`${FONT_DISPLAY} text-xl leading-snug ${m.title?.trim() ? "text-[#e9edff]/70" : "text-white"}`}
+        >
+          {m.content}
+        </p>
+      </div>
       <div className={`${FONT_MONO} text-xs text-[#e9edff]/45`}>
         valid {fmtDate(m.valid_from)} → {m.valid_to ? fmtDate(m.valid_to) : "now"} · recorded {fmtDate(m.created_at)}
       </div>

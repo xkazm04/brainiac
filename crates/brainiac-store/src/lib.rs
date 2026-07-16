@@ -15,6 +15,7 @@ pub mod entities;
 pub mod feedback;
 pub mod governance;
 pub mod identities;
+pub mod library;
 pub mod memories;
 pub mod orgs;
 pub mod publishing;

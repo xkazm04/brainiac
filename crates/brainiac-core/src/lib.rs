@@ -8,6 +8,7 @@
 pub mod embed;
 pub mod fusion;
 pub mod health;
+pub mod library;
 pub mod metrics;
 pub mod redact;
 pub mod rerank;
@@ -15,4 +16,5 @@ pub mod scoring;
 pub mod temporal;
 pub mod types;
 
+pub use library::*;
 pub use types::*;

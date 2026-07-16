@@ -100,7 +100,17 @@ async fn mcp_handshake_and_tools() {
             // no doc_write/doc_edit — an agent contributes by proposing
             // memories, which pass the review gate and then flow into pages.
             "doc_search",
-            "doc_get"
+            "doc_get",
+            // The library (LIBRARY-PLAN LB1/LB4): agents fetch the org's
+            // ADOPTED judgment, pull published skill bundles, report what they
+            // used, and propose patterns. Same asymmetry as the KB — there is
+            // no standard_adopt: an agent proposes a CANDIDATE, and only a
+            // named human ever turns one into a rule.
+            "standards_for",
+            "skill_search",
+            "skill_fetch",
+            "standard_propose",
+            "skill_report_usage"
         ]
     );
 

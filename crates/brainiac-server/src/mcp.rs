@@ -463,6 +463,69 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["slug"]
             }
+        },
+        {
+            "name": "standards_for",
+            "description": "The org's ADOPTED coding standards for a tech stack — fetch these BEFORE writing or reviewing code so your work follows the org's ratified judgment, not your defaults. Each rule carries its statement, how strongly it binds (mandatory / recommended / experimental), the rationale, and verbatim good/bad examples. Only rules a named human adopted are returned; proposals never reach you as if they were policy.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "stack": { "type": "string", "description": "Tech stack, e.g. `rust`, `typescript`, `general`. Omit for all stacks." },
+                    "category": { "type": "string", "description": "Narrow to one category, e.g. `errors`, `testing`." }
+                }
+            }
+        },
+        {
+            "name": "skill_search",
+            "description": "Find org skills — packaged, versioned procedures a maintainer published for agents like you (runbooks, review checklists, codified workflows). Returns slugs + descriptions; download one with skill_fetch.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "What you are trying to do" }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "skill_fetch",
+            "description": "Download a skill's current PUBLISHED bundle (manifest + markdown body + resources) by slug. Follow the skill's instructions as org-ratified procedure. A skill with no published version returns not-found — a draft nobody signed is never served to you.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slug": { "type": "string", "description": "Skill slug (from skill_search)" }
+                },
+                "required": ["slug"]
+            }
+        },
+        {
+            "name": "standard_propose",
+            "description": "Propose a coding-standard candidate when you found a pattern the org's standards don't cover — or found yourself deliberately diverging from your own approach because of org context. The outcome is ONLY ever a proposal: a named human adopts or rejects it, never you. Cite an evidence memory id if one backs the pattern (a proposal without evidence can only be adopted by an explicit human decree). Deduplicated: if the org already has this rule — adopted, proposed, or REJECTED — you get that standard back instead of a new one; respect a rejection rather than rephrasing it. Rate-limited per session identity; propose the one or two patterns that mattered, not everything you noticed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Short practice name, e.g. `service retry policy` (the dedup key)" },
+                    "statement": { "type": "string", "description": "The rule, in ONE sentence" },
+                    "stack": { "type": "string", "description": "Tech stack (`rust`, `typescript`, …). Omit for `general`." },
+                    "category": { "type": "string", "description": "Category (`errors`, `testing`, …). Omit for `practice`." },
+                    "rationale": { "type": "string", "description": "Why — the incident, the cost, the context" },
+                    "examples_md": { "type": "string", "description": "Good/bad examples as markdown, verbatim" },
+                    "evidence_memory_id": { "type": "string", "description": "A memory id backing this (from memory_search / memory_add)" }
+                },
+                "required": ["name", "statement"]
+            }
+        },
+        {
+            "name": "skill_report_usage",
+            "description": "Report that you applied a skill or checked your work against a standard — this keeps the org's library honest (rules and skills nobody uses get retired). Usage is counted for your TEAM, never for you personally; the storage cannot record a person.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "artifact_kind": { "type": "string", "enum": ["standard", "skill"], "description": "What you used" },
+                    "slug": { "type": "string", "description": "The standard's or skill's slug" },
+                    "event": { "type": "string", "enum": ["check", "apply"], "description": "`check`: compared work against a standard. `apply`: ran a skill." }
+                },
+                "required": ["artifact_kind", "slug", "event"]
+            }
         }
     ])
 }
@@ -487,6 +550,11 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
         "memory_provenance" => memory_provenance(state, &args).await,
         "doc_get" => doc_get(state, &args).await,
         "doc_search" => doc_search(state, &args).await,
+        "standards_for" => standards_for(state, &args).await,
+        "standard_propose" => standard_propose(state, &args).await,
+        "skill_search" => skill_search(state, &args).await,
+        "skill_fetch" => skill_fetch(state, &args).await,
+        "skill_report_usage" => skill_report_usage(state, &args).await,
         other => return Err(RpcError::new(-32602, format!("unknown tool: {other}"))),
     };
 
@@ -1176,6 +1244,323 @@ async fn doc_search(state: &McpState, args: &Value) -> Result<Value, ToolError> 
             "stale": r.get::<bool, _>("stale"),
         })).collect::<Vec<_>>()
     }))
+}
+
+// ── the library (LIBRARY-PLAN LB1) ───────────────────────────────────────
+//
+// Agents get the DISTRIBUTION surface: adopted standards, published skill
+// bundles, and the usage channel back. There is deliberately no propose tool
+// yet (LB4) and no adopt/deprecate — an agent can never decree a rule, only a
+// named human can, through the maintainer surface.
+
+/// Record a usage signal in its own transaction, warn-only on failure — the
+/// vital signs must never cost an agent its answer. Team-attributed; the
+/// schema has no user column to fill (the never-a-leaderboard invariant).
+async fn record_library_usage_quietly(
+    state: &McpState,
+    kind: brainiac_core::LibraryArtifactKind,
+    artifact_id: uuid::Uuid,
+    version: Option<&str>,
+    event: brainiac_core::LibraryUsageEvent,
+) {
+    let outcome = async {
+        let mut tx = state.store.scoped_tx(&state.principal).await?;
+        brainiac_store::library::record_usage(
+            &mut tx,
+            state.principal.org_id,
+            kind,
+            artifact_id,
+            version,
+            event,
+            state.principal.team_ids.first().copied(),
+        )
+        .await?;
+        tx.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        tracing::warn!(artifact = %artifact_id, error = %e, "library artifact served but usage not recorded");
+    }
+}
+
+/// The org's ADOPTED rules for a stack. Proposals are never served — an agent
+/// must not mistake a candidate for the org's judgment.
+async fn standards_for(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let stack = match args.get("stack") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            within_cap(
+                v.as_str()
+                    .ok_or_else(|| invalid("`stack` must be a string"))?,
+                MAX_NAME_CHARS,
+                "stack",
+            )?
+            .to_string(),
+        ),
+    };
+    let category = match args.get("category") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            within_cap(
+                v.as_str()
+                    .ok_or_else(|| invalid("`category` must be a string"))?,
+                MAX_NAME_CHARS,
+                "category",
+            )?
+            .to_string(),
+        ),
+    };
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    let standards = brainiac_store::library::list_standards(
+        &mut tx,
+        stack.as_deref(),
+        Some(brainiac_core::StandardLifecycle::Adopted),
+    )
+    .await?;
+    tx.commit().await?;
+
+    let rules: Vec<_> = standards
+        .iter()
+        .filter(|s| category.as_deref().is_none_or(|c| s.category == c))
+        .collect();
+
+    // Serving the rules IS the adoption signal's denominator: record a fetch
+    // per rule, after the answer is safe.
+    for s in &rules {
+        record_library_usage_quietly(
+            state,
+            brainiac_core::LibraryArtifactKind::Standard,
+            s.id,
+            None,
+            brainiac_core::LibraryUsageEvent::Fetch,
+        )
+        .await;
+    }
+
+    Ok(json!({
+        "standards": rules.iter().map(|s| json!({
+            "slug": s.slug,
+            "stack": s.stack,
+            "category": s.category,
+            "statement": s.statement,
+            "enforcement": s.enforcement.as_str(),
+            "rationale": s.rationale,
+            // Examples verbatim — never re-typed by a model.
+            "examples_md": s.detail_md,
+        })).collect::<Vec<_>>(),
+        "note": "these are the org's adopted rules — follow mandatory ones, prefer recommended ones, and report divergence honestly rather than silently ignoring a rule"
+    }))
+}
+
+/// Propose a standard candidate (LB4). The outcome is only ever a proposal;
+/// dedup and the rate limit live in the store so REST and MCP cannot drift.
+async fn standard_propose(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let name = within_cap(required_str(args, "name")?, 120, "name")?;
+    let statement = within_cap(required_str(args, "statement")?, 500, "statement")?;
+    let opt = |key: &str, cap: usize| -> Result<Option<String>, ToolError> {
+        match args.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => Ok(Some(
+                within_cap(
+                    v.as_str()
+                        .ok_or_else(|| invalid(format!("`{key}` must be a string")))?,
+                    cap,
+                    key,
+                )?
+                .to_string(),
+            )),
+        }
+    };
+    let evidence = match args.get("evidence_memory_id") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(|s| s.parse::<uuid::Uuid>().ok())
+                .ok_or_else(|| invalid("`evidence_memory_id` must be a memory uuid"))?,
+        ),
+    };
+
+    let per_hour = std::env::var("BRAINIAC_LIB_PROPOSE_PER_HOUR")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(brainiac_store::library::DEFAULT_PROPOSE_PER_HOUR);
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    let outcome = brainiac_store::library::propose_standard(
+        &mut tx,
+        &brainiac_store::library::Proposal {
+            org_id: state.principal.org_id,
+            author: state.principal.user_id,
+            name: name.to_string(),
+            statement: statement.to_string(),
+            stack: opt("stack", MAX_NAME_CHARS)?,
+            category: opt("category", MAX_NAME_CHARS)?,
+            rationale: opt("rationale", 2_000)?,
+            detail_md: opt("examples_md", 4_000)?,
+            evidence_memory_id: evidence,
+        },
+        per_hour,
+    )
+    .await?;
+
+    use brainiac_store::library::ProposeOutcome;
+    Ok(match outcome {
+        ProposeOutcome::Created(id) => {
+            tx.commit().await?;
+            json!({
+                "outcome": "created",
+                "standard_id": id,
+                "note": "your proposal is a CANDIDATE waiting at the gate — a named human adopts or rejects it. Do not treat it as policy yet."
+            })
+        }
+        ProposeOutcome::Duplicate {
+            standard_id,
+            lifecycle,
+        } => json!({
+            "outcome": "duplicate",
+            "standard_id": standard_id,
+            "lifecycle": lifecycle.as_str(),
+            "note": match lifecycle.as_str() {
+                "adopted" => "the org already adopted this — follow the existing rule rather than proposing it",
+                "rejected" => "the org already considered and REJECTED this — respect that decision rather than rephrasing it",
+                _ => "this idea is already at the gate — no second candidate was created",
+            }
+        }),
+        ProposeOutcome::RateLimited { per_hour } => json!({
+            "outcome": "rate_limited",
+            "note": format!("proposal budget spent ({per_hour}/hour) — keep the remaining ideas for the session summary, or back the strongest one as a memory instead")
+        }),
+        ProposeOutcome::EvidenceNotFound => json!({
+            "outcome": "evidence_not_found",
+            "note": "the cited evidence memory does not exist or is not visible to you — propose without it, or memory_add the evidence first"
+        }),
+    })
+}
+
+/// Find published skills by what the agent is trying to do.
+async fn skill_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    use sqlx::Row;
+    let query = within_cap(required_str(args, "query")?, MAX_QUERY_CHARS, "query")?;
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+
+    // Lexical, like doc_search and for the same reason: skills are few and
+    // named for what they do. If the catalog ever outgrows this, the fix is an
+    // embedding — not a cleverer LIKE.
+    let rows = sqlx::query(
+        "SELECT slug, name, description, domain FROM skills
+         WHERE maturity = 'published'
+           AND (name ILIKE '%' || $1 || '%'
+                OR slug ILIKE '%' || $1 || '%'
+                OR description ILIKE '%' || $1 || '%'
+                OR domain ILIKE '%' || $1 || '%')
+         ORDER BY (name ILIKE '%' || $1 || '%') DESC, slug
+         LIMIT 10",
+    )
+    .bind(query)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(json!({
+        "skills": rows.iter().map(|r| json!({
+            "slug": r.get::<String, _>("slug"),
+            "name": r.get::<String, _>("name"),
+            "description": r.get::<Option<String>, _>("description"),
+            "domain": r.get::<Option<String>, _>("domain"),
+        })).collect::<Vec<_>>()
+    }))
+}
+
+/// Download a skill's current PUBLISHED bundle. A draft nobody signed returns
+/// not-found — the same refusal doc_get makes for unsigned pages.
+async fn skill_fetch(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let slug = within_cap(required_str(args, "slug")?, MAX_NAME_CHARS, "slug")?;
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+
+    let Some(skill) = brainiac_store::library::get_skill_by_slug(&mut tx, slug).await? else {
+        return Ok(json!({ "found": false, "slug": slug }));
+    };
+    let version = brainiac_store::library::current_published_version(&mut tx, skill.id).await?;
+    tx.commit().await?;
+
+    let Some(v) = version else {
+        return Ok(json!({
+            "found": true,
+            "slug": skill.slug,
+            "published": false,
+            "note": "this skill has no published version yet — a maintainer has not signed one."
+        }));
+    };
+
+    record_library_usage_quietly(
+        state,
+        brainiac_core::LibraryArtifactKind::Skill,
+        skill.id,
+        Some(&v.semver),
+        brainiac_core::LibraryUsageEvent::Fetch,
+    )
+    .await;
+
+    Ok(json!({
+        "found": true,
+        "slug": skill.slug,
+        "name": skill.name,
+        "published": true,
+        "semver": v.semver,
+        "manifest": v.manifest,
+        "content_md": v.content_md,
+        "resources": v.resources,
+    }))
+}
+
+/// Report a check (against a standard) or an apply (of a skill). `fetch` is
+/// recorded server-side when content is served, so an agent cannot inflate it.
+async fn skill_report_usage(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let kind_str = required_str(args, "artifact_kind")?;
+    let kind = brainiac_core::LibraryArtifactKind::parse(kind_str)
+        .ok_or_else(|| invalid("`artifact_kind` must be `standard` or `skill`"))?;
+    let slug = within_cap(required_str(args, "slug")?, MAX_NAME_CHARS, "slug")?;
+    let event =
+        match required_str(args, "event")? {
+            "check" => brainiac_core::LibraryUsageEvent::Check,
+            "apply" => brainiac_core::LibraryUsageEvent::Apply,
+            _ => return Err(invalid(
+                "`event` must be `check` or `apply` — fetches are counted when content is served",
+            )),
+        };
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    let artifact_id = match kind {
+        brainiac_core::LibraryArtifactKind::Standard => {
+            brainiac_store::library::get_standard_by_slug(&mut tx, slug)
+                .await?
+                .map(|s| s.id)
+        }
+        brainiac_core::LibraryArtifactKind::Skill => {
+            brainiac_store::library::get_skill_by_slug(&mut tx, slug)
+                .await?
+                .map(|s| s.id)
+        }
+    };
+    let Some(artifact_id) = artifact_id else {
+        return Ok(json!({ "recorded": false, "reason": "not found", "slug": slug }));
+    };
+    brainiac_store::library::record_usage(
+        &mut tx,
+        state.principal.org_id,
+        kind,
+        artifact_id,
+        None,
+        event,
+        state.principal.team_ids.first().copied(),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(json!({ "recorded": true, "counted_for": "your team — never you personally" }))
 }
 
 async fn entity_lookup(state: &McpState, args: &Value) -> Result<Value, ToolError> {

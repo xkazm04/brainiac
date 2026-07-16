@@ -11,7 +11,15 @@
 
 import { useState, useTransition } from "react";
 
-import { BORDER, FONT_MONO, INK, INK_DIM, LABEL, band } from "@/design/theme";
+import {
+  band,
+  BORDER,
+  FONT_MONO,
+  INK,
+  INK_DIM,
+  LABEL,
+  withAlpha,
+} from "@/design/theme";
 
 export interface ApproveRevisionProps {
   revisionId: string;
@@ -34,7 +42,7 @@ export default function ApproveRevision({
   return (
     <div
       className="rounded-lg border p-5"
-      style={{ borderColor: `${accent}55`, background: `${accent}0f` }}
+      style={{ borderColor: withAlpha(accent, 0.33), background: withAlpha(accent, 0.06) }}
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -58,7 +66,7 @@ export default function ApproveRevision({
             })
           }
           className={`${FONT_MONO} rounded-full border px-5 py-2 text-sm transition hover:bg-white/5 disabled:opacity-50`}
-          style={{ borderColor: `${accent}77`, color: accent }}
+          style={{ borderColor: withAlpha(accent, 0.47), color: accent }}
         >
           {pending ? "publishing…" : result?.ok ? "published" : "approve & publish"}
         </button>

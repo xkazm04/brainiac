@@ -1878,6 +1878,22 @@ pub(crate) struct KhSignals {
     /// Published pages no one has ever read. Not an emergency — a candidate
     /// list: promote them where readers are, or stop composing them.
     pub pages_never_read: i64,
+    // ── the library (LIBRARY-PLAN follow-up 2) ──────────────────────────
+    /// Adopted rules — the org's live, ratified judgment.
+    pub standards_adopted: i64,
+    /// Candidates waiting at the gate (mined, ratified, or agent-proposed).
+    pub standards_at_gate: i64,
+    /// How long the oldest candidate has waited, in seconds. Mining and agents
+    /// both file into this queue; a queue nobody works makes the whole intake
+    /// theatre, and the number says which it is.
+    pub oldest_gate_secs: i64,
+    /// Adopted rules the org has had time to use and hasn't touched in a
+    /// month. THE Library signal: a standard nobody follows is a wish, and
+    /// this is the number that says so without anyone having to notice.
+    pub standards_dormant: i64,
+    pub skills_published: i64,
+    /// Published skills nobody has fetched in a month.
+    pub skills_dormant: i64,
     pub org_wide: i64,
     pub team_only: i64,
     pub siloed_private: i64,
@@ -1891,7 +1907,7 @@ pub(crate) struct KhSignals {
 pub(crate) struct KhAttention {
     /// critical | warning | info — encodes urgency in form, not just number.
     pub severity: String,
-    /// contradiction | staleness | silo | governance
+    /// contradiction | staleness | silo | governance | library
     pub kind: String,
     pub headline: String,
     pub detail: String,
@@ -1934,7 +1950,7 @@ pub(crate) struct SnapshotResponse {
 /// 48h or the governance flywheel dies. The governance pillar and the
 /// attention-list breach both key off it — and so does the KB3 publish breaker,
 /// which is why the constant (like the pillar math) lives in core.
-use brainiac_core::health::REVIEW_SLO_SECS;
+use brainiac_core::health::{LIBRARY_DORMANT_DAYS, LIBRARY_GATE_SLO_SECS, REVIEW_SLO_SECS};
 
 fn grade_of(score: i64) -> &'static str {
     match score {
@@ -2332,6 +2348,74 @@ pub(crate) async fn knowledge_health(
         });
     }
 
+    // ── the library (LIBRARY-PLAN follow-up 2) ──────────────────────────
+    // The normative layer cannot recompose its way to honesty: the only test
+    // of a rule is whether practice follows it. These items are that test,
+    // reported where a leader will see it rather than on a board someone has
+    // to remember to open. The pillar math deliberately does not consume them
+    // (see brainiac_core::health) — going red is the promise, not a weight.
+    let lib = brainiac_store::library::health_signals(&mut tx, LIBRARY_DORMANT_DAYS)
+        .await
+        .map_err(internal)?;
+
+    if lib.standards_dormant > 0 {
+        attention.push(KhAttention {
+            severity: "warning".into(),
+            kind: "library".into(),
+            headline: format!(
+                "{} adopted rule(s) nobody has followed in {LIBRARY_DORMANT_DAYS} days",
+                lib.standards_dormant
+            ),
+            detail: "Each of these was ratified by a named human and has since gone untouched \
+                     by every agent and every check. A standard nobody follows is a wish that \
+                     costs credibility: retire it in the open, or find out why the org quietly \
+                     stopped agreeing with it."
+                .into(),
+        });
+    }
+    if lib.standards_at_gate > 0 && lib.oldest_gate_secs > LIBRARY_GATE_SLO_SECS {
+        attention.push(KhAttention {
+            severity: "warning".into(),
+            kind: "library".into(),
+            headline: format!(
+                "{} rule candidate(s) waiting at the gate — the oldest for {}",
+                lib.standards_at_gate,
+                human_age(lib.oldest_gate_secs)
+            ),
+            detail: "Sweeps and agents propose; only a human adopts. A queue nobody works \
+                     turns the whole intake into theatre — and the proposers keep filing. \
+                     Adopt them, or reject them: a rejection is remembered and stops the \
+                     signal coming back."
+                .into(),
+        });
+    } else if lib.standards_at_gate > 0 {
+        attention.push(KhAttention {
+            severity: "info".into(),
+            kind: "library".into(),
+            headline: format!(
+                "{} rule candidate(s) waiting at the gate",
+                lib.standards_at_gate
+            ),
+            detail: "Proposed by the mining sweep, a maintainer, or an agent mid-session. \
+                     Nothing reaches an agent as policy until one of them is adopted."
+                .into(),
+        });
+    }
+    if lib.skills_dormant > 0 {
+        attention.push(KhAttention {
+            severity: "info".into(),
+            kind: "library".into(),
+            headline: format!(
+                "{} published skill(s) unused for {LIBRARY_DORMANT_DAYS} days",
+                lib.skills_dormant
+            ),
+            detail: "Published, and pulled by nobody. Either the agents do not know it exists \
+                     or it does not help — both are worth knowing before someone spends \
+                     another release maintaining it."
+                .into(),
+        });
+    }
+
     // The trend: recorded snapshots, oldest→newest, RLS-scoped to this org.
     let trend = sqlx::query(
         "SELECT captured_at, score, consistency, currency, liquidity, governance
@@ -2376,6 +2460,12 @@ pub(crate) async fn knowledge_health(
             agent_page_reads_30d,
             dirty_page_reads_30d,
             pages_never_read,
+            standards_adopted: lib.standards_adopted,
+            standards_at_gate: lib.standards_at_gate,
+            oldest_gate_secs: lib.oldest_gate_secs,
+            standards_dormant: lib.standards_dormant,
+            skills_published: lib.skills_published,
+            skills_dormant: lib.skills_dormant,
             org_wide,
             team_only,
             siloed_private: siloed,

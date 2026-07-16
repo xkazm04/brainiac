@@ -8,8 +8,11 @@
 //! - Queue: claim invisibility, crash-redelivery, dead-lettering.
 
 use brainiac_core::embed::{DeterministicEmbedder, Embedder};
-use brainiac_core::{MemoryKind, MemoryStatus, Principal, Visibility};
-use brainiac_store::{entities, feedback, memories, orgs, queue, retrieval, Store};
+use brainiac_core::{
+    Enforcement, LibraryArtifactKind, LibraryUsageEvent, MemoryKind, MemoryStatus, Principal,
+    StandardLifecycle, StandardProvenanceKind, Visibility,
+};
+use brainiac_store::{entities, feedback, library, memories, orgs, queue, retrieval, Store};
 use uuid::Uuid;
 
 fn database_url() -> Option<String> {
@@ -38,7 +41,9 @@ async fn setup() -> Option<(Ctx, tokio::sync::MutexGuard<'static, ()>)> {
     sqlx::query(
         "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
-                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive,
+                  practice_divergences, standards, standard_versions, standard_provenance,
+                  skills, skill_versions, library_usage_events
          CASCADE",
     )
     .execute(&admin)
@@ -1501,4 +1506,354 @@ async fn raw_ttl_sweep_expires_only_neglected_raw_and_leaves_an_audit_trail() {
         again, 0,
         "a second pass finds nothing — rejected is terminal here"
     );
+}
+
+// ── LB0: the Library substrate (migration 0028) ─────────────────────────────
+
+/// A principal from a DIFFERENT org. No seeding needed: the point is that the
+/// GUC scope alone must wall them off from org 1's library.
+fn intruder() -> Principal {
+    Principal {
+        org_id: uuid(2),
+        user_id: uuid(13),
+        team_ids: vec![],
+    }
+}
+
+#[tokio::test]
+async fn library_rls_isolates_orgs_on_every_new_table() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    // Org 1 fills its library: a standard (with memory provenance), a skill
+    // with a published version, and a usage event.
+    let p = pay_dev();
+    let std_id = uuid(70);
+    let skill_id = uuid(71);
+    let ver_id = uuid(72);
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        library::insert_standard(
+            c,
+            &library::NewStandard {
+                id: std_id,
+                org_id: org(),
+                origin: Default::default(),
+                stack: "rust".into(),
+                category: "errors".into(),
+                slug: "no-unwrap-in-handlers".into(),
+                statement: "Request handlers never unwrap; they map errors to typed responses."
+                    .into(),
+                rationale: Some("Learned from the org-wide payment standard incident.".into()),
+                detail_md: None,
+                enforcement: Enforcement::Mandatory,
+                provenance: vec![(StandardProvenanceKind::Memory, uuid(101))],
+                author: Some(p.user_id),
+            },
+        )
+        .await
+        .expect("standard");
+        library::insert_skill(
+            c,
+            &library::NewSkill {
+                id: skill_id,
+                org_id: org(),
+                slug: "review-migrations".into(),
+                name: "Review migrations".into(),
+                description: None,
+                domain: Some("database".into()),
+            },
+        )
+        .await
+        .expect("skill");
+        library::add_skill_version(
+            c,
+            &library::NewSkillVersion {
+                id: ver_id,
+                skill_id,
+                org_id: org(),
+                semver: "1.0.0".into(),
+                manifest: serde_json::json!({"name": "review-migrations"}),
+                content_md: "# Review migrations\ncheck RLS on every new table".into(),
+                resources: serde_json::json!([]),
+            },
+        )
+        .await
+        .expect("version");
+        assert!(library::publish_skill_version(c, ver_id, p.user_id)
+            .await
+            .expect("publish"));
+        library::record_usage(
+            c,
+            org(),
+            LibraryArtifactKind::Skill,
+            skill_id,
+            Some("1.0.0"),
+            LibraryUsageEvent::Fetch,
+            Some(uuid(21)),
+        )
+        .await
+        .expect("usage");
+        tx.commit().await.expect("commit");
+    }
+
+    // The owner org sees everything it wrote.
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        assert!(library::get_standard(c, std_id)
+            .await
+            .expect("get")
+            .is_some());
+        assert_eq!(library::list_skills(c).await.expect("skills").len(), 1);
+        assert_eq!(
+            library::usage_by_team(c, LibraryArtifactKind::Skill, skill_id)
+                .await
+                .expect("usage")
+                .len(),
+            1
+        );
+    }
+
+    // Another org's principal sees NOTHING — and "nothing" must be indistinguishable
+    // from "does not exist" on every table, reads and aggregates alike.
+    {
+        let mut tx = ctx.store.scoped_tx(&intruder()).await.expect("tx");
+        let c = &mut *tx;
+        assert!(library::get_standard(c, std_id)
+            .await
+            .expect("get")
+            .is_none());
+        assert!(library::get_standard_by_slug(c, "no-unwrap-in-handlers")
+            .await
+            .expect("slug")
+            .is_none());
+        assert!(library::list_standards(c, None, None)
+            .await
+            .expect("list")
+            .is_empty());
+        assert!(library::provenance(c, std_id)
+            .await
+            .expect("prov")
+            .is_empty());
+        assert!(library::get_skill_by_slug(c, "review-migrations")
+            .await
+            .expect("skill")
+            .is_none());
+        assert!(library::list_skills(c).await.expect("skills").is_empty());
+        assert!(library::current_published_version(c, skill_id)
+            .await
+            .expect("ver")
+            .is_none());
+        assert!(
+            library::usage_by_team(c, LibraryArtifactKind::Skill, skill_id)
+                .await
+                .expect("usage")
+                .is_empty()
+        );
+        // Writing INTO the other org is refused by WITH CHECK, not by convention.
+        let smuggle = library::insert_skill(
+            c,
+            &library::NewSkill {
+                id: uuid(73),
+                org_id: org(), // org 1, but the session is scoped to org 2
+                slug: "smuggled".into(),
+                name: "smuggled".into(),
+                description: None,
+                domain: None,
+            },
+        )
+        .await;
+        assert!(smuggle.is_err(), "cross-org insert must be a policy error");
+    }
+
+    // The leaderboard invariant is a SHAPE, not a query discipline: the events
+    // table must not even have a user column to misuse.
+    let has_user_col: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns
+         WHERE table_name = 'library_usage_events' AND column_name LIKE '%user%'",
+    )
+    .fetch_one(&ctx.admin)
+    .await
+    .expect("schema check");
+    assert_eq!(
+        has_user_col, 0,
+        "usage events must be unattributable to a person"
+    );
+}
+
+#[tokio::test]
+async fn divergence_ratification_bridges_to_exactly_one_candidate() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    let p = pay_dev();
+    let d1 = uuid(61);
+
+    // A detected divergence, as the sweep writes it (migration 0016).
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        sqlx::query(
+            "INSERT INTO practice_divergences
+                (id, org_id, practice, summary, recommended_standard, impact, positions, model_ref)
+             VALUES ($1, $2, 'Service retry policy',
+                     'payments retries 3x fixed, data retries with full jitter',
+                     'Exponential backoff with full jitter, max 30s',
+                     'high', $3, 'test-model')",
+        )
+        .bind(d1)
+        .bind(org())
+        .bind(serde_json::json!([
+            {"team": "payments", "approach": "3x fixed"},
+            {"team": "data", "approach": "full jitter"}
+        ]))
+        .execute(&mut *tx)
+        .await
+        .expect("divergence");
+        tx.commit().await.expect("commit");
+    }
+
+    // Ratify: one divergence in, one PROPOSED candidate out, carrying the
+    // divergence as provenance and the recommendation as its statement.
+    let std_id = {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let id = library::ratify_divergence(c, d1, p.user_id)
+            .await
+            .expect("ratify")
+            .expect("divergence exists");
+        tx.commit().await.expect("commit");
+        id
+    };
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let s = library::get_standard(c, std_id)
+            .await
+            .expect("get")
+            .expect("bridged standard");
+        assert_eq!(s.lifecycle, StandardLifecycle::Proposed);
+        assert_eq!(s.slug, "service-retry-policy");
+        assert_eq!(s.statement, "Exponential backoff with full jitter, max 30s");
+        let prov = library::provenance(c, std_id).await.expect("prov");
+        assert_eq!(prov.len(), 1, "exactly one provenance row");
+        assert_eq!(prov[0].kind, StandardProvenanceKind::Divergence);
+        assert_eq!(prov[0].ref_id, d1);
+
+        // Ratifying the SAME divergence again returns the same candidate —
+        // never a second one. This is the LB0 gate.
+        let again = library::ratify_divergence(c, d1, p.user_id)
+            .await
+            .expect("ratify again")
+            .expect("still resolves");
+        assert_eq!(again, std_id);
+        let total: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM standard_provenance WHERE kind = 'divergence' AND ref_id = $1",
+        )
+        .bind(d1)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("count");
+        assert_eq!(total, 1, "exactly one candidate per divergence");
+    }
+
+    // Another org cannot ratify org 1's divergence — same answer as "no such
+    // divergence", because existence is itself information.
+    {
+        let mut tx = ctx.store.scoped_tx(&intruder()).await.expect("tx");
+        let c = &mut *tx;
+        assert!(library::ratify_divergence(c, d1, intruder().user_id)
+            .await
+            .expect("ratify")
+            .is_none());
+    }
+
+    // Adoption: the bridged candidate carries evidence, so a named human can
+    // adopt it plainly.
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        assert!(library::adopt_standard(c, std_id, p.user_id, false)
+            .await
+            .expect("adopt"));
+        tx.commit().await.expect("commit");
+    }
+
+    // An evidence-free rule CANNOT be adopted without a decree — the database
+    // refuses, not the API. The transaction is poisoned by the refusal, so it
+    // is dropped and the decree path gets a fresh one.
+    let bare = uuid(62);
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        library::insert_standard(
+            c,
+            &library::NewStandard {
+                id: bare,
+                org_id: org(),
+                origin: Default::default(),
+                stack: "general".into(),
+                category: "style".into(),
+                slug: "tabs-vs-spaces".into(),
+                statement: "Spaces.".into(),
+                rationale: None,
+                detail_md: None,
+                enforcement: Enforcement::Recommended,
+                provenance: vec![],
+                author: Some(p.user_id),
+            },
+        )
+        .await
+        .expect("bare standard");
+        tx.commit().await.expect("commit");
+    }
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let refused = library::adopt_standard(c, bare, p.user_id, false).await;
+        assert!(
+            refused.is_err(),
+            "no provenance + no decree must be refused by the schema"
+        );
+    }
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        assert!(library::adopt_standard(c, bare, p.user_id, true)
+            .await
+            .expect("decreed adoption"));
+        tx.commit().await.expect("commit");
+    }
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let s = library::get_standard(c, bare)
+            .await
+            .expect("get")
+            .expect("decreed standard");
+        assert_eq!(s.lifecycle, StandardLifecycle::Adopted);
+        assert_eq!(
+            s.decreed_by,
+            Some(p.user_id),
+            "an evidence-free rule must name the human who signed for it"
+        );
+
+        // Retirement is one-way and idempotence is a caller bug surfaced as `false`.
+        assert!(library::deprecate_standard(c, std_id, p.user_id)
+            .await
+            .expect("deprecate"));
+        assert!(!library::deprecate_standard(c, std_id, p.user_id)
+            .await
+            .expect("second deprecate"));
+        // The adopted-only serve filter no longer returns it.
+        let served = library::list_standards(c, None, Some(StandardLifecycle::Adopted))
+            .await
+            .expect("list adopted");
+        assert!(served.iter().all(|s| s.id != std_id));
+    }
 }

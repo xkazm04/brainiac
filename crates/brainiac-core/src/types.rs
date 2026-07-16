@@ -430,6 +430,13 @@ pub enum DocKind {
     /// cadence (migration 0027). Same compose pipeline, same review gate, same
     /// reader; the WINDOW is the only thing that makes it a digest.
     Digest,
+    /// The org's adopted rules for one tech stack, rendered as a page
+    /// (LIBRARY-PLAN L8, migration 0031). Rides the whole document layer —
+    /// dirty-marking, revisions, review, the health breaker, Confluence — with
+    /// ONE difference: it is projected DETERMINISTICALLY, never composed. A
+    /// rule's statement is a sentence a named human ratified; handing it to a
+    /// model to re-word would fork the org's own commitment.
+    StandardsPage,
 }
 
 impl DocKind {
@@ -440,6 +447,7 @@ impl DocKind {
             Self::Runbook => "runbook",
             Self::Onboarding => "onboarding",
             Self::Digest => "digest",
+            Self::StandardsPage => "standards_page",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -449,6 +457,7 @@ impl DocKind {
             "runbook" => Some(Self::Runbook),
             "onboarding" => Some(Self::Onboarding),
             "digest" => Some(Self::Digest),
+            "standards_page" => Some(Self::StandardsPage),
             _ => None,
         }
     }
@@ -531,6 +540,14 @@ pub struct SectionBinding {
     /// each binding stored before migration 0027 deserializes unchanged.
     #[serde(default)]
     pub window_days: Option<i64>,
+    /// The tech stack whose ADOPTED rules this section projects (LIBRARY-PLAN
+    /// L8). Set only on a `standards_page`; when present the section is
+    /// rendered deterministically from the Library and no model is called —
+    /// `entities` / `kinds` / `query` are not consulted. `None` for every
+    /// ordinary page, so bindings stored before migration 0031 deserialize
+    /// unchanged.
+    #[serde(default)]
+    pub stack: Option<String>,
     #[serde(default = "default_max_items")]
     pub max_items: usize,
 }
@@ -558,6 +575,7 @@ impl Default for SectionBinding {
             lifecycle: Vec::new(),
             query: String::new(),
             window_days: None,
+            stack: None,
             max_items: default_max_items(),
         }
     }

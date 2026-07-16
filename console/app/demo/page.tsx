@@ -1,16 +1,16 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 
-import { DEMO_DISPUTES } from "../console/(modules)/disputes/disputes-data";
-import { DEMO_CORTEX } from "../console/(modules)/graph/cortex-data";
-import { DEMO_ARCHIVE } from "../console/(modules)/memories/archive-data";
+import { DEMO_DISPUTES } from "../console/modules/disputes/disputes-data";
+import { DEMO_CORTEX } from "../console/modules/graph/cortex-data";
+import { DEMO_ARCHIVE } from "../console/modules/memories/archive-data";
 
 import { DEMO_DIVERGENCES } from "@/divergence/divergence-data";
 import { DEMO_HEALTH } from "@/health/health-data";
 import { DEMO_OBSERVATORY } from "@/observatory/observatory-data";
 
 import DemoConsole from "./DemoConsole";
-import { DEMO_CONTRADICTIONS, DEMO_PROMOTIONS } from "./demo-reviews-data";
+import { DEMO_CONTRADICTIONS, DEMO_COUNTS, DEMO_PROMOTIONS } from "./demo-reviews-data";
 import Loading from "./loading";
 
 export const metadata: Metadata = {
@@ -42,6 +42,7 @@ export default function DemoPage() {
           observatory: DEMO_OBSERVATORY,
           promotions: DEMO_PROMOTIONS,
           contradictions: DEMO_CONTRADICTIONS,
+          counts: DEMO_COUNTS,
           disputes: DEMO_DISPUTES,
           cortex: DEMO_CORTEX,
           archive: DEMO_ARCHIVE,
