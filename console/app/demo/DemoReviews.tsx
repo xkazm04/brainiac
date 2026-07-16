@@ -70,7 +70,13 @@ export default function DemoReviews({
   return (
     <ReviewWorklist
       promotions={promotions}
+      // The fixture is the whole org here — the page IS the backlog, and no
+      // pager, because there is nothing past it. Passing the lengths is honest
+      // for exactly this reason and would not be for a live queue.
+      promotionsTotal={promotions.length}
+      promotionsOffset={0}
       contradictions={shown}
+      contradictionsTotal={shown.length}
       counts={counts}
       cstatus={cstatus}
       onStatusChange={setCstatus}

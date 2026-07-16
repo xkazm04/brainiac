@@ -52,7 +52,9 @@ import type { ContradictionStatus, PromotionQueueItem } from "@/lib/governance-a
 
 import {
   CONTRA_HEADING_ID,
+  pageScope,
   resolveFocusIndex,
+  scopeNote,
   stepFocus,
   STATUS_TABS,
   type ReviewSurfaceProps,
@@ -132,7 +134,11 @@ function Key({ children }: { children: ReactNode }) {
 
 export default function ReviewWorklist({
   promotions,
+  promotionsTotal,
+  promotionsOffset,
+  promotionsPageHref,
   contradictions,
+  contradictionsTotal,
   counts,
   cstatus,
   statusHref,
@@ -267,6 +273,12 @@ export default function ReviewWorklist({
 
   const filtering = filters.team || filters.kind || filters.rule || filters.stale;
 
+  // What this page is a window onto. Everything the rail computes below —
+  // facets, the stale tally, select-all — is computed over `promotions`, which
+  // is ONE PAGE. `scope` is what stops that from reading as the whole org.
+  const scope = pageScope(promotions.length, promotionsOffset, promotionsTotal);
+  const note = scopeNote(scope);
+
   return (
     <div
       tabIndex={-1}
@@ -280,10 +292,16 @@ export default function ReviewWorklist({
         Sign what the org will remember.
       </h1>
       <p className={`${FONT_MONO} mt-2 max-w-2xl text-sm leading-relaxed text-[#e9edff]/55`}>
-        {promotions.length} promotions waiting · {facets.stale} past the 48h SLO
+        {promotionsTotal} promotions waiting · {facets.stale} past the 48h SLO
+        {!scope.whole && <> on this page</>}
         {restricted > 0 && <> · {restricted} outside your scope</>}. Every decision here is
         ledgered and signed.
       </p>
+      {note && (
+        <p className={`${FONT_MONO} mt-1.5 max-w-2xl text-xs leading-relaxed`} style={{ color: FAINT }}>
+          {note}
+        </p>
+      )}
 
       {/* ── filters ────────────────────────────────────────────────────── */}
       <div className="mt-6 flex flex-wrap items-center gap-1.5">
@@ -375,6 +393,7 @@ export default function ReviewWorklist({
           >
             <span className={LABEL} style={{ color: FAINT }}>
               {matched.length} of {promotions.length}
+              {!scope.whole && <> on page · {scope.total} in all</>}
             </span>
             <button
               type="button"
@@ -439,7 +458,7 @@ export default function ReviewWorklist({
           >
             {rows.length === 0 ? (
               <div className={`${FONT_MONO} px-4 py-12 text-center text-sm text-[#e9edff]/45`}>
-                {promotions.length === 0 ? (
+                {promotionsTotal === 0 ? (
                   <>
                     <span className="block" style={{ color: GOLD }}>
                       ◉ in phase
@@ -448,8 +467,12 @@ export default function ReviewWorklist({
                       Promotion queue clear — nothing waiting on a maintainer.
                     </span>
                   </>
+                ) : promotions.length === 0 ? (
+                  // The backlog is not empty; this PAGE is. Only reachable past
+                  // the end of it — never report an empty page as a clear queue.
+                  "Nothing on this page — the backlog starts before it."
                 ) : (
-                  "Nothing under this filter."
+                  "Nothing under this filter on this page."
                 )}
               </div>
             ) : (
@@ -537,6 +560,43 @@ export default function ReviewWorklist({
               show {Math.min(RAIL_WINDOW, matched.length - rows.length)} more ·{" "}
               {rows.length}/{matched.length} mounted
             </button>
+          )}
+
+          {/*
+            The pager. "show more" widens what is MOUNTED from the page already
+            fetched; this fetches a different page. Two different motions, so two
+            different controls — the rail lied about the backlog for as long as
+            only the first of them existed.
+          */}
+          {promotionsPageHref && !scope.whole && (
+            <div
+              className={`${FONT_MONO} flex items-center justify-between gap-2 border-t px-3 py-2 text-xs`}
+              style={{ borderColor: "rgba(233,237,255,0.08)", color: DIM }}
+            >
+              {promotionsOffset > 0 ? (
+                <Link
+                  href={promotionsPageHref(Math.max(0, promotionsOffset - promotions.length))}
+                  className="transition hover:text-white"
+                >
+                  ← newer
+                </Link>
+              ) : (
+                <span style={{ color: FAINT }}>← newer</span>
+              )}
+              <span style={{ color: FAINT }}>
+                {scope.from}–{scope.to} of {scope.total}
+              </span>
+              {scope.to < scope.total ? (
+                <Link
+                  href={promotionsPageHref(promotionsOffset + promotions.length)}
+                  className="transition hover:text-white"
+                >
+                  older →
+                </Link>
+              ) : (
+                <span style={{ color: FAINT }}>older →</span>
+              )}
+            </div>
           )}
         </div>
 
@@ -701,6 +761,17 @@ export default function ReviewWorklist({
             );
           })}
         </nav>
+
+        {/*
+          The tabs count the whole org (the server's histogram is unfiltered), so
+          "open · 900" over a page of 50 is two honest numbers that read as one
+          dishonest one unless the page says what it is.
+        */}
+        {contradictionsTotal > contradictions.length && (
+          <p className={`${FONT_MONO} mt-2 text-xs`} style={{ color: FAINT }}>
+            showing the oldest {contradictions.length} of {contradictionsTotal} under this filter
+          </p>
+        )}
 
         {contradictions.length === 0 ? (
           <div className="mt-3 flex flex-col items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.02] py-10 text-center">

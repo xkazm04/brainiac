@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   CONTRA_HEADING_ID,
+  pageScope,
   resolveFocusIndex,
+  scopeNote,
   stepFocus,
   STATUS_TABS,
 } from "./review-surface";
@@ -105,6 +107,58 @@ describe("stepFocus", () => {
     // "a" is approved and leaves the queue.
     const after = rail("b", "c");
     expect(after[resolveFocusIndex(after, next)].id).toBe("b");
+  });
+});
+
+describe("pageScope", () => {
+  it("says nothing when the page is the whole backlog", () => {
+    const s = pageScope(12, 0, 12);
+    expect(s.whole).toBe(true);
+    expect(scopeNote(s)).toBeNull();
+  });
+
+  /*
+   * THE REGRESSION. The server caps a page at 200 and reports the real backlog
+   * in `total`; the client threw `total` away and rendered the array length. At
+   * 5000 pending the headline read "200 promotions waiting" and the team filter
+   * searched 200 rows out of 5000 — so a team whose work sits on page two showed
+   * zero pending, which looks exactly like an empty queue.
+   */
+  it("discloses the window when the page is a slice of a real backlog", () => {
+    const s = pageScope(200, 0, 5000);
+    expect(s.whole).toBe(false);
+    expect([s.from, s.to, s.total]).toEqual([1, 200, 5000]);
+    expect(scopeNote(s)).toBe(
+      "Filters, counts and select-all below cover rows 1–200 of 5000 — this page, not the whole backlog.",
+    );
+  });
+
+  it("numbers rows from the offset, not from one", () => {
+    const s = pageScope(200, 400, 5000);
+    expect([s.from, s.to]).toEqual([401, 600]);
+    expect(s.whole).toBe(false);
+  });
+
+  it("is honest on the last page, where the window still is not the backlog", () => {
+    const s = pageScope(50, 4950, 5000);
+    expect([s.from, s.to]).toEqual([4951, 5000]);
+    // Reaching the end of the backlog does not make this page the whole of it —
+    // the facets still only cover these 50 rows.
+    expect(s.whole).toBe(false);
+    expect(scopeNote(s)).toContain("rows 4951–5000 of 5000");
+  });
+
+  it("reports no rows for an empty page rather than a phantom row zero", () => {
+    const s = pageScope(0, 0, 0);
+    expect([s.from, s.to]).toEqual([0, 0]);
+    expect(s.whole).toBe(true); // an empty queue really is the whole backlog
+    expect(scopeNote(s)).toBeNull();
+  });
+
+  it("stays a window when an offset overshoots the backlog", () => {
+    const s = pageScope(0, 9999, 5000);
+    expect(s.whole).toBe(false);
+    expect([s.from, s.to]).toEqual([0, 0]);
   });
 });
 

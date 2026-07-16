@@ -17,8 +17,23 @@ import type {
 } from "@/lib/governance-api";
 
 export interface ReviewSurfaceProps {
+  /** ONE PAGE of the promotion backlog, oldest first — not the backlog. */
   promotions: PromotionQueueItem[];
+  /**
+   * Every promotion awaiting review. Required, and deliberately not defaulted to
+   * `promotions.length`: that default is the bug. The rail renders a page (the
+   * server caps it at 200) and the two numbers diverge silently the moment a
+   * real org's backlog passes it.
+   */
+  promotionsTotal: number;
+  /** Where this page starts in the backlog. */
+  promotionsOffset: number;
+  /** Link to another page of the promotion backlog. Absent ⇒ no pager. */
+  promotionsPageHref?: (offset: number) => string;
+  /** ONE PAGE of the contradiction queue under `cstatus`. */
   contradictions: ContradictionQueueItem[];
+  /** Contradictions matching `cstatus`, ignoring the page window. */
+  contradictionsTotal: number;
   counts: { status: string; count: number }[];
   cstatus: ContradictionStatus;
   /** Live console: filtering is a server round trip, so tabs are links. */
@@ -47,6 +62,46 @@ export interface ReviewSurfaceProps {
  * One constant, imported by both sides, cannot drift.
  */
 export const CONTRA_HEADING_ID = "wl-contra-h";
+
+/** Where a rendered page sits inside the backlog behind it. */
+export interface PageScope {
+  /** True when this page IS the whole backlog — nothing is being hidden. */
+  whole: boolean;
+  /** 1-based first row on this page (0 when the page is empty). */
+  from: number;
+  /** 1-based last row on this page (0 when the page is empty). */
+  to: number;
+  /** The whole backlog. */
+  total: number;
+}
+
+export function pageScope(pageLength: number, offset: number, total: number): PageScope {
+  const empty = pageLength === 0;
+  return {
+    whole: offset === 0 && pageLength >= total,
+    from: empty ? 0 : offset + 1,
+    to: empty ? 0 : offset + pageLength,
+    total,
+  };
+}
+
+/**
+ * The sentence that keeps the rail's filters honest, or null when the page is
+ * the whole backlog and there is nothing to disclaim.
+ *
+ * The rail's facet chips, its stale tally and its "select all" are all computed
+ * over the rows CURRENTLY IN THE PAGE, because that is the only corpus the
+ * client has. That is a fine trade — 200 rows is a working set, and the counts
+ * are still computed against every other active filter, so a chip means "what
+ * this would leave me with" rather than "what exists". What is NOT fine is
+ * letting it read as the whole org: a team filter that silently searches 200 of
+ * 5000 rows reports zero pending for a team whose work sits on page two, and
+ * looks exactly like good news. So when a page is a window, it says so.
+ */
+export function scopeNote(s: PageScope): string | null {
+  if (s.whole) return null;
+  return `Filters, counts and select-all below cover rows ${s.from}–${s.to} of ${s.total} — this page, not the whole backlog.`;
+}
 
 /** Anything the rail can put a cursor on. */
 export interface FocusableRow {

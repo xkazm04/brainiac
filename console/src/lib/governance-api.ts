@@ -68,12 +68,37 @@ export interface PromotionQueueItem {
   provenance: PromotionProvenance | null;
 }
 
-export async function promotionQueue(cfg: ApiConfig): Promise<PromotionQueueItem[]> {
-  const out = await call<{ promotions: PromotionQueueItem[] }>(
-    cfg,
-    "/v1/reviews/promotions",
-  );
-  return out.promotions;
+export interface PromotionQueuePage {
+  /** One page of the backlog, oldest first. */
+  promotions: PromotionQueueItem[];
+  /**
+   * Every promotion awaiting review, independent of the page window — the real
+   * backlog. `promotions.length` is only ever the size of the page: the server
+   * caps it at 200 and defaults to 100, so rendering the array length as the
+   * queue depth understates a 5k backlog as "100 waiting" and never corrects
+   * itself. The server counts this over the whole table; the only way to get it
+   * wrong is to throw it away, which is what this client used to do.
+   */
+  total: number;
+}
+
+/**
+ * One page of the promotion review queue.
+ *
+ * `limit`/`offset` are sent explicitly rather than left to the server's
+ * defaults: a caller that pages has to know what window it asked for in order
+ * to say so in the UI, and a silent default is exactly how the page length got
+ * mistaken for the backlog in the first place.
+ */
+export async function promotionQueue(
+  cfg: ApiConfig,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<PromotionQueuePage> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return call(cfg, `/v1/reviews/promotions${qs ? `?${qs}` : ""}`);
 }
 
 // ── contradictions ──────────────────────────────────────────────────────

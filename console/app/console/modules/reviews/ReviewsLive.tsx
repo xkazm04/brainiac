@@ -25,21 +25,35 @@ import type {
 
 export default function ReviewsLive({
   promotions,
+  promotionsTotal,
+  promotionsOffset,
   contradictions,
+  contradictionsTotal,
   counts,
   cstatus,
 }: {
   promotions: PromotionQueueItem[];
+  promotionsTotal: number;
+  promotionsOffset: number;
   contradictions: ContradictionQueueItem[];
+  contradictionsTotal: number;
   counts: { status: string; count: number }[];
   cstatus: ContradictionStatus;
 }) {
   return (
     <ReviewWorklist
       promotions={promotions}
+      promotionsTotal={promotionsTotal}
+      promotionsOffset={promotionsOffset}
       contradictions={contradictions}
+      contradictionsTotal={contradictionsTotal}
       counts={counts}
       cstatus={cstatus}
+      // Paging is a server round trip for the same reason the status tabs are:
+      // the page is the window the server was asked for, so it lives in the URL.
+      promotionsPageHref={(o) =>
+        `/console?m=reviews&cstatus=${cstatus}${o > 0 ? `&poffset=${o}` : ""}`
+      }
       promotionControls={(p) => <PromotionButtons promotionId={p.id} />}
       contradictionControls={(c) => (
         <ContradictionButtons
