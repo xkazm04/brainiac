@@ -804,17 +804,53 @@ pub(crate) struct FeedbackClaims {
     pub outdated: i64,
 }
 
+/// One open claim and the reporter behind it. Deprecating an org memory on an
+/// unattributed tally is guessing; this is what makes it a decision.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct FeedbackReport {
+    /// wrong | outdated
+    pub verdict: String,
+    pub note: Option<String>,
+    pub reporter_id: Uuid,
+    /// Null when the org holds no email for the reporter.
+    pub reporter_email: Option<String>,
+    /// The reporter sits on the memory's owning team. Always false for
+    /// org-wide memories — there is no owning team to sit on.
+    pub reporter_on_owning_team: bool,
+    /// How long ago this claim was filed. Seconds-since, like every other age
+    /// on this payload.
+    pub age_secs: i64,
+}
+
+/// The provenance record behind the disputed memory. Whole object null (not
+/// omitted) when the memory has none — mirrors `MemoryProvenance` on the
+/// detail endpoint.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct FeedbackProvenance {
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub model_ref: Option<String>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct FlaggedMemory {
     pub memory_id: Uuid,
+    pub title: Option<String>,
     pub content: String,
     pub kind: String,
     pub status: String,
     pub team_id: Option<Uuid>,
+    /// The owning team's name; null for org-wide memories.
+    pub team: Option<String>,
+    pub confidence: Option<f32>,
     pub valid_to: Option<DateTime<Utc>>,
+    pub provenance: Option<FeedbackProvenance>,
     pub claims: FeedbackClaims,
-    /// Reporter notes on the open claims (most recent first, capped).
-    pub notes: Vec<String>,
+    /// DISTINCT reporters behind the open claims — the number that says whether
+    /// a tally of five is five people or one agent five times.
+    pub reporters: i64,
+    /// The open claims themselves (most recent first, capped server-side).
+    pub reports: Vec<FeedbackReport>,
     /// Age of the OLDEST open claim — how long the dispute has stood.
     pub oldest_claim_secs: i64,
 }
@@ -862,16 +898,36 @@ pub(crate) async fn feedback_queue(
             .iter()
             .map(|f| FlaggedMemory {
                 memory_id: f.memory_id,
+                title: f.title.clone(),
                 content: f.content.clone(),
                 kind: f.kind.clone(),
                 status: f.status.clone(),
                 team_id: f.team_id,
+                team: f.team.clone(),
+                confidence: f.confidence,
                 valid_to: f.valid_to,
+                provenance: f.provenance.as_ref().map(|p| FeedbackProvenance {
+                    actor_kind: p.actor_kind.clone(),
+                    actor_id: p.actor_id.clone(),
+                    model_ref: p.model_ref.clone(),
+                }),
                 claims: FeedbackClaims {
                     wrong: f.wrong,
                     outdated: f.outdated,
                 },
-                notes: f.notes.clone(),
+                reporters: f.reporters,
+                reports: f
+                    .reports
+                    .iter()
+                    .map(|c| FeedbackReport {
+                        verdict: c.verdict.clone(),
+                        note: c.note.clone(),
+                        reporter_id: c.reporter_id,
+                        reporter_email: c.reporter_email.clone(),
+                        reporter_on_owning_team: c.reporter_on_owning_team,
+                        age_secs: c.age_secs,
+                    })
+                    .collect(),
                 oldest_claim_secs: f.oldest_claim_secs,
             })
             .collect(),

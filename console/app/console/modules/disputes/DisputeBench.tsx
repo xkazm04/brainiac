@@ -29,11 +29,13 @@ import {
   withAlpha,
 } from "@/design/theme";
 
+import type { DecisionResult } from "./actions";
 import DecisionBar from "./DecisionBar";
 import {
   ageLabel,
   claimCount,
   daysLeft,
+  reporterLabel,
   severity,
   triageOrder,
   type DisputeData,
@@ -63,6 +65,11 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
   const reduced = useReducedMotion();
   const rows = triageOrder(data.flagged);
   const [selected, setSelected] = useState<string | null>(rows[0]?.memory_id ?? null);
+  // The receipt lives HERE, not in the DecisionBar, because the DecisionBar
+  // does not survive its own success: answering revalidates, the answered row
+  // leaves `rows`, and the bar unmounts — taking `claims_closed`, the only
+  // proof the write landed, with it before anyone read it.
+  const [receipt, setReceipt] = useState<DecisionResult | null>(null);
   const active: DisputedMemory | undefined =
     rows.find((m) => m.memory_id === selected) ?? rows[0];
 
@@ -191,7 +198,9 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
           <div className={`${LABEL} flex flex-wrap items-center gap-x-3`} style={{ color: "rgba(233,237,255,0.35)" }}>
             <span>{active.kind}</span>
             <span>{active.status}</span>
-            {active.team_id && <span>team {active.team_id}</span>}
+            {/* A NAME. `team_id` is a uuid, and rendering it read as
+                "team 3f2a9c1e-…" to everyone whose data was real. */}
+            <span>{active.team ? `team ${active.team}` : "org-wide"}</span>
             <span>disputed {ageLabel(active.oldest_claim_secs)} ago</span>
             <span style={{ color: (daysLeft(active) ?? 1) < 0 ? MAGENTA : GAMMA }}>
               {(() => {
@@ -202,16 +211,69 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
             </span>
           </div>
 
-          <p className="mt-2.5 text-base leading-relaxed text-[#e9edff]/90">{active.content}</p>
+          {active.title && (
+            <h2 className="mt-2 text-lg font-medium text-[#e9edff]/95">{active.title}</h2>
+          )}
+          <p className="mt-2 text-base leading-relaxed text-[#e9edff]/90">{active.content}</p>
+
+          {/* Where it came from and how sure the corpus was. A `wrong` claim
+              against a 0.44-confidence LLM extraction and one against a fact a
+              human wrote are not the same claim; the bench used to show
+              neither, so they looked identical. */}
+          <div
+            className={`${FONT_MONO} mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]`}
+            style={{ color: "rgba(233,237,255,0.4)" }}
+          >
+            {active.provenance ? (
+              <span>
+                from {active.provenance.actor_kind} · {active.provenance.actor_id}
+                {active.provenance.model_ref && ` · ${active.provenance.model_ref}`}
+              </span>
+            ) : (
+              <span>provenance unrecorded</span>
+            )}
+            <span>
+              {active.confidence === null
+                ? "no confidence recorded"
+                : `confidence ${active.confidence.toFixed(2)}`}
+            </span>
+          </div>
 
           <div className={`${FONT_MONO} mt-3 text-xs`} style={{ color: MAGENTA }}>
             {claimCount(active)} claim{claimCount(active) === 1 ? "" : "s"} ·{" "}
             {active.claims.wrong}× wrong · {active.claims.outdated}× outdated
+            {" · "}
+            {/* The decisive number. "5 claims" from one agent firing five times
+                is not five people, and it was undecidable from this screen. */}
+            <span style={{ color: active.reporters === 1 ? GAMMA : MAGENTA }}>
+              {active.reporters} reporter{active.reporters === 1 ? "" : "s"}
+            </span>
           </div>
-          {active.notes.length > 0 ? (
-            <ul className={`${FONT_MONO} mt-2 space-y-1.5 border-l-2 pl-3 text-sm text-[#e9edff]/65`} style={{ borderColor: withAlpha(MAGENTA, 0.33) }}>
-              {active.notes.map((n, k) => (
-                <li key={k}>“{n}”</li>
+
+          {active.reports.length > 0 ? (
+            <ul className="mt-2 space-y-2 border-l-2 pl-3" style={{ borderColor: withAlpha(MAGENTA, 0.33) }}>
+              {active.reports.map((r) => (
+                <li key={`${r.reporter_id}-${r.age_secs}-${r.verdict}`}>
+                  <div className={`${FONT_MONO} flex flex-wrap items-center gap-x-2 text-[11px]`}>
+                    <span style={{ color: r.verdict === "wrong" ? MAGENTA : THETA }}>{r.verdict}</span>
+                    <span style={{ color: "rgba(233,237,255,0.55)" }}>{reporterLabel(r)}</span>
+                    {r.reporter_on_owning_team && (
+                      <span
+                        className="rounded-full px-1.5"
+                        style={{ background: withAlpha(GAMMA, 0.14), color: GAMMA }}
+                        title="the reporter sits on the team that owns this memory"
+                      >
+                        owning team
+                      </span>
+                    )}
+                    {/* Undated quotes were the trap: a note from yesterday and
+                        one from two years ago looked identical. */}
+                    <span style={{ color: "rgba(233,237,255,0.3)" }}>{ageLabel(r.age_secs)} ago</span>
+                  </div>
+                  {r.note && (
+                    <p className={`${FONT_MONO} text-sm text-[#e9edff]/65`}>“{r.note}”</p>
+                  )}
+                </li>
               ))}
             </ul>
           ) : (
@@ -221,9 +283,30 @@ export default function DisputeBench({ data }: { data: DisputeData }) {
           )}
 
           <div className="mt-4">
-            <DecisionBar memoryId={active.memory_id} live={data.live} />
+            <DecisionBar memoryId={active.memory_id} live={data.live} onResult={setReceipt} />
           </div>
         </motion.div>
+      )}
+
+      {receipt && (
+        <div
+          role="status"
+          className={`${FONT_MONO} mt-3 flex items-start gap-3 rounded-lg border px-3.5 py-2.5 text-sm`}
+          style={{
+            borderColor: withAlpha(receipt.ok ? GAMMA : MAGENTA, 0.35),
+            color: receipt.ok ? GAMMA : MAGENTA,
+          }}
+        >
+          <span className="flex-1">{receipt.message}</span>
+          <button
+            type="button"
+            onClick={() => setReceipt(null)}
+            className="text-[#e9edff]/40 transition hover:text-[#e9edff]/80"
+            aria-label="dismiss"
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {!data.live && (

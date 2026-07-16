@@ -39,16 +39,26 @@ const SAID: Record<Resolution, string> = {
   dismissed: "Reports dismissed — the memory stands",
 };
 
+/**
+ * `days` applies to `reverified` only — it is the new validity budget, and the
+ * server ignores it for the other two (they do not move the boundary). Passing
+ * it from anywhere else would be a number with no effect, so the caller sends
+ * it only with a re-verification and this asserts that here rather than
+ * trusting it.
+ */
 export async function resolveDisputeAction(
   memoryId: string,
   resolution: Resolution,
+  days?: number,
 ): Promise<DecisionResult> {
   try {
-    const out = await resolveDispute(configFromEnv(), memoryId, resolution);
+    const budget = resolution === "reverified" ? days : undefined;
+    const out = await resolveDispute(configFromEnv(), memoryId, resolution, budget);
     refreshBench();
+    const extended = budget ? ` (${budget}d)` : "";
     return {
       ok: true,
-      message: `${SAID[resolution]} · ${out.claims_closed} claim${
+      message: `${SAID[resolution]}${extended} · ${out.claims_closed} claim${
         out.claims_closed === 1 ? "" : "s"
       } closed.`,
     };

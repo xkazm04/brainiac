@@ -1326,9 +1326,18 @@ async fn feedback_claims_queue_and_resolution() {
     assert_eq!(flagged[0].memory_id, uuid(102));
     assert_eq!((flagged[0].wrong, flagged[0].outdated), (1, 1));
     assert_eq!(
-        flagged[0].notes,
+        flagged[0]
+            .reports
+            .iter()
+            .filter_map(|c| c.note.clone())
+            .collect::<Vec<_>>(),
         vec!["psp changed the endpoint".to_string()]
     );
+    // Both claims came from ONE reporter — the number that stops "2 claims"
+    // from reading as two independent people.
+    assert_eq!(flagged[0].reporters, 1);
+    assert_eq!(flagged[0].reports.len(), 2, "note-less claims still count");
+    assert!(flagged[0].reports.iter().all(|c| c.reporter_id == uuid(11)));
     assert_eq!(feedback::flagged_count(&mut tx).await.expect("count"), 1);
 
     // Trust attaches to served memories in one batched lookup.

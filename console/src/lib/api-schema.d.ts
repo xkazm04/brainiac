@@ -1582,6 +1582,16 @@ export interface components {
             /** Format: int64 */
             wrong: number;
         };
+        /**
+         * @description The provenance record behind the disputed memory. Whole object null (not
+         *     omitted) when the memory has none — mirrors `MemoryProvenance` on the
+         *     detail endpoint.
+         */
+        FeedbackProvenance: {
+            actor_id: string;
+            actor_kind: string;
+            model_ref?: string | null;
+        };
         FeedbackQueueResponse: {
             flagged: components["schemas"]["FlaggedMemory"][];
             /**
@@ -1601,6 +1611,30 @@ export interface components {
             memory_id: string;
             verdict: string;
         };
+        /**
+         * @description One open claim and the reporter behind it. Deprecating an org memory on an
+         *     unattributed tally is guessing; this is what makes it a decision.
+         */
+        FeedbackReport: {
+            /**
+             * Format: int64
+             * @description How long ago this claim was filed. Seconds-since, like every other age
+             *     on this payload.
+             */
+            age_secs: number;
+            note?: string | null;
+            /** @description Null when the org holds no email for the reporter. */
+            reporter_email?: string | null;
+            /** Format: uuid */
+            reporter_id: string;
+            /**
+             * @description The reporter sits on the memory's owning team. Always false for
+             *     org-wide memories — there is no owning team to sit on.
+             */
+            reporter_on_owning_team: boolean;
+            /** @description wrong | outdated */
+            verdict: string;
+        };
         /** @description One verdict tally for a memory. */
         FeedbackVerdictCount: {
             /** Format: int64 */
@@ -1609,20 +1643,32 @@ export interface components {
         };
         FlaggedMemory: {
             claims: components["schemas"]["FeedbackClaims"];
+            /** Format: float */
+            confidence?: number | null;
             content: string;
             kind: string;
             /** Format: uuid */
             memory_id: string;
-            /** @description Reporter notes on the open claims (most recent first, capped). */
-            notes: string[];
             /**
              * Format: int64
              * @description Age of the OLDEST open claim — how long the dispute has stood.
              */
             oldest_claim_secs: number;
+            provenance?: null | components["schemas"]["FeedbackProvenance"];
+            /**
+             * Format: int64
+             * @description DISTINCT reporters behind the open claims — the number that says whether
+             *     a tally of five is five people or one agent five times.
+             */
+            reporters: number;
+            /** @description The open claims themselves (most recent first, capped server-side). */
+            reports: components["schemas"]["FeedbackReport"][];
             status: string;
+            /** @description The owning team's name; null for org-wide memories. */
+            team?: string | null;
             /** Format: uuid */
             team_id?: string | null;
+            title?: string | null;
             /** Format: date-time */
             valid_to?: string | null;
         };

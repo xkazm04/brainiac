@@ -242,16 +242,40 @@ export async function auditTrail(
 
 // ── disputed memories (feedback triage) ─────────────────────────────────
 
+/** One open claim, attributed and dated. */
+export interface FeedbackReport {
+  verdict: "wrong" | "outdated";
+  note: string | null;
+  reporter_id: string;
+  /** Null when the org holds no email for the reporter (agents rarely do). */
+  reporter_email: string | null;
+  reporter_on_owning_team: boolean;
+  age_secs: number;
+}
+
+export interface FeedbackProvenance {
+  actor_kind: string;
+  actor_id: string;
+  model_ref: string | null;
+}
+
 export interface FlaggedMemory {
   memory_id: string;
+  title: string | null;
   content: string;
   kind: string;
   status: string;
   team_id: string | null;
+  /** The owning team's name; null for org-wide memories. */
+  team: string | null;
+  confidence: number | null;
   valid_to: string | null;
+  provenance: FeedbackProvenance | null;
   claims: { wrong: number; outdated: number };
-  /** Reporter notes on the open claims (newest first, capped server-side). */
-  notes: string[];
+  /** DISTINCT reporters — five claims from one agent is not five people. */
+  reporters: number;
+  /** The open claims themselves (newest first, capped server-side). */
+  reports: FeedbackReport[];
   oldest_claim_secs: number;
 }
 
