@@ -1845,6 +1845,54 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Filter to one memory kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter to one owning team",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "min_age_hours",
+            "in": "query",
+            "description": "Oldest claim at least this old",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "min_claims",
+            "in": "query",
+            "description": "At least this many open claims",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "band",
+            "in": "query",
+            "description": "Decay band: past|d30|d90|d180|far|none",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1857,6 +1905,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Unknown band value"
           }
         }
       }
@@ -3560,6 +3611,56 @@
           }
         }
       },
+      "FeedbackFacet": {
+        "type": "object",
+        "description": "One filter value and the disputed-memory count behind it — so a filter\ncontrol can show what each option would leave and never offer one that\nempties the queue.",
+        "required": [
+          "value",
+          "label",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "FeedbackFacets": {
+        "type": "object",
+        "description": "The facet breakdown of the FULL backlog, ignoring the current filter — the\nmenu, which must not shrink as the operator narrows or there is nothing left\nto widen back out with.",
+        "required": [
+          "kinds",
+          "teams",
+          "bands"
+        ],
+        "properties": {
+          "bands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackFacet"
+            }
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackFacet"
+            }
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackFacet"
+            }
+          }
+        }
+      },
       "FeedbackProvenance": {
         "type": "object",
         "description": "The provenance record behind the disputed memory. Whole object null (not\nomitted) when the memory has none — mirrors `MemoryProvenance` on the\ndetail endpoint.",
@@ -3586,9 +3687,14 @@
         "type": "object",
         "required": [
           "total",
+          "facets",
           "flagged"
         ],
         "properties": {
+          "facets": {
+            "$ref": "#/components/schemas/FeedbackFacets",
+            "description": "The facet menu for building a filter — counts over the FULL backlog, so\nit never shrinks as the operator narrows."
+          },
           "flagged": {
             "type": "array",
             "items": {
@@ -3598,7 +3704,7 @@
           "total": {
             "type": "integer",
             "format": "int64",
-            "description": "Total memories carrying open claims — the full triage backlog,\nindependent of the page window."
+            "description": "Memories matching the current filter, ignoring the page window — the\nreal backlog. `flagged.len()` is only the page; rendering it as the\nqueue depth understates the moment the backlog passes `limit`."
           }
         }
       },

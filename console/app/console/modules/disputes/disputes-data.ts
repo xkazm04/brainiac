@@ -42,9 +42,46 @@ export interface DisputedMemory {
   oldest_claim_secs: number;
 }
 
+/** A decay band: how much of a memory's validity window is left. */
+export type DecayBand = "past" | "d30" | "d90" | "d180" | "far" | "none";
+
+export interface Facet {
+  value: string;
+  label: string;
+  count: number;
+}
+
+export interface Facets {
+  kinds: Facet[];
+  teams: Facet[];
+  bands: Facet[];
+}
+
+/** The narrowing a maintainer applied — mirrors the server query params. */
+export interface DisputeFilter {
+  kind?: string;
+  teamId?: string;
+  band?: DecayBand;
+  minClaims?: number;
+  minAgeHours?: number;
+}
+
 export interface DisputeData {
   live: boolean;
+  /** The current PAGE — already filtered, ordered and windowed by the server
+   *  (or, offline, by the demo helpers). NEVER re-sorted client-side: doing so
+   *  reorders one page of a server-paginated backlog and calls it "worst". */
   flagged: DisputedMemory[];
+  /** Memories matching the filter, ignoring the page window — the real depth. */
+  total: number;
+  /** Facet menu over the FULL backlog. */
+  facets: Facets;
+  /** The active filter, echoed back so the bench can render/clear it. */
+  filter: DisputeFilter;
+  /** Zero-based page index. */
+  page: number;
+  /** Rows per page. */
+  pageSize: number;
 }
 
 export type Resolution = "reverified" | "deprecated" | "dismissed";
@@ -98,6 +135,25 @@ export function daysLeft(m: DisputedMemory): number | null {
   return (new Date(m.valid_to).getTime() - Date.now()) / 86_400_000;
 }
 
+/** Decay axis bounds: -30d … +180d. */
+export const AXIS_MIN = -30;
+export const AXIS_MAX = 180;
+
+/**
+ * A memory's position on the decay axis as a 0..100 percentage.
+ *
+ * `null` (no TTL) returns null, NOT 100 — the axis is a timeline and a memory
+ * with no expiry is not "at the far right of it", it is off it. The old code
+ * pinned both null-TTL and everything ≥180d to 100%, collapsing three distinct
+ * states (expired-soon-far, far-future, never) onto one pixel. Callers render
+ * the null case as its own marker (see the bench's "no expiry" pip).
+ */
+export function pos(days: number | null): number | null {
+  if (days === null) return null;
+  const clamped = Math.min(AXIS_MAX, Math.max(AXIS_MIN, days));
+  return ((clamped - AXIS_MIN) / (AXIS_MAX - AXIS_MIN)) * 100;
+}
+
 /** Compact age: 12m / 3.4h / 2d. */
 export function ageLabel(secs: number): string {
   if (secs < 90) return `${Math.round(secs)}s`;
@@ -106,17 +162,134 @@ export function ageLabel(secs: number): string {
   return `${Math.round(secs / 86400)}d`;
 }
 
-/** Most-disputed first, then longest-standing — the server's own ordering. */
+/**
+ * The server's EXACT ordering, reproduced for offline/demo data: most `wrong`
+ * first, then most claims total, then longest-standing.
+ *
+ * It used to sort by `severity` (`wrong*2 + outdated`) under a comment claiming
+ * it was "the server's own ordering" — and it was not. The server ranks by raw
+ * `wrong` count, so B(wrong=2,outdated=0) leads A(wrong=1,outdated=5); severity
+ * scored A=7 over B=4 and flipped them. Two orderings disagreeing over which
+ * dispute is "worst" is one too many, and on LIVE data the client re-sort was
+ * also reordering a single server-paginated page. So this now mirrors the
+ * server, and it is applied ONLY to demo data — a live page arrives ordered and
+ * is never re-sorted (see DisputeData.flagged).
+ */
 export function triageOrder(rows: DisputedMemory[]): DisputedMemory[] {
   return [...rows].sort(
     (a, b) =>
-      severity(b) - severity(a) ||
+      b.claims.wrong - a.claims.wrong ||
       claimCount(b) - claimCount(a) ||
       b.oldest_claim_secs - a.oldest_claim_secs,
   );
 }
 
+// ── decay bands (mirror BAND_SQL in feedback.rs) ────────────────────────
+
+export const DECAY_BANDS: { band: DecayBand; label: string }[] = [
+  { band: "past", label: "past window" },
+  { band: "d30", label: "≤30d" },
+  { band: "d90", label: "≤90d" },
+  { band: "d180", label: "≤180d" },
+  { band: "far", label: ">180d" },
+  { band: "none", label: "no expiry" },
+];
+
+/**
+ * Which decay band a memory falls in. ONE definition of "past its window",
+ * matching the server's `BAND_SQL`, so the console never gives a second answer
+ * to a question the store already answered. `none` (no TTL) is its own band,
+ * NOT the far edge — a memory that never decays and one good for two more years
+ * are different facts and must not share a position.
+ */
+export function bandOf(m: DisputedMemory): DecayBand {
+  const l = daysLeft(m);
+  if (l === null) return "none";
+  if (l < 0) return "past";
+  if (l < 30) return "d30";
+  if (l < 90) return "d90";
+  if (l < 180) return "d180";
+  return "far";
+}
+
+// ── offline filtering / faceting / paging (parity with the server) ──────
+//
+// Live data arrives already filtered, faceted and paged by the server. These
+// reproduce that for the demo fixture so the controls are not dead offline —
+// and they are the unit-tested spec for what the server contract must do.
+
+export function matchesFilter(m: DisputedMemory, f: DisputeFilter): boolean {
+  if (f.kind && m.kind !== f.kind) return false;
+  if (f.teamId && m.team_id !== f.teamId) return false;
+  if (f.band && bandOf(m) !== f.band) return false;
+  if (f.minClaims !== undefined && claimCount(m) < f.minClaims) return false;
+  if (f.minAgeHours !== undefined && m.oldest_claim_secs < f.minAgeHours * 3600)
+    return false;
+  return true;
+}
+
+/** Facet counts over the FULL backlog — one count per disputed memory, so the
+ *  menu never shrinks as the operator narrows and can always widen back out. */
+export function computeFacets(rows: DisputedMemory[]): Facets {
+  const kinds = new Map<string, number>();
+  const teams = new Map<string, { label: string; count: number }>();
+  const bands = new Map<DecayBand, number>();
+  for (const m of rows) {
+    kinds.set(m.kind, (kinds.get(m.kind) ?? 0) + 1);
+    const key = m.team_id ?? "";
+    const t = teams.get(key) ?? { label: m.team ?? "org-wide", count: 0 };
+    t.count += 1;
+    teams.set(key, t);
+    const b = bandOf(m);
+    bands.set(b, (bands.get(b) ?? 0) + 1);
+  }
+  return {
+    kinds: [...kinds.entries()]
+      .map(([value, count]) => ({ value, label: value, count }))
+      .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
+    teams: [...teams.entries()]
+      .map(([value, { label, count }]) => ({ value, label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    // Bands keep decay order, not count order — the axis has a direction.
+    bands: DECAY_BANDS.flatMap(({ band }) => {
+      const count = bands.get(band);
+      return count ? [{ value: band, label: band, count }] : [];
+    }),
+  };
+}
+
+/**
+ * Build a full DisputeData page from the demo fixture: order like the server,
+ * facet the whole backlog, filter, then window. `pageSize` and `page` clamp so
+ * an out-of-range page lands on the last real one rather than blank.
+ */
+export function demoPage(
+  all: DisputedMemory[],
+  filter: DisputeFilter,
+  page: number,
+  pageSize: number,
+): DisputeData {
+  const facets = computeFacets(all);
+  const matched = triageOrder(all.filter((m) => matchesFilter(m, filter)));
+  const pages = Math.max(1, Math.ceil(matched.length / pageSize));
+  const safePage = Math.min(Math.max(0, page), pages - 1);
+  const start = safePage * pageSize;
+  return {
+    live: false,
+    flagged: matched.slice(start, start + pageSize),
+    total: matched.length,
+    facets,
+    filter,
+    page: safePage,
+    pageSize,
+  };
+}
+
 // ── demo queue (server unreachable) ─────────────────────────────────────
+
+/** The console's page size. The server clamps 1..200; this is the legible
+ *  list length the bench pages through. */
+export const PAGE_SIZE = 25;
 
 const d = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 
@@ -142,9 +315,9 @@ const rep = (
   age_secs: ageSecs,
 });
 
-export const DEMO_DISPUTES: DisputeData = {
-  live: false,
-  flagged: [
+/** The raw offline fixture. `DEMO_DISPUTES` below is the default first page of
+ *  it; Module re-pages this through `demoPage` when the URL carries a filter. */
+export const DEMO_FLAGGED: DisputedMemory[] = [
     {
       memory_id: "d1e0a5c2-0000-4000-8000-000000000001",
       title: "PSP webhook secret rotation",
@@ -242,5 +415,7 @@ export const DEMO_DISPUTES: DisputeData = {
       ],
       oldest_claim_secs: 20 * 86400,
     },
-  ],
-};
+];
+
+/** The default (unfiltered, first-page) demo view. */
+export const DEMO_DISPUTES: DisputeData = demoPage(DEMO_FLAGGED, {}, 0, PAGE_SIZE);

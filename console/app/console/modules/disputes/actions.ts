@@ -29,8 +29,11 @@ function describe(e: unknown): string {
 }
 
 function refreshBench() {
-  revalidatePath("/console/disputes");
-  revalidatePath("/console/analytics");
+  // The console is ONE route (`/console?m=disputes`), not a `/console/disputes`
+  // segment — so the old `/console/disputes` target matched nothing and the
+  // answered row never actually left the queue, tempting a second (no-op)
+  // adjudication. Revalidate the real route.
+  revalidatePath("/console");
 }
 
 const SAID: Record<Resolution, string> = {

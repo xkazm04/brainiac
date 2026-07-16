@@ -281,13 +281,55 @@ export interface FlaggedMemory {
 
 export type DisputeResolution = "reverified" | "deprecated" | "dismissed";
 
-/** The triage queue: memories with unresolved wrong/outdated reports. */
-export async function feedbackQueue(cfg: ApiConfig, limit = 50): Promise<FlaggedMemory[]> {
-  const out = await call<{ flagged: FlaggedMemory[] }>(
-    cfg,
-    `/v1/reviews/feedback?limit=${limit}`,
-  );
-  return out.flagged;
+/** A decay band: how much of a memory's validity window is left. */
+export type DecayBand = "past" | "d30" | "d90" | "d180" | "far" | "none";
+
+export interface FeedbackFacet {
+  value: string;
+  label: string;
+  count: number;
+}
+
+export interface FeedbackFacets {
+  kinds: FeedbackFacet[];
+  teams: FeedbackFacet[];
+  bands: FeedbackFacet[];
+}
+
+export interface FeedbackFilter {
+  kind?: string;
+  teamId?: string;
+  minAgeHours?: number;
+  minClaims?: number;
+  band?: DecayBand;
+}
+
+export interface FeedbackQueuePage {
+  /** Memories matching the filter, ignoring the page window — the real depth. */
+  total: number;
+  /** Facet menu over the FULL backlog (never shrinks as the filter narrows). */
+  facets: FeedbackFacets;
+  flagged: FlaggedMemory[];
+}
+
+/**
+ * The triage queue: memories with unresolved wrong/outdated reports. Filters
+ * and paging are SERVER-side — filtering a client-held page answers "which of
+ * these 50 match?" while the operator reads "which of the 1,000?".
+ */
+export async function feedbackQueue(
+  cfg: ApiConfig,
+  opts: FeedbackFilter & { limit?: number; offset?: number } = {},
+): Promise<FeedbackQueuePage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit ?? 50));
+  if (opts.offset) params.set("offset", String(opts.offset));
+  if (opts.kind) params.set("kind", opts.kind);
+  if (opts.teamId) params.set("team_id", opts.teamId);
+  if (opts.minAgeHours !== undefined) params.set("min_age_hours", String(opts.minAgeHours));
+  if (opts.minClaims !== undefined) params.set("min_claims", String(opts.minClaims));
+  if (opts.band) params.set("band", opts.band);
+  return call(cfg, `/v1/reviews/feedback?${params.toString()}`);
 }
 
 /**

@@ -189,10 +189,56 @@ pub struct FlaggedMemory {
 /// shows five.
 pub const REPORT_CAP: usize = 5;
 
+/// The decay band a disputed memory falls in — how much of its validity window
+/// is left. ONE definition, in SQL, used by the queue filter, the count and the
+/// facets alike; the console renders these names and never recomputes them from
+/// `valid_to`, because two implementations of "past its window" is two answers
+/// to the same question.
+///
+/// `none` (no TTL) is its OWN band, not the right-hand edge. Collapsing it into
+/// "never decays" is what let a memory with no expiry and a memory good for two
+/// more years render at the identical spot.
+pub const BANDS: [&str; 6] = ["past", "d30", "d90", "d180", "far", "none"];
+
+const BAND_SQL: &str = "CASE
+    WHEN m.valid_to IS NULL                          THEN 'none'
+    WHEN m.valid_to <  now()                         THEN 'past'
+    WHEN m.valid_to <  now() + interval '30 days'    THEN 'd30'
+    WHEN m.valid_to <  now() + interval '90 days'    THEN 'd90'
+    WHEN m.valid_to <  now() + interval '180 days'   THEN 'd180'
+    ELSE 'far' END";
+
+/// What the maintainer narrowed the backlog to.
+///
+/// These are SERVER-side on purpose. Filtering a page client-side answers
+/// "which of these 50 match?" while the operator reads it as "which of the
+/// 1,000 match?" — the same class of lie as sorting a server-paginated window.
+#[derive(Debug, Clone, Default)]
+pub struct FlaggedFilter {
+    /// Memory kind (`fact`, `decision`, `howto`, …).
+    pub kind: Option<String>,
+    /// Owning team. Org-wide (teamless) memories match no team.
+    pub team_id: Option<Uuid>,
+    /// Only disputes whose OLDEST open claim has stood at least this long.
+    pub min_age_hours: Option<i64>,
+    /// Only memories carrying at least this many open claims.
+    pub min_claims: Option<i64>,
+    /// One of [`BANDS`].
+    pub band: Option<String>,
+}
+
+impl FlaggedFilter {
+    /// Rejects a band name the SQL would silently match nothing for — a typo'd
+    /// filter must be an error, not an empty queue that reads as "all clear".
+    pub fn band_is_valid(&self) -> bool {
+        self.band.as_deref().is_none_or(|b| BANDS.contains(&b))
+    }
+}
+
 /// The triage queue: memories carrying unresolved wrong/outdated claims,
 /// most-disputed first, then oldest. RLS-scoped — a maintainer only ever
 /// sees claims against memories they can read. `offset` pages beyond the first
-/// window ([`flagged_count`] reports the full total).
+/// window ([`flagged_count`] reports the total matching the same filter).
 ///
 /// This asks a maintainer to permanently deprecate an org memory, so it carries
 /// what that decision needs: WHO reported it (`users`, org-filtered explicitly —
@@ -206,12 +252,17 @@ pub const REPORT_CAP: usize = 5;
 /// `team_members` is keyed by its full PK `(team_id, user_id)` — so none of them can
 /// multiply a row and inflate the counts, and none of them costs a round trip per
 /// row. Widening this join is only safe under that rule; check it before adding one.
+///
+/// The filter is bound, never interpolated: each clause is
+/// `($n IS NULL OR <col> = $n)`, so the SQL is one static string with no
+/// injection surface and one query plan, and an absent filter costs nothing.
 pub async fn flagged(
     conn: &mut PgConnection,
+    filter: &FlaggedFilter,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<FlaggedMemory>> {
-    let rows = sqlx::query(
+    let sql = format!(
         "SELECT f.memory_id, m.title, m.content, m.kind, m.status::text AS status,
                 m.team_id, m.valid_to, m.confidence,
                 t.name AS team,
@@ -239,17 +290,29 @@ pub async fn flagged(
          LEFT JOIN provenance pv ON pv.id = m.provenance_id
          WHERE f.resolved_at IS NULL
            AND f.verdict IN ('wrong', 'outdated')
+           AND ($3::text IS NULL OR m.kind = $3)
+           AND ($4::uuid IS NULL OR m.team_id = $4)
+           AND ($5::text IS NULL OR ({BAND_SQL}) = $5)
          GROUP BY f.memory_id, m.title, m.content, m.kind, m.status, m.team_id, m.valid_to,
                   m.confidence, t.name, pv.actor_kind, pv.actor_id, pv.model_ref
+         HAVING ($6::bigint IS NULL OR count(*) >= $6)
+            AND ($7::bigint IS NULL
+                 OR min(f.created_at) <= now() - make_interval(hours => $7::int))
          ORDER BY (count(*) FILTER (WHERE f.verdict = 'wrong')) DESC,
                   count(*) DESC,
                   min(f.created_at) ASC
-         LIMIT $1 OFFSET $2",
-    )
-    .bind(limit.clamp(1, 200))
-    .bind(offset.max(0))
-    .fetch_all(conn)
-    .await?;
+         LIMIT $1 OFFSET $2"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(limit.clamp(1, 200))
+        .bind(offset.max(0))
+        .bind(filter.kind.as_deref())
+        .bind(filter.team_id)
+        .bind(filter.band.as_deref())
+        .bind(filter.min_claims)
+        .bind(filter.min_age_hours)
+        .fetch_all(conn)
+        .await?;
     rows.iter()
         .map(|r| {
             let mut reports: Vec<ClaimReport> =
@@ -284,17 +347,112 @@ pub async fn flagged(
         .collect()
 }
 
-/// Count of memories with open claims — the console badge / analytics tile.
-pub async fn flagged_count(conn: &mut PgConnection) -> Result<i64> {
-    let row = sqlx::query(
-        "SELECT count(DISTINCT f.memory_id) AS n
+/// Count of memories with open claims MATCHING `filter` — the real backlog
+/// behind a page window, and the console badge / analytics tile when the filter
+/// is [`FlaggedFilter::default`]. Wraps the same per-memory grouping (and the
+/// same HAVING) [`flagged`] uses, so "23 disputed" and the rows a maintainer
+/// pages through can never disagree about what a claim is.
+pub async fn flagged_count(conn: &mut PgConnection, filter: &FlaggedFilter) -> Result<i64> {
+    let sql = format!(
+        "SELECT count(*) AS n FROM (
+            SELECT f.memory_id
+            FROM memory_feedback f
+            JOIN memories m ON m.id = f.memory_id
+            WHERE f.resolved_at IS NULL
+              AND f.verdict IN ('wrong', 'outdated')
+              AND ($1::text IS NULL OR m.kind = $1)
+              AND ($2::uuid IS NULL OR m.team_id = $2)
+              AND ($3::text IS NULL OR ({BAND_SQL}) = $3)
+            GROUP BY f.memory_id
+            HAVING ($4::bigint IS NULL OR count(*) >= $4)
+               AND ($5::bigint IS NULL
+                    OR min(f.created_at) <= now() - make_interval(hours => $5::int))
+        ) q"
+    );
+    let row = sqlx::query(&sql)
+        .bind(filter.kind.as_deref())
+        .bind(filter.team_id)
+        .bind(filter.band.as_deref())
+        .bind(filter.min_claims)
+        .bind(filter.min_age_hours)
+        .fetch_one(conn)
+        .await?;
+    Ok(row.get("n"))
+}
+
+/// One facet value and how many disputed memories carry it — enough to build a
+/// filter control that shows the operator what narrowing by each option would
+/// leave, so they never pick a filter that empties the queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Facet {
+    pub value: String,
+    /// Team facets carry the display name; kind/band facets repeat `value`.
+    pub label: String,
+    pub count: i64,
+}
+
+/// The facet breakdown of the FULL unfiltered backlog: disputed-memory counts
+/// by kind, by owning team, and by decay band. Computed per memory (a memory
+/// with four claims is one disputed memory, counted once), in three small
+/// grouped passes over the same claim set the queue reads. RLS-scoped.
+pub async fn flagged_facets(
+    conn: &mut PgConnection,
+) -> Result<(Vec<Facet>, Vec<Facet>, Vec<Facet>)> {
+    // Distinct disputed memories once, with the columns every facet groups on —
+    // so a memory is counted a single time per facet no matter its claim count.
+    let rows = sqlx::query(&format!(
+        "SELECT m.kind, m.team_id, t.name AS team, ({BAND_SQL}) AS band
          FROM memory_feedback f
          JOIN memories m ON m.id = f.memory_id
-         WHERE f.resolved_at IS NULL AND f.verdict IN ('wrong', 'outdated')",
-    )
-    .fetch_one(conn)
+         LEFT JOIN teams t ON t.id = m.team_id AND t.org_id = f.org_id
+         WHERE f.resolved_at IS NULL AND f.verdict IN ('wrong', 'outdated')
+         GROUP BY f.memory_id, m.kind, m.team_id, t.name, ({BAND_SQL})"
+    ))
+    .fetch_all(conn)
     .await?;
-    Ok(row.get("n"))
+
+    let mut kinds: HashMap<String, i64> = HashMap::new();
+    let mut teams: HashMap<(Option<Uuid>, Option<String>), i64> = HashMap::new();
+    let mut bands: HashMap<String, i64> = HashMap::new();
+    for r in &rows {
+        *kinds.entry(r.get("kind")).or_default() += 1;
+        *teams.entry((r.get("team_id"), r.get("team"))).or_default() += 1;
+        *bands.entry(r.get("band")).or_default() += 1;
+    }
+
+    let mut kind_facets: Vec<Facet> = kinds
+        .into_iter()
+        .map(|(value, count)| Facet {
+            label: value.clone(),
+            value,
+            count,
+        })
+        .collect();
+    kind_facets.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
+
+    let mut team_facets: Vec<Facet> = teams
+        .into_iter()
+        .map(|((id, name), count)| Facet {
+            value: id.map(|u| u.to_string()).unwrap_or_default(),
+            label: name.unwrap_or_else(|| "org-wide".to_string()),
+            count,
+        })
+        .collect();
+    team_facets.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
+
+    // Bands keep the decay order, not a count order — the axis has a direction.
+    let band_facets: Vec<Facet> = BANDS
+        .iter()
+        .filter_map(|b| {
+            bands.get(*b).map(|&count| Facet {
+                value: (*b).to_string(),
+                label: (*b).to_string(),
+                count,
+            })
+        })
+        .collect();
+
+    Ok((kind_facets, team_facets, band_facets))
 }
 
 /// How many claims against this memory are still open. Callers answering a

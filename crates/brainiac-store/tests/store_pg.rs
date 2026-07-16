@@ -1293,7 +1293,7 @@ async fn feedback_claims_queue_and_resolution() {
     .await
     .expect("helpful");
     assert!(
-        feedback::flagged(&mut tx, 50, 0)
+        feedback::flagged(&mut tx, &feedback::FlaggedFilter::default(), 50, 0)
             .await
             .expect("flagged")
             .is_empty(),
@@ -1317,7 +1317,9 @@ async fn feedback_claims_queue_and_resolution() {
         .await
         .expect("negative verdict");
     }
-    let flagged = feedback::flagged(&mut tx, 50, 0).await.expect("flagged");
+    let flagged = feedback::flagged(&mut tx, &feedback::FlaggedFilter::default(), 50, 0)
+        .await
+        .expect("flagged");
     assert_eq!(
         flagged.len(),
         1,
@@ -1338,7 +1340,12 @@ async fn feedback_claims_queue_and_resolution() {
     assert_eq!(flagged[0].reporters, 1);
     assert_eq!(flagged[0].reports.len(), 2, "note-less claims still count");
     assert!(flagged[0].reports.iter().all(|c| c.reporter_id == uuid(11)));
-    assert_eq!(feedback::flagged_count(&mut tx).await.expect("count"), 1);
+    assert_eq!(
+        feedback::flagged_count(&mut tx, &feedback::FlaggedFilter::default())
+            .await
+            .expect("count"),
+        1
+    );
 
     // Trust attaches to served memories in one batched lookup.
     let trust = feedback::trust_for(&mut tx, &[uuid(101), uuid(102), uuid(104)])
@@ -1361,7 +1368,7 @@ async fn feedback_claims_queue_and_resolution() {
         .expect("resolve");
     assert_eq!(closed, 2, "both open claims close together");
     assert!(
-        feedback::flagged(&mut tx, 50, 0)
+        feedback::flagged(&mut tx, &feedback::FlaggedFilter::default(), 50, 0)
             .await
             .expect("flagged")
             .is_empty(),
@@ -1396,9 +1403,181 @@ async fn feedback_claims_queue_and_resolution() {
     tx.commit().await.expect("commit");
     let mut tx = ctx.store.scoped_tx(&data_analyst()).await.expect("tx");
     assert_eq!(
-        feedback::flagged_count(&mut tx).await.expect("count"),
+        feedback::flagged_count(&mut tx, &feedback::FlaggedFilter::default())
+            .await
+            .expect("count"),
         0,
         "claims against invisible memories must not leak into another principal's queue"
+    );
+
+    let _ = &ctx.admin;
+}
+
+/// The triage queue at scale: server-side filter, paging and facets — the
+/// substrate for a bench that is unusable at its own default limit without them.
+/// A filter must narrow the SAME thing `total` counts and `flagged` returns, or
+/// "23 disputed" and the rows a maintainer pages through disagree about reality.
+#[tokio::test]
+async fn feedback_queue_filters_paging_and_facets() {
+    use brainiac_store::feedback::{self, FlaggedFilter};
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await; // gives us org(), teams 21/22, users 11/12, memories 101..104
+
+    // Re-shape the four seeded memories into a known kind/TTL spread, and make
+    // them all org-visible so ONE principal sees the whole backlog (RLS team
+    // visibility is exercised elsewhere; here the subject is the memory-level
+    // filters). `team_id` is left as seeded (101/102/103 = payments 21, 104 =
+    // data 22), which is what the team filter and facet group on.
+    // 101 fact/past, 102 decision/d30, 103 fact/far, 104 howto/none.
+    for (id, kind, valid_to) in [
+        (101u8, "fact", Some("now() - interval '2 days'")),
+        (102, "decision", Some("now() + interval '10 days'")),
+        (103, "fact", Some("now() + interval '300 days'")),
+        (104, "howto", None),
+    ] {
+        let vt = valid_to.unwrap_or("NULL");
+        sqlx::query(&format!(
+            "UPDATE memories SET kind = $2, valid_to = {vt}, visibility = 'org' WHERE id = $1"
+        ))
+        .bind(uuid(id))
+        .bind(kind)
+        .execute(&ctx.admin)
+        .await
+        .expect("reshape memory");
+    }
+
+    // Claims: 101 gets 3 (oldest 10d ago), 102 gets 1 (1h ago),
+    // 103 gets 2, 104 gets 1. Reporter is user 11 throughout — this test is
+    // about the memory-level filters, not the reporter attribution (covered in
+    // the server test).
+    let add = |mem: u8, n: usize, age_days: f64| {
+        let admin = ctx.admin.clone();
+        async move {
+            for _ in 0..n {
+                sqlx::query(
+                    "INSERT INTO memory_feedback (id, org_id, memory_id, user_id, verdict, created_at)
+                     VALUES ($1, $2, $3, $4, 'wrong', now() - make_interval(secs => $5))",
+                )
+                .bind(Uuid::new_v4())
+                .bind(org())
+                .bind(uuid(mem))
+                .bind(uuid(11))
+                .bind(age_days * 86_400.0)
+                .execute(&admin)
+                .await
+                .expect("claim");
+            }
+        }
+    };
+    add(101, 3, 10.0).await;
+    add(102, 1, 1.0 / 24.0).await;
+    add(103, 2, 3.0).await;
+    add(104, 1, 0.5).await;
+
+    let mut tx = ctx.store.scoped_tx(&pay_dev()).await.expect("tx");
+    let none = FlaggedFilter::default();
+
+    // Unfiltered: all four disputed memories, total agrees with row count.
+    let all = feedback::flagged(&mut tx, &none, 50, 0).await.expect("all");
+    assert_eq!(all.len(), 4);
+    assert_eq!(feedback::flagged_count(&mut tx, &none).await.expect("n"), 4);
+
+    // Server ordering, reproduced by the client's triageOrder: wrong DESC then
+    // count DESC then oldest ASC. 101 (3 wrong) leads, then 103 (2), then the
+    // two singles ordered oldest-first → 104 (0.5d)… no: oldest ASC means the
+    // LONGEST-standing single first. 102 is 1h old, 104 is 0.5d old → 104 before 102.
+    assert_eq!(all[0].memory_id, uuid(101));
+    assert_eq!(all[1].memory_id, uuid(103));
+    assert_eq!(all[2].memory_id, uuid(104));
+    assert_eq!(all[3].memory_id, uuid(102));
+
+    // kind filter.
+    let facts = FlaggedFilter {
+        kind: Some("fact".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        feedback::flagged_count(&mut tx, &facts).await.expect("n"),
+        2
+    );
+    let rows = feedback::flagged(&mut tx, &facts, 50, 0).await.expect("f");
+    assert!(rows.iter().all(|r| r.kind == "fact"));
+
+    // team filter (payments = 21): org 101 + team 102, but NOT private 103
+    // (team_id 21 too — 103 IS payments) … 101,102,103 are all team 21, 104 is 22.
+    let pay = FlaggedFilter {
+        team_id: Some(uuid(21)),
+        ..Default::default()
+    };
+    assert_eq!(feedback::flagged_count(&mut tx, &pay).await.expect("n"), 3);
+
+    // band filter: 101 is past, 102 d30, 103 far, 104 none.
+    for (b, expect) in [("past", uuid(101)), ("d30", uuid(102)), ("none", uuid(104))] {
+        let f = FlaggedFilter {
+            band: Some(b.into()),
+            ..Default::default()
+        };
+        let rows = feedback::flagged(&mut tx, &f, 50, 0).await.expect("band");
+        assert_eq!(rows.len(), 1, "band {b} matches one");
+        assert_eq!(rows[0].memory_id, expect, "band {b}");
+        assert_eq!(feedback::flagged_count(&mut tx, &f).await.expect("n"), 1);
+    }
+
+    // min_claims: only 101 (3) and 103 (2) carry ≥2.
+    let busy = FlaggedFilter {
+        min_claims: Some(2),
+        ..Default::default()
+    };
+    assert_eq!(feedback::flagged_count(&mut tx, &busy).await.expect("n"), 2);
+
+    // min_age_hours: 101's oldest claim is 10d, 103's is 3d; a 4-day floor
+    // leaves only 101.
+    let stale = FlaggedFilter {
+        min_age_hours: Some(24 * 4),
+        ..Default::default()
+    };
+    let rows = feedback::flagged(&mut tx, &stale, 50, 0)
+        .await
+        .expect("age");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].memory_id, uuid(101));
+
+    // Paging: total is the full match set on every page; windows don't overlap
+    // and together cover it in the server order.
+    let p0 = feedback::flagged(&mut tx, &none, 2, 0).await.expect("p0");
+    let p1 = feedback::flagged(&mut tx, &none, 2, 2).await.expect("p1");
+    assert_eq!(p0.len(), 2);
+    assert_eq!(p1.len(), 2);
+    assert_eq!(
+        [
+            p0[0].memory_id,
+            p0[1].memory_id,
+            p1[0].memory_id,
+            p1[1].memory_id
+        ],
+        [uuid(101), uuid(103), uuid(104), uuid(102)],
+        "two pages reconstruct the one ordering, no gap or repeat"
+    );
+
+    // Facets: counts over the FULL backlog, one per disputed memory.
+    let (kinds, teams, bands) = feedback::flagged_facets(&mut tx).await.expect("facets");
+    let kind_count = |v: &str| kinds.iter().find(|f| f.value == v).map(|f| f.count);
+    assert_eq!(kind_count("fact"), Some(2));
+    assert_eq!(kind_count("decision"), Some(1));
+    assert_eq!(kind_count("howto"), Some(1));
+    // Team facet carries the NAME, not just the id.
+    let pay_facet = teams
+        .iter()
+        .find(|f| f.value == uuid(21).to_string())
+        .expect("payments facet");
+    assert_eq!(pay_facet.label, "payments");
+    assert_eq!(pay_facet.count, 3);
+    // Bands keep decay order: past before d30 before far before none.
+    assert_eq!(
+        bands.iter().map(|f| f.value.as_str()).collect::<Vec<_>>(),
+        vec!["past", "d30", "far", "none"],
     );
 
     let _ = &ctx.admin;

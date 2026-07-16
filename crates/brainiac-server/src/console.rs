@@ -795,6 +795,36 @@ pub(crate) async fn resolve_contradiction(
 pub(crate) struct FeedbackQueueQuery {
     limit: Option<i64>,
     offset: Option<i64>,
+    /// Filter to one memory kind (`fact`, `decision`, …).
+    kind: Option<String>,
+    /// Filter to one owning team.
+    team_id: Option<Uuid>,
+    /// Only disputes whose oldest open claim has stood at least this long.
+    min_age_hours: Option<i64>,
+    /// Only memories carrying at least this many open claims.
+    min_claims: Option<i64>,
+    /// Decay band: `past` | `d30` | `d90` | `d180` | `far` | `none`.
+    band: Option<String>,
+}
+
+/// One filter value and the disputed-memory count behind it — so a filter
+/// control can show what each option would leave and never offer one that
+/// empties the queue.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct FeedbackFacet {
+    pub value: String,
+    pub label: String,
+    pub count: i64,
+}
+
+/// The facet breakdown of the FULL backlog, ignoring the current filter — the
+/// menu, which must not shrink as the operator narrows or there is nothing left
+/// to widen back out with.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct FeedbackFacets {
+    pub kinds: Vec<FeedbackFacet>,
+    pub teams: Vec<FeedbackFacet>,
+    pub bands: Vec<FeedbackFacet>,
 }
 
 /// Open claim counts against one memory.
@@ -857,9 +887,13 @@ pub(crate) struct FlaggedMemory {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct FeedbackQueueResponse {
-    /// Total memories carrying open claims — the full triage backlog,
-    /// independent of the page window.
+    /// Memories matching the current filter, ignoring the page window — the
+    /// real backlog. `flagged.len()` is only the page; rendering it as the
+    /// queue depth understates the moment the backlog passes `limit`.
     pub total: i64,
+    /// The facet menu for building a filter — counts over the FULL backlog, so
+    /// it never shrinks as the operator narrows.
+    pub facets: FeedbackFacets,
     pub flagged: Vec<FlaggedMemory>,
 }
 
@@ -874,8 +908,16 @@ pub(crate) struct FeedbackQueueResponse {
     params(
         ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
         ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+        ("kind" = Option<String>, Query, description = "Filter to one memory kind"),
+        ("team_id" = Option<Uuid>, Query, description = "Filter to one owning team"),
+        ("min_age_hours" = Option<i64>, Query, description = "Oldest claim at least this old"),
+        ("min_claims" = Option<i64>, Query, description = "At least this many open claims"),
+        ("band" = Option<String>, Query, description = "Decay band: past|d30|d90|d180|far|none"),
     ),
-    responses((status = 200, description = "Feedback triage queue page", body = FeedbackQueueResponse))
+    responses(
+        (status = 200, description = "Feedback triage queue page", body = FeedbackQueueResponse),
+        (status = 400, description = "Unknown band value"),
+    )
 )]
 pub(crate) async fn feedback_queue(
     State(state): State<Arc<AppState>>,
@@ -885,15 +927,47 @@ pub(crate) async fn feedback_queue(
     let principal = principal_of(&state, &headers).await?;
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
+    let filter = brainiac_store::feedback::FlaggedFilter {
+        kind: q.kind,
+        team_id: q.team_id,
+        min_age_hours: q.min_age_hours,
+        min_claims: q.min_claims,
+        band: q.band,
+    };
+    // A typo'd band would match no rows and read as "all clear" — the most
+    // dangerous empty state a triage queue can show. Refuse it instead.
+    if !filter.band_is_valid() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unknown band (past|d30|d90|d180|far|none)".into(),
+        )
+            .into());
+    }
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
-    let rows = brainiac_store::feedback::flagged(&mut tx, limit, offset)
+    let rows = brainiac_store::feedback::flagged(&mut tx, &filter, limit, offset)
         .await
         .map_err(internal)?;
-    let total = brainiac_store::feedback::flagged_count(&mut tx)
+    // `total` tracks the SAME filter as the rows, so "23 disputed" and the rows
+    // paged through never disagree. `facets` ignores it — it is the menu.
+    let total = brainiac_store::feedback::flagged_count(&mut tx, &filter)
         .await
         .map_err(internal)?;
+    let (kinds, teams, bands) = brainiac_store::feedback::flagged_facets(&mut tx)
+        .await
+        .map_err(internal)?;
+    let facet = |f: brainiac_store::feedback::Facet| FeedbackFacet {
+        value: f.value,
+        label: f.label,
+        count: f.count,
+    };
+    let facets = FeedbackFacets {
+        kinds: kinds.into_iter().map(facet).collect(),
+        teams: teams.into_iter().map(facet).collect(),
+        bands: bands.into_iter().map(facet).collect(),
+    };
     Ok(Json(FeedbackQueueResponse {
         total,
+        facets,
         flagged: rows
             .iter()
             .map(|f| FlaggedMemory {
@@ -1773,9 +1847,12 @@ pub(crate) async fn analytics(
     .fetch_one(&mut *tx)
     .await
     .map_err(internal)?;
-    let flagged_memories = brainiac_store::feedback::flagged_count(&mut tx)
-        .await
-        .map_err(internal)?;
+    let flagged_memories = brainiac_store::feedback::flagged_count(
+        &mut tx,
+        &brainiac_store::feedback::FlaggedFilter::default(),
+    )
+    .await
+    .map_err(internal)?;
     let entities: i64 = sqlx::query("SELECT count(*) AS n FROM entities")
         .fetch_one(&mut *tx)
         .await

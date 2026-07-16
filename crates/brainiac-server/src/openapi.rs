@@ -188,6 +188,8 @@ impl Modify for BearerAuth {
         console::ResolveBody,
         console::ResolveContradictionResponse,
         console::FeedbackClaims,
+        console::FeedbackFacet,
+        console::FeedbackFacets,
         console::FeedbackProvenance,
         console::FeedbackReport,
         console::FlaggedMemory,

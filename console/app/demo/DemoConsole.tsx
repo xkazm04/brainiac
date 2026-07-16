@@ -205,7 +205,7 @@ function Module({ id, data }: { id: DemoModuleId; data: DemoData }) {
         />
       );
     case "disputes":
-      return <DisputeBench data={data.disputes} />;
+      return <DisputeBench data={data.disputes} demo />;
     case "graph":
       return <CortexMap data={data.cortex} />;
     case "memories":

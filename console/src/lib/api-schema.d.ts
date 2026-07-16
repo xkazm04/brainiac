@@ -1583,6 +1583,27 @@ export interface components {
             wrong: number;
         };
         /**
+         * @description One filter value and the disputed-memory count behind it — so a filter
+         *     control can show what each option would leave and never offer one that
+         *     empties the queue.
+         */
+        FeedbackFacet: {
+            /** Format: int64 */
+            count: number;
+            label: string;
+            value: string;
+        };
+        /**
+         * @description The facet breakdown of the FULL backlog, ignoring the current filter — the
+         *     menu, which must not shrink as the operator narrows or there is nothing left
+         *     to widen back out with.
+         */
+        FeedbackFacets: {
+            bands: components["schemas"]["FeedbackFacet"][];
+            kinds: components["schemas"]["FeedbackFacet"][];
+            teams: components["schemas"]["FeedbackFacet"][];
+        };
+        /**
          * @description The provenance record behind the disputed memory. Whole object null (not
          *     omitted) when the memory has none — mirrors `MemoryProvenance` on the
          *     detail endpoint.
@@ -1593,11 +1614,17 @@ export interface components {
             model_ref?: string | null;
         };
         FeedbackQueueResponse: {
+            /**
+             * @description The facet menu for building a filter — counts over the FULL backlog, so
+             *     it never shrinks as the operator narrows.
+             */
+            facets: components["schemas"]["FeedbackFacets"];
             flagged: components["schemas"]["FlaggedMemory"][];
             /**
              * Format: int64
-             * @description Total memories carrying open claims — the full triage backlog,
-             *     independent of the page window.
+             * @description Memories matching the current filter, ignoring the page window — the
+             *     real backlog. `flagged.len()` is only the page; rendering it as the
+             *     queue depth understates the moment the backlog passes `limit`.
              */
             total: number;
         };
@@ -4265,6 +4292,16 @@ export interface operations {
                 limit?: number;
                 /** @description Page offset (default 0) */
                 offset?: number;
+                /** @description Filter to one memory kind */
+                kind?: string;
+                /** @description Filter to one owning team */
+                team_id?: string;
+                /** @description Oldest claim at least this old */
+                min_age_hours?: number;
+                /** @description At least this many open claims */
+                min_claims?: number;
+                /** @description Decay band: past|d30|d90|d180|far|none */
+                band?: string;
             };
             header?: never;
             path?: never;
@@ -4280,6 +4317,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["FeedbackQueueResponse"];
                 };
+            };
+            /** @description Unknown band value */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
