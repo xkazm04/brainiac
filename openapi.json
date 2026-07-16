@@ -1972,6 +1972,46 @@
         }
       }
     },
+    "/v1/reviews/promotions/bulk": {
+      "post": {
+        "tags": [
+          "reviews"
+        ],
+        "description": "Approve or reject many promotions in one request. Every item is authorized and decided independently — the maintainer gate and the concurrency guard run per item, and the response reports each id's outcome. Returns 200 even when some rows fail; read `results`.",
+        "operationId": "bulk_review",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Per-item outcomes (some may have failed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkReviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown action, empty batch, or more than 200 ids"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `write` scope"
+          }
+        }
+      }
+    },
     "/v1/reviews/promotions/{id}/approve": {
       "post": {
         "tags": [
@@ -2626,6 +2666,98 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "BulkReviewRequest": {
+        "type": "object",
+        "required": [
+          "action",
+          "ids"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`approve` | `reject` — applied to every id in the batch."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The promotions to decide. Duplicates are collapsed."
+          }
+        }
+      },
+      "BulkReviewResponse": {
+        "type": "object",
+        "required": [
+          "decided",
+          "failed",
+          "results"
+        ],
+        "properties": {
+          "decided": {
+            "type": "integer",
+            "description": "Rows that were actually written.",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "description": "Rows that were refused or lost a race. The batch still returns 200: the\nrequest succeeded, and `results` says what became of each id.",
+            "minimum": 0
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkReviewRow"
+            }
+          }
+        }
+      },
+      "BulkReviewRow": {
+        "type": "object",
+        "description": "What happened to ONE promotion in a batch.\n\n`status` is the HTTP status this id would have returned as a single request,\nso a partial failure stays legible per row: 403 (not a maintainer of THAT\nitem's team), 404 (gone, or invisible under RLS), 409 (someone decided it\nfirst). A batch does not collapse these into one error, because they are not\none error — \"3 of 12 were not yours\" is a different fact from \"the request\nfailed\", and only the per-row shape can say it.",
+        "required": [
+          "promotion_id",
+          "ok",
+          "status"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why this row failed — `None` when it succeeded."
+          },
+          "memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "memory_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The memory's status after the decision — `None` when this row failed."
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "promotion_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The status this item would have returned on its own (200/403/404/409/500).",
+            "minimum": 0
           }
         }
       },

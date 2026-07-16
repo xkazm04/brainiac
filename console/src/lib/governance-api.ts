@@ -101,6 +101,40 @@ export async function promotionQueue(
   return call(cfg, `/v1/reviews/promotions${qs ? `?${qs}` : ""}`);
 }
 
+/** What became of ONE promotion in a bulk decision. */
+export interface BulkReviewRow {
+  promotion_id: string;
+  ok: boolean;
+  /** The status this id would have returned on its own: 200/403/404/409/500. */
+  status: number;
+  memory_id: string | null;
+  memory_status: string | null;
+  error: string | null;
+}
+
+export interface BulkReviewResult {
+  decided: number;
+  failed: number;
+  results: BulkReviewRow[];
+}
+
+/**
+ * Decide many promotions in one request.
+ *
+ * The batch returns 200 even when rows fail — a mixed outcome is the NORMAL
+ * one, not an error: a selection can span teams the token maintains and teams
+ * it does not, and the server authorizes each item separately. So callers must
+ * read `results`, not just the absence of a throw. Only a malformed batch
+ * (unknown action, empty, over the server's 200 cap) throws.
+ */
+export async function bulkReviewPromotions(
+  cfg: ApiConfig,
+  ids: string[],
+  action: "approve" | "reject",
+): Promise<BulkReviewResult> {
+  return post(cfg, "/v1/reviews/promotions/bulk", { ids, action });
+}
+
 // ── contradictions ──────────────────────────────────────────────────────
 
 export type ContradictionStatus =

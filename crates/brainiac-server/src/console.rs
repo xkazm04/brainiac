@@ -38,6 +38,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/reviews/promotions/{id}/approve", post(approve))
         .route("/v1/reviews/promotions/{id}/reject", post(reject))
+        .route("/v1/reviews/promotions/bulk", post(bulk_review))
         .route("/v1/reviews/contradictions", get(list_contradictions))
         .route(
             "/v1/reviews/contradictions/{id}/resolve",
@@ -168,6 +169,27 @@ async fn review_promotion(
     approve: bool,
 ) -> Result<Json<ReviewDecisionResponse>, HttpError> {
     let principal = auth_of(state, headers, "write").await?.principal;
+    Ok(Json(review_one(state, &principal, id, approve).await?))
+}
+
+/// Decide ONE promotion, in its own RLS transaction: the maintainer gate, the
+/// `FOR UPDATE` read, the self-guarding transition and the phantom-approval
+/// rollback.
+///
+/// This is a function rather than the body of the single-item handler because
+/// the bulk endpoint calls it once per id. That is the whole design of bulk:
+/// every gate here runs per item, under that item's own transaction, so a batch
+/// is exactly N single reviews and cannot be a cheaper path to the same writes.
+/// A batch-shaped query (`WHERE id = ANY($1)`) would have been one round trip
+/// and one authorization decision for N teams — which is how a bulk endpoint
+/// quietly becomes a way around the gate it is supposed to honour.
+async fn review_one(
+    state: &AppState,
+    principal: &Principal,
+    id: Uuid,
+    approve: bool,
+) -> Result<ReviewDecisionResponse, HttpError> {
+    let principal = principal.clone();
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let pending = actionable_promotion(&mut tx, id).await?;
     if !is_maintainer(&mut tx, &principal, pending.team_id).await? {
@@ -228,12 +250,12 @@ async fn review_promotion(
             .into());
     }
     tx.commit().await.map_err(internal)?;
-    Ok(Json(ReviewDecisionResponse {
+    Ok(ReviewDecisionResponse {
         promotion_id: id,
         memory_id: pending.memory_id,
         decision: decision.to_string(),
         memory_status: new_status.as_str().to_string(),
-    }))
+    })
 }
 
 #[utoipa::path(
@@ -274,6 +296,143 @@ pub(crate) async fn reject(
     headers: HeaderMap,
 ) -> Result<Json<ReviewDecisionResponse>, HttpError> {
     review_promotion(&state, &headers, id, false).await
+}
+
+// ── bulk review ─────────────────────────────────────────────────────────
+
+/// The most promotions one request may decide.
+///
+/// Not a performance number — a governance one. The queue's whole purpose is
+/// that a human looked at each claim, and an endpoint that accepts "all 5000"
+/// in one call is an endpoint that will eventually be used that way. 200 is the
+/// page the console renders (see the reviews module's PAGE), so the ceiling is
+/// "everything you can currently see", which is the largest batch a reviewer can
+/// honestly claim to have read.
+const BULK_MAX: usize = 200;
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct BulkReviewRequest {
+    /// `approve` | `reject` — applied to every id in the batch.
+    pub action: String,
+    /// The promotions to decide. Duplicates are collapsed.
+    pub ids: Vec<Uuid>,
+}
+
+/// What happened to ONE promotion in a batch.
+///
+/// `status` is the HTTP status this id would have returned as a single request,
+/// so a partial failure stays legible per row: 403 (not a maintainer of THAT
+/// item's team), 404 (gone, or invisible under RLS), 409 (someone decided it
+/// first). A batch does not collapse these into one error, because they are not
+/// one error — "3 of 12 were not yours" is a different fact from "the request
+/// failed", and only the per-row shape can say it.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct BulkReviewRow {
+    pub promotion_id: Uuid,
+    pub ok: bool,
+    /// The status this item would have returned on its own (200/403/404/409/500).
+    pub status: u16,
+    pub memory_id: Option<Uuid>,
+    /// The memory's status after the decision — `None` when this row failed.
+    pub memory_status: Option<String>,
+    /// Why this row failed — `None` when it succeeded.
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct BulkReviewResponse {
+    /// Rows that were actually written.
+    pub decided: usize,
+    /// Rows that were refused or lost a race. The batch still returns 200: the
+    /// request succeeded, and `results` says what became of each id.
+    pub failed: usize,
+    pub results: Vec<BulkReviewRow>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/reviews/promotions/bulk",
+    tag = "reviews",
+    description = "Approve or reject many promotions in one request. Every item is authorized and decided independently — the maintainer gate and the concurrency guard run per item, and the response reports each id's outcome. Returns 200 even when some rows fail; read `results`.",
+    request_body = BulkReviewRequest,
+    responses(
+        (status = 200, description = "Per-item outcomes (some may have failed)", body = BulkReviewResponse),
+        (status = 400, description = "Unknown action, empty batch, or more than 200 ids"),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `write` scope"),
+    )
+)]
+pub(crate) async fn bulk_review(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<BulkReviewRequest>,
+) -> Result<Json<BulkReviewResponse>, HttpError> {
+    let approve = match req.action.as_str() {
+        "approve" => true,
+        "reject" => false,
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unknown action {other:?} — expected approve or reject"),
+            )
+                .into())
+        }
+    };
+    if req.ids.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "no promotions given".into()).into());
+    }
+    if req.ids.len() > BULK_MAX {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "{} promotions in one batch — the maximum is {BULK_MAX}",
+                req.ids.len()
+            ),
+        )
+            .into());
+    }
+    // `write` scope once — it is a property of the token, not of an item. The
+    // per-TEAM maintainer gate is emphatically NOT hoisted here: it runs inside
+    // review_one, per item, because the batch may span teams.
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+
+    let mut seen = std::collections::HashSet::new();
+    let ids: Vec<Uuid> = req.ids.into_iter().filter(|id| seen.insert(*id)).collect();
+
+    // Sequential, deliberately. Each review_one takes `FOR UPDATE` on its row;
+    // firing a batch concurrently would have N transactions racing for
+    // overlapping locks against a queue another operator may also be draining.
+    // A batch of 200 is not a latency problem worth a deadlock.
+    let mut results = Vec::with_capacity(ids.len());
+    for id in ids {
+        match review_one(&state, &principal, id, approve).await {
+            Ok(d) => results.push(BulkReviewRow {
+                promotion_id: id,
+                ok: true,
+                status: StatusCode::OK.as_u16(),
+                memory_id: Some(d.memory_id),
+                memory_status: Some(d.memory_status),
+                error: None,
+            }),
+            // One item's refusal is that item's business. Keep going: the
+            // alternative is that a single 403 in a batch of 50 discards 49
+            // legitimate decisions and tells the operator nothing about which.
+            Err(e) => results.push(BulkReviewRow {
+                promotion_id: id,
+                ok: false,
+                status: e.status.as_u16(),
+                memory_id: None,
+                memory_status: None,
+                error: Some(e.message),
+            }),
+        }
+    }
+    let decided = results.iter().filter(|r| r.ok).count();
+    Ok(Json(BulkReviewResponse {
+        decided,
+        failed: results.len() - decided,
+        results,
+    }))
 }
 
 // ── contradictions ──────────────────────────────────────────────────────

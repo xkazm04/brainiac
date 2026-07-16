@@ -28,10 +28,12 @@
  *
  * WHY THE KEYSTROKES GO THROUGH onBulk. a/r do not get their own write path —
  * `promotionControls` is the slot that decides whether this surface can mutate
- * anything at all (see ReviewQueue's header), and inventing buttons here to
- * serve a keystroke would route around that decision. So a/r are a selection of
- * one handed to the same bulk channel, and when the host passes no `onBulk`
- * they are honestly dark rather than silently inert.
+ * anything at all, and inventing buttons here to serve a keystroke would route
+ * around that decision. So a/r are a selection of one handed to the same bulk
+ * channel; a batch of more than one is confirmed first (needsConfirm), a
+ * batch of exactly one — the claim in the pane — is not. When the host passes
+ * no `onBulk` (the public tour) the keys and the bulk bar are dark rather than
+ * offering a control that cannot fire.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -52,11 +54,13 @@ import type { ContradictionStatus, PromotionQueueItem } from "@/lib/governance-a
 
 import {
   CONTRA_HEADING_ID,
+  needsConfirm,
   pageScope,
   resolveFocusIndex,
   scopeNote,
   stepFocus,
   STATUS_TABS,
+  type BulkRowOutcome,
   type ReviewSurfaceProps,
 } from "./review-surface";
 
@@ -156,6 +160,14 @@ export default function ReviewWorklist({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [clim, setClim] = useState(CONTRA_WINDOW);
   const railRef = useRef<HTMLDivElement>(null);
+  // A batch of more than one is armed before it fires (see needsConfirm).
+  const [confirm, setConfirm] = useState<"approve" | "reject" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<{ ok: boolean; message: string } | null>(null);
+  // Per-row verdicts from the last batch, kept only for the rows that FAILED —
+  // the ones that landed leave the queue on the next refresh, and the ones that
+  // did not are still sitting in the rail needing an explanation each.
+  const [rowNotes, setRowNotes] = useState<ReadonlyMap<string, BulkRowOutcome>>(new Map());
 
   // Triage order, decided once: oldest first, id as a stable tie-break so the
   // rail cannot reshuffle under a keystroke.
@@ -231,10 +243,42 @@ export default function ReviewWorklist({
       return next;
     });
 
-  const bulk = (action: "approve" | "reject") => {
-    if (!onBulk || selected.size === 0) return;
-    onBulk([...selected], action);
-    setSelected(new Set());
+  // Run a batch through the host's handler and fold the per-row verdicts back
+  // into the rail. `ids` is passed explicitly so the keyboard path (a single
+  // focused id) and the selection bar (the whole set) share one path.
+  const runBulk = async (ids: string[], action: "approve" | "reject") => {
+    if (!onBulk || ids.length === 0 || busy) return;
+    setBusy(true);
+    setBanner(null);
+    try {
+      const out = await onBulk(ids, action);
+      setBanner({ ok: out.ok, message: out.message });
+      // Keep notes only for rows that failed AND are still selectable; a row
+      // that succeeded is about to leave on the refresh.
+      const failed = new Map<string, BulkRowOutcome>();
+      for (const r of out.rows) if (!r.ok) failed.set(r.id, r);
+      setRowNotes(failed);
+      // Drop the decided rows from the selection; keep the refused ones so the
+      // operator can see what stayed and act on it.
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const r of out.rows) if (r.ok) next.delete(r.id);
+        return next;
+      });
+    } catch {
+      setBanner({ ok: false, message: "The batch could not be submitted." });
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+  };
+
+  // The selection-bar buttons. One item fires straight away (it is on screen);
+  // more than one arms a confirmation first (see needsConfirm).
+  const requestBulk = (action: "approve" | "reject") => {
+    if (!onBulk || selected.size === 0 || busy) return;
+    if (needsConfirm(selected.size)) setConfirm(action);
+    else void runBulk([...selected], action);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -251,13 +295,15 @@ export default function ReviewWorklist({
     } else if (k === "x" && active) {
       e.preventDefault();
       toggleSel(active.id);
-    } else if ((k === "a" || k === "r") && active && onBulk) {
+    } else if ((k === "a" || k === "r") && active && onBulk && !busy) {
       e.preventDefault();
-      // Sign the claim the pane is showing, then step to the NEXT id before the
-      // decided row leaves the list — so the cursor lands where the operator
-      // expects rather than falling back to the front of the rail.
-      onBulk([active.id], k === "a" ? "approve" : "reject");
+      // Sign the ONE claim the pane is showing — no confirmation, because the
+      // operator is looking at exactly it (needsConfirm(1) is false). Step to
+      // the next id first, before the decided row leaves the list, so the cursor
+      // lands where the operator expects rather than at the front of the rail.
+      const id = active.id;
       setFocusId(stepFocus(matched, focusId, 1));
+      void runBulk([id], k === "a" ? "approve" : "reject");
     }
   };
 
@@ -414,37 +460,85 @@ export default function ReviewWorklist({
               <span className={LABEL} style={{ color: GOLD }}>
                 {selected.size} selected
               </span>
-              <button
-                type="button"
-                disabled={!onBulk}
-                onClick={() => bulk("approve")}
-                className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
-                style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
-              >
-                approve {selected.size}
-              </button>
-              <button
-                type="button"
-                disabled={!onBulk}
-                onClick={() => bulk("reject")}
-                className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
-                style={{ borderColor: withAlpha(MAGENTA, 0.4), color: MAGENTA }}
-              >
-                reject {selected.size}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelected(new Set())}
-                className={`${FONT_MONO} ml-auto cursor-pointer text-xs transition hover:text-white`}
-                style={{ color: FAINT }}
-              >
-                clear
-              </button>
+              {confirm ? (
+                // The deliberate step. A batch is the one decision on this
+                // surface where nothing on screen shows everything being signed,
+                // so it is stated in words and costs a second click.
+                <>
+                  <span className={`${FONT_MONO} text-xs`} style={{ color: GOLD }}>
+                    {confirm} {selected.size} claims? each is signed in your name.
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void runBulk([...selected], confirm)}
+                    className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
+                    style={{
+                      borderColor: withAlpha(confirm === "approve" ? GOLD : MAGENTA, 0.7),
+                      background: withAlpha(confirm === "approve" ? GOLD : MAGENTA, 0.1),
+                      color: confirm === "approve" ? GOLD : MAGENTA,
+                    }}
+                  >
+                    {busy ? "signing…" : `yes, ${confirm} ${selected.size}`}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirm(null)}
+                    className={`${FONT_MONO} cursor-pointer text-xs transition hover:text-white disabled:opacity-40`}
+                    style={{ color: FAINT }}
+                  >
+                    cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={!onBulk || busy}
+                    onClick={() => requestBulk("approve")}
+                    className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
+                    style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
+                  >
+                    approve {selected.size}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!onBulk || busy}
+                    onClick={() => requestBulk("reject")}
+                    className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
+                    style={{ borderColor: withAlpha(MAGENTA, 0.4), color: MAGENTA }}
+                  >
+                    reject {selected.size}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Set())}
+                    className={`${FONT_MONO} ml-auto cursor-pointer text-xs transition hover:text-white`}
+                    style={{ color: FAINT }}
+                  >
+                    clear
+                  </button>
+                </>
+              )}
               {!onBulk && (
                 <span className={`${FONT_MONO} w-full text-xs`} style={{ color: FAINT }}>
-                  this surface cannot sign in bulk — decide in the pane
+                  read-only surface — decisions are made in the console
                 </span>
               )}
+            </div>
+          )}
+
+          {banner && (
+            <div
+              role="status"
+              className={`${FONT_MONO} border-b px-3 py-2 text-xs`}
+              style={{
+                borderColor: "rgba(233,237,255,0.08)",
+                color: banner.ok ? GOLD : MAGENTA,
+              }}
+            >
+              {banner.message}
             </div>
           )}
 
@@ -480,18 +574,20 @@ export default function ReviewWorklist({
                 const focused = p.id === active?.id;
                 const sel = selected.has(p.id);
                 const stale = p.age_secs > STALE_SECS;
+                const note = rowNotes.get(p.id);
                 return (
+                  <div key={p.id} data-focused={focused}>
                   <div
-                    key={p.id}
-                    data-focused={focused}
                     className="flex items-stretch border-l-2 transition"
                     style={{
-                      borderLeftColor: focused ? ALPHA : "transparent",
+                      borderLeftColor: focused ? ALPHA : note ? MAGENTA : "transparent",
                       background: focused
                         ? withAlpha(ALPHA, 0.07)
-                        : sel
-                          ? "rgba(233,237,255,0.045)"
-                          : "transparent",
+                        : note
+                          ? withAlpha(MAGENTA, 0.05)
+                          : sel
+                            ? "rgba(233,237,255,0.045)"
+                            : "transparent",
                     }}
                   >
                     <button
@@ -544,6 +640,17 @@ export default function ReviewWorklist({
                           : "·"}
                       </span>
                     </button>
+                  </div>
+                  {note && (
+                    // A row the last batch refused, explained where it sits —
+                    // "3 of 12 were not yours" made per-row instead of aggregate.
+                    <p
+                      className={`${FONT_MONO} border-l-2 px-3 pb-1.5 pl-9 text-[11px]`}
+                      style={{ borderLeftColor: MAGENTA, color: withAlpha(MAGENTA, 0.85) }}
+                    >
+                      {note.message}
+                    </p>
+                  )}
                   </div>
                 );
               })
@@ -705,13 +812,16 @@ export default function ReviewWorklist({
             <span className="flex items-center gap-1">
               <Key>x</Key> select
             </span>
-            <span className="flex items-center gap-1" style={{ opacity: onBulk ? 1 : 0.4 }}>
-              <Key>a</Key> approve
-            </span>
-            <span className="flex items-center gap-1" style={{ opacity: onBulk ? 1 : 0.4 }}>
-              <Key>r</Key> reject
-            </span>
-            {!onBulk && <span>· a/r need a signing surface</span>}
+            {onBulk && (
+              <>
+                <span className="flex items-center gap-1">
+                  <Key>a</Key> approve
+                </span>
+                <span className="flex items-center gap-1">
+                  <Key>r</Key> reject
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

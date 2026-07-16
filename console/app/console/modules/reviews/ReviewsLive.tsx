@@ -14,6 +14,7 @@
  * half of that boundary).
  */
 
+import { bulkReviewAction } from "./actions";
 import ReviewWorklist from "./ReviewWorklist";
 import { ContradictionButtons, PromotionButtons } from "./review-buttons";
 import { CONTRA_HEADING_ID } from "./review-surface";
@@ -68,9 +69,12 @@ export default function ReviewsLive({
       // — it pointed at a `#contradictions-h` that no longer exists, so every tab
       // click round-tripped and then scrolled nowhere.
       statusHref={(s) => `/console?m=reviews&cstatus=${s}#${CONTRA_HEADING_ID}`}
-      // No onBulk: there is no bulk endpoint, and looping N single approvals
-      // behind one button is not a decision this surface has earned. The rail
-      // says so rather than offering a control that cannot fire.
+      // The bulk channel, now that a real endpoint backs it. The server decides
+      // each id under its own team's maintainer gate and returns a per-row
+      // verdict, so this hands the whole selection over and lets the rail render
+      // what came back — partial success and all. Keyboard a/r route through the
+      // same handler as a selection of one.
+      onBulk={bulkReviewAction}
     />
   );
 }

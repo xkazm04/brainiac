@@ -201,3 +201,204 @@ async fn promotion_queue_pages_and_counts_the_whole_backlog() {
         .is_empty());
     assert_eq!(body["total"], db_total);
 }
+
+/// The bulk endpoint applies the maintainer gate PER ITEM. A batch that mixes a
+/// caller's own team with another team's must approve the former and refuse the
+/// latter — and must not move a single memory it was not entitled to move. This
+/// is the property that makes bulk safe: it is N single reviews, not one blanket
+/// authorization.
+#[tokio::test]
+async fn bulk_review_gates_every_item_independently() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive,
+                  knowledge_health_snapshots
+         CASCADE",
+    )
+    .execute(&admin)
+    .await
+    .expect("truncate");
+
+    let store = Store::connect(&url).await.expect("connect");
+    let fx = brainiac_fixtures::load(brainiac_fixtures::loader::default_root()).expect("fixtures");
+    let embedder = std::sync::Arc::new(DeterministicEmbedder::default());
+    brainiac_eval::seed::seed_gold(&store, &fx, embedder.as_ref())
+        .await
+        .expect("seed");
+
+    let org = stable_uuid(&fx.org.org);
+    let team_pay = stable_uuid("team-payments");
+    let team_data = stable_uuid("team-data");
+
+    // Insert a raw memory + a pending promotion, return the ids.
+    let seed_promo = |team: Uuid, tag: &'static str| {
+        let admin = admin.clone();
+        async move {
+            let mem = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
+                 VALUES ($1, $2, $3, 'team', 'raw', 'fact', $4)",
+            )
+            .bind(mem)
+            .bind(org)
+            .bind(team)
+            .bind(format!("raw candidate ({tag})"))
+            .execute(&admin)
+            .await
+            .expect("raw memory");
+            let promo = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO promotions (id, org_id, memory_id, from_status, to_status,
+                                         policy_decision, policy_rule)
+                 VALUES ($1, $2, $3, 'raw', 'candidate', 'needs_review', 'test.bulk')",
+            )
+            .bind(promo)
+            .bind(org)
+            .bind(mem)
+            .execute(&admin)
+            .await
+            .expect("promotion");
+            (promo, mem)
+        }
+    };
+
+    // Two the pay lead maintains, one they cannot even see (another team).
+    let (pay_a, mem_pay_a) = seed_promo(team_pay, "pay-a").await;
+    let (pay_b, mem_pay_b) = seed_promo(team_pay, "pay-b").await;
+    let (data_c, mem_data_c) = seed_promo(team_data, "data-c").await;
+
+    let tok = |user: &str, teams: Vec<Uuid>| serde_json::json!({"org": org, "user": stable_uuid(user), "teams": teams});
+    std::env::set_var(
+        "BRAINIAC_TOKENS",
+        serde_json::json!({
+            // Maintainer of payments only.
+            "tok_pay_lead": tok("user-pay-lead", vec![team_pay]),
+            // Member of payments, NOT a maintainer.
+            "tok_pay_dev": tok("user-pay-dev1", vec![team_pay]),
+        })
+        .to_string(),
+    );
+
+    let app = brainiac_server::http::router(store, embedder, None)
+        .await
+        .expect("router");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let base = format!("http://{addr}");
+    let http = reqwest::Client::new();
+
+    let status_of = |mem: Uuid| {
+        let admin = admin.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT status::text FROM memories WHERE id = $1")
+                .bind(mem)
+                .fetch_one(&admin)
+                .await
+                .expect("status")
+        }
+    };
+
+    // ── mixed batch as the payments maintainer ───────────────────────────
+    // pay_a + pay_b are theirs to approve; data_c is not theirs to see.
+    let r = http
+        .post(format!("{base}/v1/reviews/promotions/bulk"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({ "action": "approve", "ids": [pay_a, pay_b, data_c] }))
+        .send()
+        .await
+        .expect("bulk");
+    assert_eq!(
+        r.status(),
+        reqwest::StatusCode::OK,
+        "a mixed batch still returns 200 — the verdict is per row"
+    );
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["decided"], 2, "both payments items approved");
+    assert_eq!(body["failed"], 1, "the other team's item refused");
+
+    // Per-row: index the verdicts by promotion id.
+    let mut verdict = std::collections::HashMap::new();
+    for row in body["results"].as_array().expect("results") {
+        verdict.insert(
+            row["promotion_id"].as_str().expect("id").to_string(),
+            (
+                row["ok"].as_bool().expect("ok"),
+                row["status"].as_i64().expect("status"),
+            ),
+        );
+    }
+    assert_eq!(verdict[&pay_a.to_string()], (true, 200));
+    assert_eq!(verdict[&pay_b.to_string()], (true, 200));
+    // Not visible under RLS ⇒ 404, not 403 — the no-oracle stance, same as the
+    // single-item path.
+    assert_eq!(verdict[&data_c.to_string()], (false, 404));
+
+    // The gate HELD: the two payments memories moved, the data memory did not.
+    assert_eq!(status_of(mem_pay_a).await, "candidate");
+    assert_eq!(status_of(mem_pay_b).await, "candidate");
+    assert_eq!(
+        status_of(mem_data_c).await,
+        "raw",
+        "a memory the caller could not act on must be untouched by the batch"
+    );
+
+    // ── a non-maintainer of a VISIBLE item is refused (the 403 path) ─────
+    let (pay_d, mem_pay_d) = seed_promo(team_pay, "pay-d").await;
+    let r = http
+        .post(format!("{base}/v1/reviews/promotions/bulk"))
+        .bearer_auth("tok_pay_dev") // member, not maintainer
+        .json(&serde_json::json!({ "action": "approve", "ids": [pay_d] }))
+        .send()
+        .await
+        .expect("bulk dev");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(body["decided"], 0);
+    assert_eq!(body["failed"], 1);
+    assert_eq!(
+        body["results"][0]["status"], 403,
+        "member is not a maintainer"
+    );
+    assert_eq!(
+        status_of(mem_pay_d).await,
+        "raw",
+        "a non-maintainer's bulk approval must not move the memory"
+    );
+
+    // ── the batch cap and malformed batches are rejected outright ────────
+    let big: Vec<Uuid> = (0..201).map(|_| Uuid::new_v4()).collect();
+    let r = http
+        .post(format!("{base}/v1/reviews/promotions/bulk"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({ "action": "approve", "ids": big }))
+        .send()
+        .await
+        .expect("bulk big");
+    assert_eq!(
+        r.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "over the 200 cap is refused as a batch, not truncated"
+    );
+
+    let r = http
+        .post(format!("{base}/v1/reviews/promotions/bulk"))
+        .bearer_auth("tok_pay_lead")
+        .json(&serde_json::json!({ "action": "sideways", "ids": [pay_a] }))
+        .send()
+        .await
+        .expect("bulk bad action");
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+}

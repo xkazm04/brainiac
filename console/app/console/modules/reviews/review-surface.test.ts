@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CONTRA_HEADING_ID,
+  needsConfirm,
   pageScope,
   resolveFocusIndex,
   scopeNote,
@@ -159,6 +160,28 @@ describe("pageScope", () => {
     const s = pageScope(0, 9999, 5000);
     expect(s.whole).toBe(false);
     expect([s.from, s.to]).toEqual([0, 0]);
+  });
+});
+
+describe("needsConfirm", () => {
+  /*
+   * The gate against a one-click "approve all 5000". A batch is confirmed
+   * because nothing on screen shows every claim in it; a single keyboard
+   * decision is NOT, because the pane is showing exactly that one claim and
+   * asking twice would defeat keyboard triage.
+   */
+  it("does not confirm the keyboard's batch-of-one", () => {
+    expect(needsConfirm(1)).toBe(false);
+  });
+
+  it("confirms any real batch", () => {
+    expect(needsConfirm(2)).toBe(true);
+    expect(needsConfirm(200)).toBe(true);
+    expect(needsConfirm(5000)).toBe(true);
+  });
+
+  it("has nothing to confirm for an empty selection", () => {
+    expect(needsConfirm(0)).toBe(false);
   });
 });
 

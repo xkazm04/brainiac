@@ -44,14 +44,54 @@ export interface ReviewSurfaceProps {
   promotionControls: (p: PromotionQueueItem) => ReactNode;
   contradictionControls: (c: ContradictionQueueItem) => ReactNode;
   /**
-   * Sign a whole selection at once. Absent when the surface cannot write.
-   * A queue of 480 is unworkable one card at a time — but bulk approval is also
-   * how a review gate degrades into a rubber stamp, so a variant that offers it
-   * must make what is being signed legible first. The analytics module already
-   * tracks `rubber_stamp_rate`; this is the surface that would move it.
+   * Sign a whole selection at once. Absent when the surface cannot write — the
+   * public tour passes nothing here, which is what keeps it structurally inert.
+   *
+   * A queue of 480 is unworkable one card at a time. But bulk approval is also
+   * how a review gate degrades into a rubber stamp, so the rail pairs it with a
+   * confirmation step for any batch of more than one, and the analytics module's
+   * `rubber_stamp_rate` is the number that would catch it if that is not enough.
+   *
+   * Returns a per-ROW outcome rather than a single ok/failed, because a mixed
+   * batch is the normal case: the server authorizes every item separately
+   * against its own team, so a selection can legitimately come back part
+   * approved, part 403, part 409. Answering "some of them" with "no" is what a
+   * single boolean would do.
    */
-  onBulk?: (ids: string[], action: "approve" | "reject") => void;
+  onBulk?: BulkHandler;
 }
+
+export type BulkHandler = (
+  ids: string[],
+  action: "approve" | "reject",
+) => Promise<BulkOutcome>;
+
+/** What became of one id in a batch. */
+export interface BulkRowOutcome {
+  id: string;
+  ok: boolean;
+  message: string;
+}
+
+export interface BulkOutcome {
+  /** True only when EVERY row landed. */
+  ok: boolean;
+  message: string;
+  decided: number;
+  failed: number;
+  rows: BulkRowOutcome[];
+}
+
+/**
+ * Whether a batch has to be confirmed before it is signed.
+ *
+ * One item does not: the pane is showing that exact claim, so `a` is a decision
+ * about something the operator is looking at — that is keyboard triage, and
+ * making it ask twice would remove the only reason it exists. More than one
+ * item does, because nothing on screen shows all of them at once, and "approve
+ * 200" is precisely the click this gate exists to slow down.
+ */
+export const needsConfirm = (count: number): boolean => count > 1;
 
 /**
  * The id of the contradictions heading, and the fragment the status tabs scroll

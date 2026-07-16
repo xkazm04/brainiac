@@ -17,6 +17,7 @@ import {
   resolveContradiction,
   reviewPromotion,
 } from "@/lib/api";
+import { bulkReviewPromotions } from "@/lib/governance-api";
 import type { ContradictionResolution } from "@/lib/types";
 
 export interface ActionResult {
@@ -85,6 +86,71 @@ export async function reviewPromotionAction(
     if (alreadyDecided(e)) refreshQueues();
     return { ok: false, message: describe(e) };
   }
+}
+
+/** Per-row outcome of a bulk decision, in the shape the rail renders. */
+export interface BulkRow {
+  id: string;
+  ok: boolean;
+  message: string;
+}
+
+export interface BulkActionResult extends ActionResult {
+  decided: number;
+  failed: number;
+  rows: BulkRow[];
+}
+
+/**
+ * Sign a whole selection.
+ *
+ * The server decides each id independently and returns 200 with a per-item
+ * verdict, because a mixed batch is the normal case: a selection can span teams
+ * this token maintains and teams it does not. Collapsing that into one
+ * ok/not-ok would answer "some of them" with "no", so this keeps the rows and
+ * the rail reports them per id.
+ */
+export async function bulkReviewAction(
+  ids: string[],
+  action: "approve" | "reject",
+): Promise<BulkActionResult> {
+  const none = { decided: 0, failed: ids.length, rows: [] as BulkRow[] };
+  try {
+    const out = await bulkReviewPromotions(configFromEnv(), ids, action);
+    // Anything decided changed the queue — refresh even on a partial failure,
+    // or the rows that DID land stay on screen looking undecided.
+    if (out.decided > 0) refreshQueues();
+    const rows: BulkRow[] = out.results.map((r) => ({
+      id: r.promotion_id,
+      ok: r.ok,
+      message: r.ok
+        ? `now ${r.memory_status}`
+        : (describeStatus(r.status) ?? r.error ?? "failed"),
+    }));
+    const verb = action === "approve" ? "approved" : "rejected";
+    return {
+      ok: out.failed === 0,
+      decided: out.decided,
+      failed: out.failed,
+      rows,
+      message:
+        out.failed === 0
+          ? `${out.decided} ${verb}.`
+          : `${out.decided} ${verb}, ${out.failed} refused — see the rail.`,
+    };
+  } catch (e) {
+    // A throw here is a malformed or rejected BATCH, not a per-item verdict.
+    if (alreadyDecided(e)) refreshQueues();
+    return { ok: false, message: describe(e), ...none };
+  }
+}
+
+/** The per-row reason, in the same voice as the single-item messages. */
+function describeStatus(status: number): string | null {
+  if (status === 403) return "not a maintainer of the owning team";
+  if (status === 404) return "gone — decided already, or out of scope";
+  if (status === 409) return "already decided";
+  return null;
 }
 
 export async function resolveContradictionAction(

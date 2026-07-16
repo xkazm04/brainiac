@@ -926,6 +926,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/reviews/promotions/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Approve or reject many promotions in one request. Every item is authorized and decided independently — the maintainer gate and the concurrency guard run per item, and the response reports each id's outcome. Returns 200 even when some rows fail; read `results`. */
+        post: operations["bulk_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/reviews/promotions/{id}/approve": {
         parameters: {
             query?: never;
@@ -1223,6 +1240,48 @@ export interface components {
             job_id?: number | null;
             /** Format: uuid */
             source_id?: string | null;
+        };
+        BulkReviewRequest: {
+            /** @description `approve` | `reject` — applied to every id in the batch. */
+            action: string;
+            /** @description The promotions to decide. Duplicates are collapsed. */
+            ids: string[];
+        };
+        BulkReviewResponse: {
+            /** @description Rows that were actually written. */
+            decided: number;
+            /**
+             * @description Rows that were refused or lost a race. The batch still returns 200: the
+             *     request succeeded, and `results` says what became of each id.
+             */
+            failed: number;
+            results: components["schemas"]["BulkReviewRow"][];
+        };
+        /**
+         * @description What happened to ONE promotion in a batch.
+         *
+         *     `status` is the HTTP status this id would have returned as a single request,
+         *     so a partial failure stays legible per row: 403 (not a maintainer of THAT
+         *     item's team), 404 (gone, or invisible under RLS), 409 (someone decided it
+         *     first). A batch does not collapse these into one error, because they are not
+         *     one error — "3 of 12 were not yours" is a different fact from "the request
+         *     failed", and only the per-row shape can say it.
+         */
+        BulkReviewRow: {
+            /** @description Why this row failed — `None` when it succeeded. */
+            error?: string | null;
+            /** Format: uuid */
+            memory_id?: string | null;
+            /** @description The memory's status after the decision — `None` when this row failed. */
+            memory_status?: string | null;
+            ok: boolean;
+            /** Format: uuid */
+            promotion_id: string;
+            /**
+             * Format: int32
+             * @description The status this item would have returned on its own (200/403/404/409/500).
+             */
+            status: number;
         };
         CanonicalDetailResponse: {
             canonical: components["schemas"]["CanonicalSummary"];
@@ -4264,6 +4323,51 @@ export interface operations {
                 content?: never;
             };
             /** @description Token lacks the `read` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    bulk_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-item outcomes (some may have failed) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkReviewResponse"];
+                };
+            };
+            /** @description Unknown action, empty batch, or more than 200 ids */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `write` scope */
             403: {
                 headers: {
                     [name: string]: unknown;
