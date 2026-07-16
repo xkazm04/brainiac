@@ -125,6 +125,35 @@ pub async fn list_documents(conn: &mut PgConnection) -> Result<Vec<Document>> {
     Ok(rows.iter().map(row_to_document).collect())
 }
 
+/// Lexical search over pages by title, slug, or current-revision body (F-5:
+/// gives REST the doc search the MCP surface already had). Deliberately simple
+/// LIKE, like the MCP `doc_search` and for the same reason: pages are few and
+/// titled for what they cover. The match is done in a subquery so the outer
+/// `DOC_COLUMNS` select stays join-free (no ambiguous `id`); RLS scopes both.
+pub async fn search_documents(
+    conn: &mut PgConnection,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Document>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {DOC_COLUMNS} FROM documents
+         WHERE id IN (
+             SELECT d.id FROM documents d
+             LEFT JOIN document_revisions r ON r.id = d.current_revision
+             WHERE d.title ILIKE '%' || $1 || '%'
+                OR d.slug ILIKE '%' || $1 || '%'
+                OR r.content_md ILIKE '%' || $1 || '%'
+         )
+         ORDER BY updated_at DESC
+         LIMIT $2"
+    ))
+    .bind(query)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.iter().map(row_to_document).collect())
+}
+
 /// Pages whose underlying memories moved. The compose worker's work list.
 /// Pages awaiting recompose. Skips any page inside its failure backoff window
 /// (0021): a deterministically-failing compose would otherwise be re-picked on

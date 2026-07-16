@@ -432,6 +432,84 @@ pub(crate) struct MemoryAddBody {
     content: String,
     #[serde(default)]
     team_id: Option<Uuid>,
+    /// Optional kind hint (fact|decision|pattern|pitfall|howto). For a `manual`
+    /// add this is authoritative — the F-3 verbatim path stores the statement
+    /// under exactly this kind (default `fact`) with no model guessing.
+    #[serde(default)]
+    kind: Option<String>,
+    /// Optional entity names this concerns (services/repos/techs/features) —
+    /// carried through to resolution so the memory anchors them.
+    #[serde(default)]
+    entities: Vec<String>,
+}
+
+/// Per-add entity-hint ceiling — a note anchors a handful of things, never a
+/// bulk list (mirrors mcp.rs `MAX_ENTITY_HINTS`).
+const MAX_ENTITY_HINTS: usize = 16;
+/// Per-entity-name cap (mirrors mcp.rs `MAX_NAME_CHARS`).
+const MAX_ENTITY_NAME_CHARS: usize = 200;
+
+/// Validate + encode a `memory_add` body into the `manual` source text the
+/// extractor stores. Content is validated (non-empty, capped) exactly as
+/// before; the optional kind/entities are folded in via the ONE owner of the
+/// wire format (`brainiac_pipeline::manual`), so REST, MCP, and the F-3 decode
+/// path cannot drift. An unknown kind or an oversized/empty hint is a 400.
+fn encode_add_source(body: &MemoryAddBody) -> Result<String, HttpError> {
+    let content = body.content.trim();
+    if content.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "content must not be empty".to_string(),
+        )
+            .into());
+    }
+    within_cap(content, MAX_CONTENT_CHARS, "content")?;
+
+    let kind = match body
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some(s) => Some(
+            brainiac_core::MemoryKind::parse(s).ok_or_else(|| -> HttpError {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown memory kind `{s}` (fact|decision|pattern|pitfall|howto)"),
+                )
+                    .into()
+            })?,
+        ),
+    };
+
+    if body.entities.len() > MAX_ENTITY_HINTS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "too many entities ({}); the limit is {MAX_ENTITY_HINTS}",
+                body.entities.len()
+            ),
+        )
+            .into());
+    }
+    let mut entities = Vec::with_capacity(body.entities.len());
+    for e in &body.entities {
+        let name = e.trim();
+        if name.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "entity names must not be empty".to_string(),
+            )
+                .into());
+        }
+        within_cap(name, MAX_ENTITY_NAME_CHARS, "entities")?;
+        entities.push(name.to_string());
+    }
+
+    Ok(brainiac_pipeline::manual::encode_manual_source(
+        content, kind, &entities,
+    ))
 }
 
 /// The 202 receipt: the source row that was written and the queue job that
@@ -471,19 +549,10 @@ fn idempotency_key(headers: &HeaderMap) -> Result<Option<String>, HttpError> {
 async fn ingest_source(
     state: &AppState,
     principal: &Principal,
-    content: &str,
-    team_id: Option<Uuid>,
+    body: &MemoryAddBody,
 ) -> Result<MemoryAcceptedResponse, HttpError> {
-    let content = content.trim();
-    if content.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "content must not be empty".to_string(),
-        )
-            .into());
-    }
-    within_cap(content, MAX_CONTENT_CHARS, "content")?;
-    let team_id = team_id.or_else(|| principal.team_ids.first().copied());
+    let raw_text = encode_add_source(body)?;
+    let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(principal).await.map_err(internal)?;
     brainiac_store::governance::insert_source(
@@ -492,7 +561,7 @@ async fn ingest_source(
         principal.org_id,
         team_id,
         "manual",
-        content,
+        &raw_text,
         Some(principal.user_id),
     )
     .await
@@ -527,21 +596,13 @@ pub(crate) async fn memory_add(
     let principal = auth_of(&state, &headers, "write").await?.principal;
     let Some(key) = idempotency_key(&headers)? else {
         // No key: the plain async ingest.
-        let receipt = ingest_source(&state, &principal, &body.content, body.team_id).await?;
+        let receipt = ingest_source(&state, &principal, &body).await?;
         return Ok((StatusCode::ACCEPTED, Json(receipt)));
     };
 
-    // Keyed: validate the body up front so even a first use of a bad body is a
-    // clean 400 (never a stored, un-processable source).
-    let content = body.content.trim();
-    if content.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "content must not be empty".to_string(),
-        )
-            .into());
-    }
-    within_cap(content, MAX_CONTENT_CHARS, "content")?;
+    // Keyed: validate + encode the body up front so even a first use of a bad
+    // body is a clean 400 (never a stored, un-processable source).
+    let raw_text = encode_add_source(&body)?;
     let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
@@ -551,7 +612,7 @@ pub(crate) async fn memory_add(
         principal.org_id,
         team_id,
         "manual",
-        content,
+        &raw_text,
         Some(principal.user_id),
         &key,
     )
@@ -676,7 +737,7 @@ pub(crate) async fn memory_add_bulk(
     }
     let mut results = Vec::with_capacity(body.items.len());
     for item in &body.items {
-        match ingest_source(&state, &principal, &item.content, item.team_id).await {
+        match ingest_source(&state, &principal, item).await {
             Ok(r) => results.push(BulkItemResult {
                 source_id: Some(r.source_id),
                 job_id: Some(r.job_id),

@@ -12,10 +12,10 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -166,17 +166,42 @@ fn summary(d: &brainiac_core::Document, pending_review: bool) -> DocSummary {
     }
 }
 
-#[utoipa::path(get, path = "/v1/docs", responses((status = 200, body = DocsListResponse)))]
+#[derive(Deserialize, utoipa::IntoParams)]
+pub(crate) struct DocsListQuery {
+    /// Optional lexical query: filter pages by title, slug, or body (F-5 — the
+    /// doc search the MCP surface already had, now over REST). Omit to list all.
+    pub q: Option<String>,
+}
+
+/// Result ceiling for a doc search — pages are few; a search is a shortlist,
+/// not a dump.
+const DOC_SEARCH_LIMIT: i64 = 50;
+
+#[utoipa::path(
+    get,
+    path = "/v1/docs",
+    params(DocsListQuery),
+    responses((status = 200, body = DocsListResponse))
+)]
 pub(crate) async fn docs_list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(q): Query<DocsListQuery>,
 ) -> Result<Json<DocsListResponse>, HttpError> {
     let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
-    let docs = brainiac_store::documents::list_documents(&mut tx)
-        .await
-        .map_err(internal)?;
+    let query = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let docs = match query {
+        Some(query) => {
+            brainiac_store::documents::search_documents(&mut tx, query, DOC_SEARCH_LIMIT)
+                .await
+                .map_err(internal)?
+        }
+        None => brainiac_store::documents::list_documents(&mut tx)
+            .await
+            .map_err(internal)?,
+    };
     let pending = brainiac_store::documents::pending_revisions(&mut tx)
         .await
         .map_err(internal)?;

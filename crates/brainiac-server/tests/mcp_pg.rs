@@ -115,6 +115,10 @@ async fn mcp_handshake_and_tools() {
             "skill_search",
             "skill_fetch",
             "standard_propose",
+            // F-4: the authoring counterpart to standard_propose for
+            // procedures — an agent proposes a skill as a DRAFT; a named human
+            // publishes it.
+            "skill_propose",
             "skill_report_usage"
         ]
     );
@@ -1319,4 +1323,60 @@ async fn mcp_handshake_and_tools() {
             .all(|m| m["governance"] == "candidate" && m["governance_warning"].is_string()),
         "every below-canonical row must carry a governance warning: {unrev}"
     );
+
+    // skill_propose (F-4): an agent authors a skill over MCP. It lands as a
+    // DRAFT — skill_fetch refuses it, the same way it refuses any unsigned
+    // bundle — and re-proposing the name dedupes rather than duplicating.
+    let r = handle_message(
+        &state,
+        &rpc(
+            45,
+            "tools/call",
+            json!({ "name": "skill_propose", "arguments": {
+                "name": "Backfill a price feed",
+                "instructions_md": "# Backfill\n1. pause the live feed\n2. replay from the archive",
+                "summary": "recover a gap in a provider's history",
+                "domain": "providers"
+            }}),
+        ),
+    )
+    .await
+    .expect("response");
+    let proposed = tool_payload(&r);
+    assert_eq!(proposed["outcome"], "created", "{proposed}");
+    assert_eq!(proposed["slug"], "backfill-a-price-feed");
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            46,
+            "tools/call",
+            json!({ "name": "skill_fetch", "arguments": { "slug": "backfill-a-price-feed" } }),
+        ),
+    )
+    .await
+    .expect("response");
+    let fetched = tool_payload(&r);
+    assert_eq!(fetched["found"], true);
+    assert_eq!(
+        fetched["published"], false,
+        "a proposed draft is never served as a bundle: {fetched}"
+    );
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            47,
+            "tools/call",
+            json!({ "name": "skill_propose", "arguments": {
+                "name": "backfill a price feed",
+                "instructions_md": "# Different words, same name."
+            }}),
+        ),
+    )
+    .await
+    .expect("response");
+    let dup = tool_payload(&r);
+    assert_eq!(dup["outcome"], "duplicate", "{dup}");
+    assert_eq!(dup["maturity"], "draft");
 }

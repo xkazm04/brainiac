@@ -219,6 +219,20 @@
           "crate::docs"
         ],
         "operationId": "docs_list",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "path",
+            "description": "Optional lexical query: filter pages by title, slug, or body (F-5 — the\ndoc search the MCP surface already had, now over REST). Omit to list all.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -514,6 +528,40 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/library/skills/propose": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Propose a skill as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. Deduplicated by name (a duplicate collapses onto the existing skill) and rate-limited per author.",
+        "operationId": "skill_propose",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillProposeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProposeResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "per-author hourly proposal budget spent"
           }
         }
       }
@@ -4387,6 +4435,20 @@
           "content": {
             "type": "string"
           },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional entity names this concerns (services/repos/techs/features) —\ncarried through to resolution so the memory anchors them."
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional kind hint (fact|decision|pattern|pitfall|howto). For a `manual`\nadd this is authoritative — the F-3 verbatim path stores the statement\nunder exactly this kind (default `fact`) with no model guessing."
+          },
           "team_id": {
             "type": [
               "string",
@@ -5878,6 +5940,65 @@
           }
         ]
       },
+      "SkillProposeRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "instructions_md"
+        ],
+        "properties": {
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task domain for the catalog, e.g. `database`, `testing`."
+          },
+          "instructions_md": {
+            "type": "string",
+            "description": "The whole procedure as markdown — steps, checks, gotchas."
+          },
+          "name": {
+            "type": "string",
+            "description": "Short skill name (the dedup key), e.g. \"add a data provider\"."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One line: what this skill is for and when to reach for it."
+          }
+        }
+      },
+      "SkillProposeResponse": {
+        "type": "object",
+        "required": [
+          "outcome",
+          "skill_id",
+          "slug"
+        ],
+        "properties": {
+          "maturity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present on a duplicate: the maturity of the skill this collapsed onto."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`created` (a fresh DRAFT waits for a maintainer to publish it) or\n`duplicate` (collapsed onto an existing skill — see `maturity`)."
+          },
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "SkillVersionView": {
         "type": "object",
         "required": [
@@ -6054,12 +6175,21 @@
         "required": [
           "memories",
           "promoted",
-          "pending_review"
+          "pending_review",
+          "memory_ids"
         ],
         "properties": {
           "memories": {
             "type": "integer",
             "format": "int64"
+          },
+          "memory_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The ids of the memories this source produced — what closes the loop on\nan async `memory_add` (F-1/F-2). Poll this endpoint until `status` is\n`processed`; then these ids are real memories you can cite (e.g. as a\nstandard's `evidence_memory_id`) or feed back on. `memory_add` returns a\nSOURCE id, not a memory id, and extraction is asynchronous — so before\nthis, an agent had no way to learn what its contribution became, or\nwhether it landed at all. Empty while queued, or if extraction produced\nnothing (a real outcome worth seeing, not a hang)."
           },
           "pending_review": {
             "type": "integer",
@@ -6721,17 +6851,27 @@
         "type": "object",
         "required": [
           "artifact_kind",
-          "artifact_id",
           "event"
         ],
         "properties": {
           "artifact_id": {
-            "type": "string",
-            "format": "uuid"
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The artifact's UUID. Optional if `artifact_slug` is given — an agent\nholding a slug (what `standards_for` / `skill_fetch` hand back) should\nnot have to look up the id first, so this mirrors the MCP tool, which\ntakes a slug. Exactly one of `artifact_id` / `artifact_slug` is required."
           },
           "artifact_kind": {
             "type": "string",
             "description": "`standard` or `skill`."
+          },
+          "artifact_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The artifact's slug, as an alternative to `artifact_id`."
           },
           "event": {
             "type": "string",

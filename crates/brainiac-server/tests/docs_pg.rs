@@ -201,6 +201,78 @@ async fn a_team_page_is_invisible_to_a_non_member() {
     assert!(list_theirs.is_empty());
 }
 
+/// F-5: the lexical page search the MCP surface had, now over the store the REST
+/// `/v1/docs?q=` handler calls. Matches title, slug, and body; RLS scopes it so
+/// a non-member's search finds nothing, exactly like their list.
+#[tokio::test]
+async fn doc_search_matches_title_body_and_respects_rls() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let doc_id = team_page(&ctx).await;
+
+    // Point the page at its revision so a body match is possible (team_page
+    // leaves current_revision unset; compose does this in production). Through
+    // worker_tx, the scope that can write a team page (see team_page's note).
+    {
+        let wp = brainiac_pipeline::pipeline_principal(ctx.org_id);
+        let mut tx = ctx.store.worker_tx(&wp).await.expect("tx");
+        sqlx::query(
+            "UPDATE documents SET current_revision =
+                (SELECT id FROM document_revisions WHERE document_id = $1 ORDER BY created_at LIMIT 1)
+             WHERE id = $1",
+        )
+        .bind(doc_id)
+        .execute(&mut *tx)
+        .await
+        .expect("link revision");
+        tx.commit().await.expect("commit");
+    }
+
+    // The owner finds it by title/slug and by body; an unrelated term finds
+    // nothing.
+    let mut tx = ctx
+        .store
+        .scoped_tx(&principal(ctx.org_id, ctx.user_a))
+        .await
+        .expect("tx");
+    let by_title = brainiac_store::documents::search_documents(&mut tx, "payments", 50)
+        .await
+        .expect("title");
+    assert_eq!(by_title.len(), 1, "title/slug match");
+    assert_eq!(by_title[0].slug, "payments-runbook");
+    let by_body = brainiac_store::documents::search_documents(&mut tx, "Owned by", 50)
+        .await
+        .expect("body");
+    assert_eq!(by_body.len(), 1, "body match through the current revision");
+    assert!(
+        brainiac_store::documents::search_documents(&mut tx, "kafka ingestion", 50)
+            .await
+            .expect("miss")
+            .is_empty(),
+        "an unrelated query matches nothing"
+    );
+    tx.commit().await.expect("c");
+
+    // A non-member's search finds nothing — RLS scopes search like it scopes list.
+    let mut tx = ctx
+        .store
+        .scoped_tx(&principal(ctx.org_id, ctx.user_b))
+        .await
+        .expect("tx");
+    assert!(
+        brainiac_store::documents::search_documents(&mut tx, "payments", 50)
+            .await
+            .expect("outsider")
+            .is_empty(),
+        "search must not leak another team's page"
+    );
+    tx.commit().await.expect("c");
+}
+
 #[tokio::test]
 async fn mcp_doc_get_serves_published_pages_and_refuses_unsigned_drafts() {
     let Some(url) = std::env::var("DATABASE_URL").ok() else {

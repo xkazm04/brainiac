@@ -356,6 +356,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/library/skills/propose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Propose a skill as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. Deduplicated by name (a duplicate collapses onto the existing skill) and rate-limited per author. */
+        post: operations["skill_propose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/library/skills/{slug}": {
         parameters: {
             query?: never;
@@ -1956,6 +1973,17 @@ export interface components {
         };
         MemoryAddBody: {
             content: string;
+            /**
+             * @description Optional entity names this concerns (services/repos/techs/features) —
+             *     carried through to resolution so the memory anchors them.
+             */
+            entities?: string[];
+            /**
+             * @description Optional kind hint (fact|decision|pattern|pitfall|howto). For a `manual`
+             *     add this is authoritative — the F-3 verbatim path stores the statement
+             *     under exactly this kind (default `fact`) with no model guessing.
+             */
+            kind?: string | null;
             /** Format: uuid */
             team_id?: string | null;
         };
@@ -2490,6 +2518,28 @@ export interface components {
             /** @description Version history, newest first — drafts included, marked as such. */
             versions: components["schemas"]["SkillVersionView"][];
         };
+        SkillProposeRequest: {
+            /** @description Task domain for the catalog, e.g. `database`, `testing`. */
+            domain?: string | null;
+            /** @description The whole procedure as markdown — steps, checks, gotchas. */
+            instructions_md: string;
+            /** @description Short skill name (the dedup key), e.g. "add a data provider". */
+            name: string;
+            /** @description One line: what this skill is for and when to reach for it. */
+            summary?: string | null;
+        };
+        SkillProposeResponse: {
+            /** @description Present on a duplicate: the maturity of the skill this collapsed onto. */
+            maturity?: string | null;
+            /**
+             * @description `created` (a fresh DRAFT waits for a maintainer to publish it) or
+             *     `duplicate` (collapsed onto an existing skill — see `maturity`).
+             */
+            outcome: string;
+            /** Format: uuid */
+            skill_id: string;
+            slug: string;
+        };
         SkillVersionView: {
             created_at: string;
             /**
@@ -2556,6 +2606,17 @@ export interface components {
         SourceResults: {
             /** Format: int64 */
             memories: number;
+            /**
+             * @description The ids of the memories this source produced — what closes the loop on
+             *     an async `memory_add` (F-1/F-2). Poll this endpoint until `status` is
+             *     `processed`; then these ids are real memories you can cite (e.g. as a
+             *     standard's `evidence_memory_id`) or feed back on. `memory_add` returns a
+             *     SOURCE id, not a memory id, and extraction is asynchronous — so before
+             *     this, an agent had no way to learn what its contribution became, or
+             *     whether it landed at all. Empty while queued, or if extraction produced
+             *     nothing (a real outcome worth seeing, not a hang).
+             */
+            memory_ids: string[];
             /** Format: int64 */
             pending_review: number;
             /** Format: int64 */
@@ -2792,10 +2853,18 @@ export interface components {
             enabled?: boolean | null;
         };
         UsageRequest: {
-            /** Format: uuid */
-            artifact_id: string;
+            /**
+             * Format: uuid
+             * @description The artifact's UUID. Optional if `artifact_slug` is given — an agent
+             *     holding a slug (what `standards_for` / `skill_fetch` hand back) should
+             *     not have to look up the id first, so this mirrors the MCP tool, which
+             *     takes a slug. Exactly one of `artifact_id` / `artifact_slug` is required.
+             */
+            artifact_id?: string | null;
             /** @description `standard` or `skill`. */
             artifact_kind: string;
+            /** @description The artifact's slug, as an alternative to `artifact_id`. */
+            artifact_slug?: string | null;
             /** @description `fetch`, `check` (compared work against a standard), or `apply` (ran a skill). */
             event: string;
             version?: string | null;
@@ -2997,7 +3066,13 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /**
+                 * @description Optional lexical query: filter pages by title, slug, or body (F-5 — the
+                 *     doc search the MCP surface already had, now over REST). Omit to list all.
+                 */
+                q: string | null;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -3243,6 +3318,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SkillsListResponse"];
                 };
+            };
+        };
+    };
+    skill_propose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillProposeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProposeResponse"];
+                };
+            };
+            /** @description per-author hourly proposal budget spent */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

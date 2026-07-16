@@ -10,6 +10,8 @@ use brainiac_core::{Skill, SkillMaturity, SkillVersion};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
+use super::bridge::slugify;
+
 pub struct NewSkill {
     pub id: Uuid,
     pub org_id: Uuid,
@@ -17,12 +19,16 @@ pub struct NewSkill {
     pub name: String,
     pub description: Option<String>,
     pub domain: Option<String>,
+    /// The agent identity that proposed this skill as a draft, or `None` when a
+    /// maintainer created it directly at the console. Recorded for attribution
+    /// and for the per-author proposal rate limit ([`propose_skill`]).
+    pub proposed_by: Option<Uuid>,
 }
 
 pub async fn insert_skill(conn: &mut PgConnection, s: &NewSkill) -> Result<()> {
     sqlx::query(
-        "INSERT INTO skills (id, org_id, slug, name, description, domain)
-         VALUES ($1,$2,$3,$4,$5,$6)",
+        "INSERT INTO skills (id, org_id, slug, name, description, domain, proposed_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)",
     )
     .bind(s.id)
     .bind(s.org_id)
@@ -30,6 +36,7 @@ pub async fn insert_skill(conn: &mut PgConnection, s: &NewSkill) -> Result<()> {
     .bind(&s.name)
     .bind(&s.description)
     .bind(&s.domain)
+    .bind(s.proposed_by)
     .execute(conn)
     .await?;
     Ok(())
@@ -175,4 +182,128 @@ pub async fn current_published_version(
     .fetch_optional(conn)
     .await?;
     Ok(row.as_ref().map(row_to_skill_version))
+}
+
+// ── agent proposals (F-4) ────────────────────────────────────────────────
+//
+// An agent that codified a runbook mid-session proposes it here. It lands as a
+// DRAFT skill + a DRAFT (unpublished) version — never served, never policy —
+// exactly like a `standard_propose` candidate waiting at the gate. The same two
+// guards as the standard channel stand in front of it: a per-author hourly rate
+// limit (counted from `skills.proposed_by`, no separate counter to drift) and a
+// slug dedup that collapses a re-proposal onto the existing skill.
+
+/// The initial semver a proposed draft carries. A maintainer bumps it when they
+/// publish; until then the number is a placeholder, not a promise.
+const PROPOSED_SKILL_SEMVER: &str = "0.1.0";
+
+pub struct SkillProposal {
+    pub org_id: Uuid,
+    /// The proposing identity (the token's user). Rate-limited and recorded on
+    /// the skill as `proposed_by`.
+    pub author: Uuid,
+    /// Human name; the slug (the dedup key) is derived from it.
+    pub name: String,
+    pub description: Option<String>,
+    pub domain: Option<String>,
+    /// The skill body — the runbook/checklist markdown the agent authored.
+    pub content_md: String,
+    /// Bundle front-matter (the surface builds it from name/description/domain).
+    pub manifest: serde_json::Value,
+}
+
+pub enum SkillProposeOutcome {
+    /// A fresh draft skill is waiting for a maintainer to publish it.
+    Created {
+        skill_id: Uuid,
+        version_id: Uuid,
+        slug: String,
+    },
+    /// A skill with this slug already exists — collapsed, no new row. The
+    /// maturity tells the agent whether it is already published (use it),
+    /// still a draft (someone is already on this), or deprecated.
+    Duplicate {
+        skill_id: Uuid,
+        slug: String,
+        maturity: SkillMaturity,
+    },
+    /// The author spent this hour's budget.
+    RateLimited { per_hour: i64 },
+}
+
+/// Propose a skill as a draft (F-4). Rate-limited per author, deduplicated on
+/// slug; otherwise inserts a draft skill and its first unpublished version in
+/// one transaction. Publishing stays a separate named-human act.
+pub async fn propose_skill(
+    conn: &mut PgConnection,
+    p: &SkillProposal,
+    per_hour: i64,
+) -> Result<SkillProposeOutcome> {
+    // 1. The hour budget, counted from the skills the author has proposed.
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM skills
+         WHERE org_id = $1 AND proposed_by = $2
+           AND created_at > now() - interval '1 hour'",
+    )
+    .bind(p.org_id)
+    .bind(p.author)
+    .fetch_one(&mut *conn)
+    .await?;
+    if recent >= per_hour {
+        return Ok(SkillProposeOutcome::RateLimited { per_hour });
+    }
+
+    // 2. Collapse onto an existing skill with the same slug, whatever its
+    //    maturity — a second agent proposing the same runbook is told it exists
+    //    rather than minting a duplicate the maintainer must then reconcile.
+    let slug = slugify(&p.name);
+    if let Some(row) =
+        sqlx::query("SELECT id, maturity FROM skills WHERE org_id = $1 AND slug = $2")
+            .bind(p.org_id)
+            .bind(&slug)
+            .fetch_optional(&mut *conn)
+            .await?
+    {
+        return Ok(SkillProposeOutcome::Duplicate {
+            skill_id: row.get("id"),
+            slug,
+            maturity: SkillMaturity::parse(row.get::<String, _>("maturity").as_str())
+                .unwrap_or_default(),
+        });
+    }
+
+    // 3. Insert the draft skill + its first (unpublished) version together.
+    let skill_id = Uuid::new_v4();
+    insert_skill(
+        conn,
+        &NewSkill {
+            id: skill_id,
+            org_id: p.org_id,
+            slug: slug.clone(),
+            name: p.name.clone(),
+            description: p.description.clone(),
+            domain: p.domain.clone(),
+            proposed_by: Some(p.author),
+        },
+    )
+    .await?;
+    let version_id = Uuid::new_v4();
+    add_skill_version(
+        conn,
+        &NewSkillVersion {
+            id: version_id,
+            skill_id,
+            org_id: p.org_id,
+            semver: PROPOSED_SKILL_SEMVER.to_string(),
+            manifest: p.manifest.clone(),
+            content_md: p.content_md.clone(),
+            resources: serde_json::json!([]),
+        },
+    )
+    .await?;
+    Ok(SkillProposeOutcome::Created {
+        skill_id,
+        version_id,
+        slug,
+    })
 }

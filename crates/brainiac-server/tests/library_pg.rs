@@ -422,6 +422,7 @@ async fn rest_scopes_gate_the_library_and_usage_counts_teams() {
                 name: "Review migrations".into(),
                 description: Some("checklist for schema changes".into()),
                 domain: Some("database".into()),
+                proposed_by: None,
             },
         )
         .await
@@ -580,6 +581,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
                 name: "Triage flaky tests".into(),
                 description: Some("find and quarantine flaky tests".into()),
                 domain: Some("testing".into()),
+                proposed_by: None,
             },
         )
         .await
@@ -1073,6 +1075,175 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
         payload["note"].as_str().expect("note").contains("respect"),
         "the agent is told to respect the rejection: {payload}"
     );
+}
+
+/// F-4/F-5: an agent authors a SKILL over REST (it lands as a draft, never
+/// served), the name dedupes, the scope gates it — and F-5's usage-by-slug lets
+/// the same agent report use with the slug it holds, not a uuid it never saw.
+#[tokio::test]
+async fn skill_propose_over_rest_drafts_and_usage_accepts_a_slug() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    // Generous budget: this test exercises drafting/dedup, not the rate limit.
+    std::env::set_var("BRAINIAC_LIB_PROPOSE_PER_HOUR", "50");
+    let ctx = setup(&url).await;
+    let base = boot_http(&ctx).await;
+    let http = reqwest::Client::new();
+
+    let reader = scoped_token(&ctx, ctx.org_a, ctx.user_reader, "read-only", &["lib:read"]).await;
+    let proposer = scoped_token(
+        &ctx,
+        ctx.org_a,
+        ctx.user_reader,
+        "agent",
+        &["lib:read", "lib:propose"],
+    )
+    .await;
+    let skills_propose = format!("{base}/v1/library/skills/propose");
+    let body = json!({
+        "name": "Add a data provider",
+        "instructions_md": "# Add a data provider\n1. implement the trait\n2. register it in the factory\n3. add a paper-only fixture",
+        "summary": "wire a new price feed end to end",
+        "domain": "providers"
+    });
+
+    // A lib:read token cannot propose a skill — same gate as standards.
+    let r = http
+        .post(&skills_propose)
+        .bearer_auth(&reader)
+        .json(&body)
+        .send()
+        .await
+        .expect("propose");
+    assert_eq!(r.status(), reqwest::StatusCode::FORBIDDEN);
+
+    // The proposer drafts it.
+    let r = http
+        .post(&skills_propose)
+        .bearer_auth(&proposer)
+        .json(&body)
+        .send()
+        .await
+        .expect("propose");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let created: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(created["outcome"], "created");
+    assert_eq!(created["slug"], "add-a-data-provider");
+    let skill_id = created["skill_id"].as_str().expect("id").to_string();
+
+    // It is a DRAFT: listed (downloadable:false) but the download refuses it —
+    // an agent never receives an unsigned skill as if it were policy.
+    let list: serde_json::Value = http
+        .get(format!("{base}/v1/library/skills"))
+        .bearer_auth(&reader)
+        .send()
+        .await
+        .expect("list")
+        .json()
+        .await
+        .expect("json");
+    let mine = list["skills"]
+        .as_array()
+        .expect("skills")
+        .iter()
+        .find(|s| s["slug"] == "add-a-data-provider")
+        .expect("the proposed skill is listed");
+    assert_eq!(mine["maturity"], "draft");
+    assert_eq!(mine["downloadable"], false);
+    let r = http
+        .get(format!(
+            "{base}/v1/library/skills/add-a-data-provider/download"
+        ))
+        .bearer_auth(&reader)
+        .send()
+        .await
+        .expect("download");
+    assert_eq!(
+        r.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "a proposed draft is never served"
+    );
+
+    // The same name again collapses onto the draft — no duplicate to reconcile.
+    let r = http
+        .post(&skills_propose)
+        .bearer_auth(&proposer)
+        .json(&body)
+        .send()
+        .await
+        .expect("propose dup");
+    let dup: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(dup["outcome"], "duplicate");
+    assert_eq!(dup["skill_id"].as_str(), Some(skill_id.as_str()));
+    assert_eq!(dup["maturity"], "draft");
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM skills WHERE org_id = $1 AND slug = $2")
+            .bind(ctx.org_a)
+            .bind("add-a-data-provider")
+            .fetch_one(&ctx.admin)
+            .await
+            .expect("count");
+    assert_eq!(rows, 1, "no duplicate skill row");
+
+    // F-5: usage reported by SLUG (what the agent holds), not a uuid.
+    let r = http
+        .post(format!("{base}/v1/library/usage"))
+        .bearer_auth(&reader)
+        .json(&json!({
+            "artifact_kind": "skill",
+            "artifact_slug": "add-a-data-provider",
+            "event": "apply"
+        }))
+        .send()
+        .await
+        .expect("usage by slug");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.expect("json")["recorded"],
+        true
+    );
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM library_usage_events WHERE artifact_id = $1 AND event = 'apply'",
+    )
+    .bind(skill_id.parse::<Uuid>().expect("uuid"))
+    .fetch_one(&ctx.admin)
+    .await
+    .expect("events");
+    assert_eq!(
+        events, 1,
+        "usage-by-slug resolved to the skill and recorded"
+    );
+
+    // A slug that resolves to nothing is a clean not-recorded, never a 500.
+    let r = http
+        .post(format!("{base}/v1/library/usage"))
+        .bearer_auth(&reader)
+        .json(&json!({
+            "artifact_kind": "skill",
+            "artifact_slug": "no-such-skill",
+            "event": "apply"
+        }))
+        .send()
+        .await
+        .expect("usage miss");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.expect("json")["recorded"],
+        false
+    );
+
+    // Neither id nor slug is a 400, not a silent no-op.
+    let r = http
+        .post(format!("{base}/v1/library/usage"))
+        .bearer_auth(&reader)
+        .json(&json!({ "artifact_kind": "skill", "event": "apply" }))
+        .send()
+        .await
+        .expect("usage no target");
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
 }
 
 // ── the harness blockers (load/README.md F-1, F-2), as regressions ──────────

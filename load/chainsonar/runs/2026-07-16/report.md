@@ -40,8 +40,8 @@ and a team trusting it.
 | F-2 | a contribution gives no success/failure signal | design gap | high · **fixed** |
 | F-3 | extraction 36% hard-fails on the distilled facts agents send | bug | high · **fixed** |
 | F-9 | standards-page (L8) can't scaffold without a graph — KB stayed empty | bug | high · **fixed** |
-| F-4 | no skill-authoring path; memory has no kind/tag | design gap | medium |
-| F-5 | REST/MCP surface asymmetries (adopted-only list, uuid vs slug…) | design gap | low |
+| F-4 | no skill-authoring path; memory has no kind/tag | design gap | medium · **fixed** |
+| F-5 | REST/MCP surface asymmetries (adopted-only list, uuid vs slug…) | design gap | low · **fixed** |
 | F-8 | `bx` shell-quoting taxes code examples | harness | medium |
 | F-6 | honesty rule held under a leading prompt | positive | — |
 | F-7 | cross-agent dedup collapsed 11 proposals → 8 | positive | — |
@@ -166,7 +166,22 @@ extraction is weakest. (The mock provider extracts *nothing* from any real
 content, which is fine for fixture tests but means **`--mock` cannot exercise
 the memory module at all** — a thing worth documenting on the flag.)
 
-### F-4 — no skill-authoring path, and memory has no kind/tag · **design gap · medium**
+### F-4 — no skill-authoring path, and memory has no kind/tag · **design gap · medium · FIXED**
+
+> **Fixed (2026-07-16).** Two closures:
+> - **`skill_propose`** — the authoring counterpart to `standard_propose`, on
+>   both MCP and REST (`POST /v1/library/skills/propose`, scope `lib:propose`).
+>   An agent's skill lands as a DRAFT + an unpublished version; a named human
+>   publishes it, and `skill_fetch` refuses it until they do — the same gate
+>   publishing already enforced. Rate-limited per author (a new `skills.
+>   proposed_by` column, migration 0032) and deduped by slug, exactly like the
+>   standard channel. The store's `propose_skill` owns both guards so REST and
+>   MCP cannot drift.
+> - **`memory_add` kind + entities over REST** — the fields the MCP tool already
+>   had. They fold into the stored `manual` source through the ONE F-3 wire-format
+>   owner, so a distilled runbook records under its real kind with no extractor
+>   guessing. ("Tag" as a distinct field was not added — entities ARE the tag
+>   mechanism, and inventing a parallel one would be scope for its own sake.)
 
 There is no agent tool to author a skill (LB4 gives agents `standard_propose`
 but no `skill_propose`), and `memory-add` accepts only `--content` — no
@@ -175,7 +190,27 @@ schema column," "how to add a data provider") can only smuggle it in as a
 sentence and hope the extractor guesses `howto`. Three scanners flagged this
 independently. The Library has a skills half; agents have no way to feed it.
 
-### F-5 — REST/MCP surface asymmetries · **design gap · low**
+### F-5 — REST/MCP surface asymmetries · **design gap · low · FIXED**
+
+> **Fixed (2026-07-16), the two that cost an agent a round trip; the other two
+> were already right or are right as they stand:**
+> - **usage by slug** — `POST /v1/library/usage` now accepts `artifact_slug` as
+>   an alternative to `artifact_id`, matching MCP `skill_report_usage`. An agent
+>   holding the slug `standards_for`/`skill_fetch` handed it no longer has to
+>   resolve a uuid it never saw. (Exactly one of id/slug; a slug that resolves
+>   to nothing is a clean `recorded:false`, not a 500.)
+> - **doc search over REST** — `GET /v1/docs?q=` now runs the same lexical
+>   search the MCP `doc_search` had (title/slug/body, RLS-scoped). REST was
+>   list-only.
+> - **list-what-was-proposed** — already served: REST `GET /v1/library/standards
+>   ?lifecycle=proposed` exists, and the propose path itself dedupes and reports
+>   the collision, so a proposer learns the duplicate whether or not it lists
+>   first. The MCP `standards_for` stays adopted-only ON PURPOSE — a proposal
+>   must never reach an agent as if it were policy.
+> - **envelope shape** — left as-is by design: `memory_add`'s `{source_id,
+>   job_id}` is an async ingest RECEIPT and `standard_propose`'s `{outcome,
+>   standard_id, lifecycle}` is a synchronous decision; forcing one envelope
+>   over two different operations would obscure that difference, not clarify it.
 
 Real inconsistencies an agent trips on: `standards-for` over REST serves
 `adopted` only, so a proposer **cannot list what has been proposed** to check

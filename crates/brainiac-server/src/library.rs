@@ -59,6 +59,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             post(divergence_ratify),
         )
         .route("/v1/library/skills", get(skills_list))
+        .route("/v1/library/skills/propose", post(skill_propose))
         .route("/v1/library/skills/{slug}", get(skill_get))
         .route("/v1/library/skills/{slug}/download", get(skill_download))
         .route("/v1/library/usage", post(usage_record))
@@ -430,7 +431,15 @@ pub(crate) async fn skill_download(
 pub(crate) struct UsageRequest {
     /// `standard` or `skill`.
     pub artifact_kind: String,
-    pub artifact_id: Uuid,
+    /// The artifact's UUID. Optional if `artifact_slug` is given — an agent
+    /// holding a slug (what `standards_for` / `skill_fetch` hand back) should
+    /// not have to look up the id first, so this mirrors the MCP tool, which
+    /// takes a slug. Exactly one of `artifact_id` / `artifact_slug` is required.
+    #[serde(default)]
+    pub artifact_id: Option<Uuid>,
+    /// The artifact's slug, as an alternative to `artifact_id`.
+    #[serde(default)]
+    pub artifact_slug: Option<String>,
     pub version: Option<String>,
     /// `fetch`, `check` (compared work against a standard), or `apply` (ran a skill).
     pub event: String,
@@ -461,11 +470,36 @@ pub(crate) async fn usage_record(
         .ok_or_else(|| bad("event must be fetch | check | apply"))?;
 
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    // Resolve the artifact by id or slug — exactly one. A slug that resolves to
+    // nothing (or is hidden by RLS) is a clean not-recorded, never a 500.
+    let artifact_id = match (req.artifact_id, req.artifact_slug.as_deref()) {
+        (Some(id), None) => id,
+        (None, Some(slug)) => {
+            let resolved = match kind {
+                LibraryArtifactKind::Standard => library::get_standard_by_slug(&mut tx, slug)
+                    .await
+                    .map_err(internal)?
+                    .map(|s| s.id),
+                LibraryArtifactKind::Skill => library::get_skill_by_slug(&mut tx, slug)
+                    .await
+                    .map_err(internal)?
+                    .map(|s| s.id),
+            };
+            match resolved {
+                Some(id) => id,
+                None => return Ok(Json(UsageResponse { recorded: false })),
+            }
+        }
+        (Some(_), Some(_)) => return Err(bad("give artifact_id OR artifact_slug, not both")),
+        (None, None) => return Err(bad("one of artifact_id / artifact_slug is required")),
+    };
+
     library::record_usage(
         &mut tx,
         principal.org_id,
         kind,
-        req.artifact_id,
+        artifact_id,
         req.version.as_deref(),
         event,
         principal.team_ids.first().copied(),
@@ -593,6 +627,121 @@ pub(crate) async fn standard_propose(
         library::ProposeOutcome::EvidenceNotFound => Err((
             StatusCode::NOT_FOUND,
             "cited evidence memory not found".to_string(),
+        )
+            .into()),
+    }
+}
+
+/// A proposed skill body — a runbook, generously sized but bounded. Anything
+/// longer than a procedure belongs split into several skills.
+const MAX_SKILL_BODY: usize = 20_000;
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SkillProposeRequest {
+    /// Short skill name (the dedup key), e.g. "add a data provider".
+    pub name: String,
+    /// The whole procedure as markdown — steps, checks, gotchas.
+    pub instructions_md: String,
+    /// One line: what this skill is for and when to reach for it.
+    pub summary: Option<String>,
+    /// Task domain for the catalog, e.g. `database`, `testing`.
+    pub domain: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SkillProposeResponse {
+    /// `created` (a fresh DRAFT waits for a maintainer to publish it) or
+    /// `duplicate` (collapsed onto an existing skill — see `maturity`).
+    pub outcome: String,
+    pub skill_id: Uuid,
+    pub slug: String,
+    /// Present on a duplicate: the maturity of the skill this collapsed onto.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maturity: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/library/skills/propose",
+    request_body = SkillProposeRequest,
+    description = "Propose a skill as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. Deduplicated by name (a duplicate collapses onto the existing skill) and rate-limited per author.",
+    responses(
+        (status = 200, body = SkillProposeResponse),
+        (status = 429, description = "per-author hourly proposal budget spent"),
+    )
+)]
+pub(crate) async fn skill_propose(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<SkillProposeRequest>,
+) -> Result<Json<SkillProposeResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, SCOPE_LIB_PROPOSE)
+        .await?
+        .principal;
+    let bad = |m: String| HttpError::from((StatusCode::BAD_REQUEST, m));
+    let cap = |v: &str, max: usize, field: &str| {
+        if v.trim().is_empty() {
+            Err(bad(format!("{field} must not be empty")))
+        } else if v.chars().count() > max {
+            Err(bad(format!("{field} exceeds {max} chars")))
+        } else {
+            Ok(())
+        }
+    };
+    cap(&req.name, MAX_PROPOSAL_NAME, "name")?;
+    cap(&req.instructions_md, MAX_SKILL_BODY, "instructions_md")?;
+    if let Some(s) = &req.summary {
+        cap(s, MAX_PROPOSAL_STATEMENT, "summary")?;
+    }
+
+    let manifest = serde_json::json!({
+        "name": req.name,
+        "summary": req.summary,
+        "domain": req.domain,
+    });
+
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let outcome = library::propose_skill(
+        &mut tx,
+        &library::SkillProposal {
+            org_id: principal.org_id,
+            author: principal.user_id,
+            name: req.name,
+            description: req.summary,
+            domain: req.domain,
+            content_md: req.instructions_md,
+            manifest,
+        },
+        propose_per_hour(),
+    )
+    .await
+    .map_err(internal)?;
+
+    match outcome {
+        library::SkillProposeOutcome::Created {
+            skill_id, slug, ..
+        } => {
+            tx.commit().await.map_err(internal)?;
+            Ok(Json(SkillProposeResponse {
+                outcome: "created".into(),
+                skill_id,
+                slug,
+                maturity: None,
+            }))
+        }
+        library::SkillProposeOutcome::Duplicate {
+            skill_id,
+            slug,
+            maturity,
+        } => Ok(Json(SkillProposeResponse {
+            outcome: "duplicate".into(),
+            skill_id,
+            slug,
+            maturity: Some(maturity.as_str().into()),
+        })),
+        library::SkillProposeOutcome::RateLimited { per_hour } => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("proposal budget spent: {per_hour} per author per hour — the next skill can wait sixty minutes"),
         )
             .into()),
     }

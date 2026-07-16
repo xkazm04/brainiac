@@ -250,6 +250,53 @@ async fn serve_health_auth_and_scoped_search() {
         .expect("add");
     assert_eq!(r.status(), reqwest::StatusCode::ACCEPTED);
 
+    // F-4: memory_add carries an optional kind + entities. They are folded into
+    // the stored `manual` source via the ONE wire-format owner, so the F-3
+    // verbatim path stores the statement under exactly this kind — no model
+    // guessing. Prove the round-trip at the source, and that a bad kind is a 400.
+    let r = http
+        .post(format!("{base}/v1/memories"))
+        .bearer_auth("tok_analyst")
+        .json(&serde_json::json!({
+            "content": "eth_getLogs on a public RPC caps the scan window at ~100 blocks",
+            "kind": "pitfall",
+            "entities": ["eth_getLogs", "Polygon RPC"]
+        }))
+        .send()
+        .await
+        .expect("add typed");
+    assert_eq!(r.status(), reqwest::StatusCode::ACCEPTED);
+    let typed: serde_json::Value = r.json().await.expect("json");
+    let typed_src = Uuid::parse_str(typed["source_id"].as_str().expect("source_id")).expect("uuid");
+    let raw: String = sqlx::query_scalar("SELECT raw_text FROM sources WHERE id = $1")
+        .bind(typed_src)
+        .fetch_one(&admin)
+        .await
+        .expect("source raw_text");
+    let decoded = brainiac_pipeline::manual::decode_manual_source(&raw);
+    assert_eq!(
+        decoded.kind_hint,
+        Some(brainiac_core::MemoryKind::Pitfall),
+        "the kind rides through to the verbatim path"
+    );
+    assert!(
+        decoded.entities.iter().any(|e| e == "eth_getLogs"),
+        "entities carry through: {:?}",
+        decoded.entities
+    );
+    let r = http
+        .post(format!("{base}/v1/memories"))
+        .bearer_auth("tok_analyst")
+        .json(&serde_json::json!({"content": "x", "kind": "nonsense"}))
+        .send()
+        .await
+        .expect("add bad kind");
+    assert_eq!(
+        r.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "an unknown kind is rejected, not silently dropped"
+    );
+
     // ── promotions pagination: a backlog past the first page is reachable ──
     // The endpoint's whole job is the review backlog; seed 101 pending
     // promotions and prove the 101st is reachable via offset while `total`

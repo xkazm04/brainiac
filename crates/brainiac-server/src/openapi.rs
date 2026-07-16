@@ -112,6 +112,7 @@ impl Modify for BearerAuth {
         crate::library::standard_reject,
         crate::library::divergence_ratify,
         crate::library::skills_list,
+        crate::library::skill_propose,
         crate::library::skill_get,
         crate::library::skill_download,
         crate::library::usage_record,
@@ -263,6 +264,8 @@ impl Modify for BearerAuth {
         crate::library::RatifyResponse,
         crate::library::ProposeRequest,
         crate::library::ProposeResponse,
+        crate::library::SkillProposeRequest,
+        crate::library::SkillProposeResponse,
         // ops
         crate::sweeps::SweepSchedule,
         crate::sweeps::SweepsResponse,

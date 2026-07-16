@@ -26,7 +26,8 @@ pub use bridge::{propose_from_divergence, ratify_divergence, slugify};
 pub use proposals::{propose_standard, Proposal, ProposeOutcome, DEFAULT_PROPOSE_PER_HOUR};
 pub use skills::{
     add_skill_version, current_published_version, get_skill_by_slug, insert_skill, list_skills,
-    publish_skill_version, versions_of, NewSkill, NewSkillVersion,
+    propose_skill, publish_skill_version, versions_of, NewSkill, NewSkillVersion, SkillProposal,
+    SkillProposeOutcome,
 };
 pub use standards::{
     add_provenance, adopt_standard, deprecate_standard, get_standard, get_standard_by_slug,

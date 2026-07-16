@@ -1753,6 +1753,7 @@ async fn library_rls_isolates_orgs_on_every_new_table() {
                 name: "Review migrations".into(),
                 description: None,
                 domain: Some("database".into()),
+                proposed_by: None,
             },
         )
         .await
@@ -1852,6 +1853,7 @@ async fn library_rls_isolates_orgs_on_every_new_table() {
                 name: "smuggled".into(),
                 description: None,
                 domain: None,
+                proposed_by: None,
             },
         )
         .await;
@@ -2043,5 +2045,104 @@ async fn divergence_ratification_bridges_to_exactly_one_candidate() {
             .await
             .expect("list adopted");
         assert!(served.iter().all(|s| s.id != std_id));
+    }
+}
+
+/// F-4: an agent proposes a skill; it lands as a DRAFT (never served), a second
+/// proposal of the same name collapses onto it, and the per-author hour budget
+/// caps the channel — the same three guards standard_propose has.
+#[tokio::test]
+async fn proposing_a_skill_drafts_it_then_dedupes_and_rate_limits() {
+    use brainiac_core::SkillMaturity;
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+    let p = pay_dev();
+
+    let proposal = |name: &str| library::SkillProposal {
+        org_id: org(),
+        author: p.user_id,
+        name: name.to_string(),
+        description: Some("how to wire a new price feed".into()),
+        domain: Some("providers".into()),
+        content_md: "# Add a data provider\n1. implement the trait\n2. register it".into(),
+        manifest: serde_json::json!({"name": "Add a data provider"}),
+    };
+
+    // 1. First proposal → a fresh draft.
+    let skill_id = {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let outcome = library::propose_skill(c, &proposal("Add a data provider"), 5)
+            .await
+            .expect("propose");
+        let library::SkillProposeOutcome::Created { skill_id, slug, .. } = outcome else {
+            panic!("first proposal should create a draft");
+        };
+        assert_eq!(slug, "add-a-data-provider");
+
+        // It is a DRAFT: listed (it exists) but no published version to serve —
+        // the same refusal an unsigned page gets.
+        let skill = library::get_skill_by_slug(c, "add-a-data-provider")
+            .await
+            .expect("get")
+            .expect("exists");
+        assert_eq!(skill.maturity, SkillMaturity::Draft);
+        assert!(
+            library::current_published_version(c, skill_id)
+                .await
+                .expect("ver")
+                .is_none(),
+            "a proposed draft is never served until a human publishes it"
+        );
+        tx.commit().await.expect("commit");
+        skill_id
+    };
+
+    // 2. A second agent proposing the same name collapses onto the draft — no
+    //    duplicate for a maintainer to reconcile.
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let outcome = library::propose_skill(c, &proposal("Add a data provider"), 5)
+            .await
+            .expect("propose dup");
+        match outcome {
+            library::SkillProposeOutcome::Duplicate {
+                skill_id: dup_id,
+                maturity,
+                ..
+            } => {
+                assert_eq!(dup_id, skill_id, "collapsed onto the existing draft");
+                assert_eq!(maturity, SkillMaturity::Draft);
+            }
+            _ => panic!("re-proposing the same name should dedupe"),
+        }
+        assert_eq!(
+            library::list_skills(c).await.expect("skills").len(),
+            1,
+            "no duplicate skill row was created"
+        );
+        tx.commit().await.expect("commit");
+    }
+
+    // 3. The per-author hour budget: with a limit of 1, the author has already
+    //    spent it (the created draft counts), so a distinct new name is refused.
+    {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let c = &mut *tx;
+        let outcome = library::propose_skill(c, &proposal("A different runbook"), 1)
+            .await
+            .expect("propose over budget");
+        assert!(
+            matches!(
+                outcome,
+                library::SkillProposeOutcome::RateLimited { per_hour: 1 }
+            ),
+            "the second distinct proposal in the hour is rate-limited"
+        );
+        // Nothing new was written.
+        assert_eq!(library::list_skills(c).await.expect("skills").len(), 1);
     }
 }

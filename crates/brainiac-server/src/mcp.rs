@@ -42,6 +42,10 @@ const MAX_QUERY_CHARS: usize = 2_000;
 const MAX_NAME_CHARS: usize = 200;
 /// `memory_feedback` note — a short human explanation.
 const MAX_NOTE_CHARS: usize = 2_000;
+/// `skill_propose` instructions body — a whole runbook, not a one-liner, so it
+/// is generously sized; still bounded so a caller cannot make the server buffer
+/// an unbounded blob.
+const MAX_SKILL_BODY_CHARS: usize = 20_000;
 /// Bounded excerpt of a source's raw text returned by `memory_provenance` — a
 /// citation handle, never the whole (possibly huge) transcript.
 const SOURCE_EXCERPT_CHARS: usize = 500;
@@ -211,7 +215,7 @@ fn tool_scope(tool: &str) -> &'static str {
         // lib:propose (LIBRARY-PLAN L7). There is deliberately no MCP tool that
         // needs lib:publish — an agent proposes; a human adopts.
         "standards_for" | "skill_search" | "skill_fetch" | "skill_report_usage" => "lib:read",
-        "standard_propose" => "lib:propose",
+        "standard_propose" | "skill_propose" => "lib:propose",
         // Unknown tools are handled (and rejected) in call_tool; gate them as
         // admin so a future tool cannot slip in ungated by accident.
         _ => "admin",
@@ -575,6 +579,20 @@ fn tool_definitions() -> Value {
             }
         },
         {
+            "name": "skill_propose",
+            "description": "Propose a SKILL — a packaged, reusable procedure (a runbook, review checklist, or codified workflow) you found yourself repeating or wish had existed. The outcome is ONLY ever a DRAFT: a named human reviews and publishes it, never you, and it is never served to agents until they do. Deduplicated by name: if the org already has a skill by this name — draft, published, or deprecated — you get that one back instead of a duplicate. Rate-limited per session identity; propose a genuine procedure, not a passing note (that is a memory). Put the whole procedure in `instructions_md` as you would want to READ it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Short skill name, e.g. `add a data provider` (the dedup key; the slug is derived from it)" },
+                    "instructions_md": { "type": "string", "description": "The whole procedure as markdown — steps, checks, gotchas. Written to be followed." },
+                    "summary": { "type": "string", "description": "One line: what this skill is for and when to reach for it" },
+                    "domain": { "type": "string", "description": "Task domain for the catalog, e.g. `database`, `testing`, `providers`" }
+                },
+                "required": ["name", "instructions_md"]
+            }
+        },
+        {
             "name": "skill_report_usage",
             "description": "Report that you applied a skill or checked your work against a standard — this keeps the org's library honest (rules and skills nobody uses get retired). Usage is counted for your TEAM, never for you personally; the storage cannot record a person.",
             "inputSchema": {
@@ -625,6 +643,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
         "doc_search" => doc_search(state, &args).await,
         "standards_for" => standards_for(state, &args).await,
         "standard_propose" => standard_propose(state, &args).await,
+        "skill_propose" => skill_propose(state, &args).await,
         "skill_search" => skill_search(state, &args).await,
         "skill_fetch" => skill_fetch(state, &args).await,
         "skill_report_usage" => skill_report_usage(state, &args).await,
@@ -1545,6 +1564,97 @@ async fn standard_propose(state: &McpState, args: &Value) -> Result<Value, ToolE
         ProposeOutcome::EvidenceNotFound => json!({
             "outcome": "evidence_not_found",
             "note": "the cited evidence memory does not exist or is not visible to you — propose without it, or memory_add the evidence first"
+        }),
+    })
+}
+
+/// Propose a skill as a draft (F-4). The counterpart to standard_propose for
+/// procedures: dedup and the rate limit live in the store, so REST and MCP
+/// cannot drift; the outcome is only ever a draft awaiting a human signature.
+async fn skill_propose(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let name = within_cap(required_str(args, "name")?, MAX_NAME_CHARS, "name")?;
+    let content_md = within_cap(
+        required_str(args, "instructions_md")?,
+        MAX_SKILL_BODY_CHARS,
+        "instructions_md",
+    )?;
+    let opt = |key: &str, cap: usize| -> Result<Option<String>, ToolError> {
+        match args.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => Ok(Some(
+                within_cap(
+                    v.as_str()
+                        .ok_or_else(|| invalid(format!("`{key}` must be a string")))?,
+                    cap,
+                    key,
+                )?
+                .to_string(),
+            )),
+        }
+    };
+    let description = opt("summary", 500)?;
+    let domain = opt("domain", MAX_NAME_CHARS)?;
+
+    let per_hour = std::env::var("BRAINIAC_LIB_PROPOSE_PER_HOUR")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(brainiac_store::library::DEFAULT_PROPOSE_PER_HOUR);
+
+    // The bundle front-matter: self-describing, built from the fields the agent
+    // gave, so a maintainer reviewing the draft (and skill_fetch, once
+    // published) sees a manifest without a separate authoring step.
+    let manifest = json!({
+        "name": name,
+        "summary": description,
+        "domain": domain,
+    });
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    let outcome = brainiac_store::library::propose_skill(
+        &mut tx,
+        &brainiac_store::library::SkillProposal {
+            org_id: state.principal.org_id,
+            author: state.principal.user_id,
+            name: name.to_string(),
+            description,
+            domain,
+            content_md: content_md.to_string(),
+            manifest,
+        },
+        per_hour,
+    )
+    .await?;
+
+    use brainiac_store::library::SkillProposeOutcome;
+    Ok(match outcome {
+        SkillProposeOutcome::Created { skill_id, slug, .. } => {
+            tx.commit().await?;
+            json!({
+                "outcome": "created",
+                "skill_id": skill_id,
+                "slug": slug,
+                "note": "your skill is a DRAFT waiting for a maintainer to publish it — it is not served to agents (skill_fetch returns not-found) until a named human signs a version. Do not treat it as available yet."
+            })
+        }
+        SkillProposeOutcome::Duplicate {
+            skill_id,
+            slug,
+            maturity,
+        } => json!({
+            "outcome": "duplicate",
+            "skill_id": skill_id,
+            "slug": slug,
+            "maturity": maturity.as_str(),
+            "note": match maturity.as_str() {
+                "published" => "a skill by this name is already published — skill_fetch it and use it rather than re-authoring",
+                "deprecated" => "a skill by this name exists but was deprecated — respect that rather than reviving it as a new draft",
+                _ => "a draft by this name already exists — someone is already on this; no second draft was created",
+            }
+        }),
+        SkillProposeOutcome::RateLimited { per_hour } => json!({
+            "outcome": "rate_limited",
+            "note": format!("proposal budget spent ({per_hour}/hour) — keep the remaining ideas for the session summary, or record the strongest one as a memory instead")
         }),
     })
 }
