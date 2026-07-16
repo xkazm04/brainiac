@@ -14,3 +14,10 @@ node_modules/
 # stray worktree build output + local claude session logs
 target-wt-r/
 .claude/logs/
+
+# Alternate cargo/next target dirs used by parallel builds and worktrees.
+target-*/
+**/target-*/
+
+# Next.js build output
+.next/
