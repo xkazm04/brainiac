@@ -92,6 +92,10 @@ export const PRODUCT_ROUTES: ProductRoute[] = [
   { path: "/console?m=skills", segment: "skills", label: "skills", band: "beta", group: "library" },
 
   // ── access: grouped with sign-out, not with the knowledge ──────────────
+  // Projects sits with keys, not with the knowledge groups: deciding which
+  // repos may pair into which project IS access control (it is the onboarding
+  // allow-list and what project-scoped keys resolve against).
+  { path: "/console?m=projects", segment: "projects", label: "projects", band: "ground" },
   { path: "/console?m=keys", segment: "keys", label: "keys", band: "ground" },
 ];
 
@@ -111,6 +115,7 @@ export type ConsoleModuleId =
   | "audit"
   | "standards"
   | "skills"
+  | "projects"
   | "keys";
 
 /** The module /console opens on when ?m= is absent or junk. */

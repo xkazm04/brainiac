@@ -60,6 +60,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/graph/overview", get(graph_overview))
         .route("/v1/graph/canonical/{id}", get(graph_canonical))
         .route("/v1/memories", get(memories_list))
+        .route("/v1/memories/validity", get(memories_validity))
         .route("/v1/memories/expiring", get(memories_expiring))
         .route("/v1/memories/{id}", get(memory_detail))
         .route("/v1/memories/{id}/reverify", post(memory_reverify))
@@ -805,6 +806,8 @@ pub(crate) struct FeedbackQueueQuery {
     min_claims: Option<i64>,
     /// Decay band: `past` | `d30` | `d90` | `d180` | `far` | `none`.
     band: Option<String>,
+    /// Project id, or `none` for org-shared memories (PR2).
+    project: Option<String>,
 }
 
 /// One filter value and the disputed-memory count behind it — so a filter
@@ -825,6 +828,8 @@ pub(crate) struct FeedbackFacets {
     pub kinds: Vec<FeedbackFacet>,
     pub teams: Vec<FeedbackFacet>,
     pub bands: Vec<FeedbackFacet>,
+    /// Value is a project id or `"none"`; label the name or `"org-shared"`.
+    pub projects: Vec<FeedbackFacet>,
 }
 
 /// Open claim counts against one memory.
@@ -872,6 +877,9 @@ pub(crate) struct FlaggedMemory {
     pub team_id: Option<Uuid>,
     /// The owning team's name; null for org-wide memories.
     pub team: Option<String>,
+    /// Project display name; null = org-shared (PR2).
+    pub project: Option<String>,
+    pub project_id: Option<Uuid>,
     pub confidence: Option<f32>,
     pub valid_to: Option<DateTime<Utc>>,
     pub provenance: Option<FeedbackProvenance>,
@@ -913,6 +921,7 @@ pub(crate) struct FeedbackQueueResponse {
         ("min_age_hours" = Option<i64>, Query, description = "Oldest claim at least this old"),
         ("min_claims" = Option<i64>, Query, description = "At least this many open claims"),
         ("band" = Option<String>, Query, description = "Decay band: past|d30|d90|d180|far|none"),
+        ("project" = Option<String>, Query, description = "Filter by project id, or `none` for org-shared"),
     ),
     responses(
         (status = 200, description = "Feedback triage queue page", body = FeedbackQueueResponse),
@@ -933,6 +942,7 @@ pub(crate) async fn feedback_queue(
         min_age_hours: q.min_age_hours,
         min_claims: q.min_claims,
         band: q.band,
+        project: q.project,
     };
     // A typo'd band would match no rows and read as "all clear" — the most
     // dangerous empty state a triage queue can show. Refuse it instead.
@@ -952,7 +962,7 @@ pub(crate) async fn feedback_queue(
     let total = brainiac_store::feedback::flagged_count(&mut tx, &filter)
         .await
         .map_err(internal)?;
-    let (kinds, teams, bands) = brainiac_store::feedback::flagged_facets(&mut tx)
+    let (kinds, teams, bands, projects) = brainiac_store::feedback::flagged_facets(&mut tx)
         .await
         .map_err(internal)?;
     let facet = |f: brainiac_store::feedback::Facet| FeedbackFacet {
@@ -964,6 +974,7 @@ pub(crate) async fn feedback_queue(
         kinds: kinds.into_iter().map(facet).collect(),
         teams: teams.into_iter().map(facet).collect(),
         bands: bands.into_iter().map(facet).collect(),
+        projects: projects.into_iter().map(facet).collect(),
     };
     Ok(Json(FeedbackQueueResponse {
         total,
@@ -978,6 +989,8 @@ pub(crate) async fn feedback_queue(
                 status: f.status.clone(),
                 team_id: f.team_id,
                 team: f.team.clone(),
+                project: f.project.clone(),
+                project_id: f.project_id,
                 confidence: f.confidence,
                 valid_to: f.valid_to,
                 provenance: f.provenance.as_ref().map(|p| FeedbackProvenance {
@@ -1931,6 +1944,15 @@ pub(crate) struct KindTeamCount {
     pub count: i64,
 }
 
+/// The project twin of [`KindTeamCount`] (PROJECT-PLAN PR3). `project` is the
+/// display name, with `org-shared` standing in for the null bucket.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KindProjectCount {
+    pub kind: String,
+    pub project: String,
+    pub count: i64,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct TopEntity {
     pub name: String,
@@ -1953,6 +1975,8 @@ pub(crate) struct ObservatoryResponse {
     pub totals: Vec<StatusCount>,
     pub weekly: ObservatoryWeekly,
     pub by_kind: Vec<KindTeamCount>,
+    /// Kind×project volumes — the axis-swap twin of `by_kind` (PR3).
+    pub by_project: Vec<KindProjectCount>,
     pub top_entities: Vec<TopEntity>,
     pub review: ObservatoryReview,
     pub contradictions: Vec<StatusCount>,
@@ -2003,6 +2027,17 @@ pub(crate) async fn observatory(
     let by_kind = sqlx::query(
         "SELECT m.kind, t.name AS team, count(*) AS n
          FROM memories m JOIN teams t ON t.id = m.team_id
+         GROUP BY 1, 2 ORDER BY 1, 2",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // The project twin of by_kind. LEFT JOIN so org-shared rows form their
+    // own labelled column rather than vanishing (PR3).
+    let by_project = sqlx::query(
+        "SELECT m.kind, coalesce(pj.name, 'org-shared') AS project, count(*) AS n
+         FROM memories m LEFT JOIN projects pj ON pj.id = m.project_id
          GROUP BY 1, 2 ORDER BY 1, 2",
     )
     .fetch_all(&mut *tx)
@@ -2081,6 +2116,14 @@ pub(crate) async fn observatory(
                 count: r.get("n"),
             })
             .collect(),
+        by_project: by_project
+            .iter()
+            .map(|r| KindProjectCount {
+                kind: r.get("kind"),
+                project: r.get("project"),
+                count: r.get("n"),
+            })
+            .collect(),
         top_entities: top_entities
             .iter()
             .map(|r| TopEntity {
@@ -2142,6 +2185,13 @@ pub(crate) struct KhSignals {
     /// Open contradictions where the two sides belong to DIFFERENT teams — the ones
     /// no individual team can see. The flagship signal.
     pub cross_team_contradictions: i64,
+    /// Canonical entities anchored by memories of ≥2 DIFFERENT projects —
+    /// knowledge crossing application lines (PROJECT-PLAN PR3). Zero until
+    /// writes are project-stamped; that is coverage, not health.
+    pub cross_project_entities: i64,
+    /// Open contradictions whose two sides are stamped with DIFFERENT
+    /// projects — two applications believing incompatible things (PR3).
+    pub cross_project_contradictions: i64,
     /// Superseded/expired beliefs still sitting in the corpus (landmines).
     pub stale_beliefs: i64,
     // ── the knowledge base (KB4) ────────────────────────────────────────
@@ -2267,8 +2317,11 @@ pub(crate) struct HealthCore {
     pub(crate) siloed: i64,
     pub(crate) open_contra: i64,
     pub(crate) cross_contra: i64,
+    /// PROJECT-PLAN PR3: the project axis of the two flagship counters.
+    pub(crate) cross_project_contra: i64,
     pub(crate) canon: i64,
     pub(crate) cross_entities: i64,
+    pub(crate) cross_project_entities: i64,
     pub(crate) backlog: i64,
     pub(crate) oldest: i64,
     pub(crate) consistency: i64,
@@ -2317,7 +2370,9 @@ pub(crate) async fn compute_health_core(
     let contra = sqlx::query(
         "SELECT
            count(*) AS open,
-           count(*) FILTER (WHERE ma.team_id IS DISTINCT FROM mb.team_id) AS cross_team
+           count(*) FILTER (WHERE ma.team_id IS DISTINCT FROM mb.team_id) AS cross_team,
+           count(*) FILTER (WHERE ma.project_id IS NOT NULL AND mb.project_id IS NOT NULL
+                              AND ma.project_id IS DISTINCT FROM mb.project_id) AS cross_project
          FROM contradictions c
          JOIN memories ma ON ma.id = c.memory_a
          JOIN memories mb ON mb.id = c.memory_b
@@ -2330,8 +2385,11 @@ pub(crate) async fn compute_health_core(
     .map_err(internal)?;
     let open_contra: i64 = contra.get("open");
     let cross_contra: i64 = contra.get("cross_team");
+    let cross_project_contra: i64 = contra.get("cross_project");
 
-    // Graph coverage: canonical entities, and how many span ≥2 teams.
+    // Graph coverage: canonical entities, how many span ≥2 teams, and how many
+    // span ≥2 PROJECTS (via anchored memories' stamps — entities are
+    // team-scoped, so project spread only exists on the memory side; PR3).
     let graph = sqlx::query(
         "WITH spans AS (
            SELECT ce.id, count(DISTINCT e.team_id) AS teams
@@ -2339,9 +2397,20 @@ pub(crate) async fn compute_health_core(
            JOIN entity_links el ON el.canonical_id = ce.id
            JOIN entities e ON e.id = el.entity_id
            WHERE ($1::uuid IS NULL OR ce.org_id = $1)
+           GROUP BY ce.id),
+         pspans AS (
+           SELECT ce.id, count(DISTINCT m.project_id) AS projects
+           FROM canonical_entities ce
+           JOIN entity_links el ON el.canonical_id = ce.id
+           JOIN entities e ON e.id = el.entity_id
+           JOIN memory_entities me ON me.entity_id = e.id
+           JOIN memories m ON m.id = me.memory_id
+           WHERE m.project_id IS NOT NULL
+             AND ($1::uuid IS NULL OR ce.org_id = $1)
            GROUP BY ce.id)
-         SELECT count(*) AS canon, count(*) FILTER (WHERE teams >= 2) AS cross_team
-         FROM spans",
+         SELECT (SELECT count(*) FROM spans) AS canon,
+                (SELECT count(*) FILTER (WHERE teams >= 2) FROM spans) AS cross_team,
+                (SELECT count(*) FILTER (WHERE projects >= 2) FROM pspans) AS cross_project",
     )
     .bind(org_filter)
     .fetch_one(&mut **tx)
@@ -2349,6 +2418,7 @@ pub(crate) async fn compute_health_core(
     .map_err(internal)?;
     let canon: i64 = graph.get("canon");
     let cross_entities: i64 = graph.get("cross_team");
+    let cross_project_entities: i64 = graph.get("cross_project");
 
     // Governance: review backlog + oldest pending age (the SLO clock).
     let gov = sqlx::query(
@@ -2385,8 +2455,10 @@ pub(crate) async fn compute_health_core(
         siloed,
         open_contra,
         cross_contra,
+        cross_project_contra,
         canon,
         cross_entities,
+        cross_project_entities,
         backlog,
         oldest,
         consistency,
@@ -2426,8 +2498,10 @@ pub(crate) async fn knowledge_health(
         siloed,
         open_contra,
         cross_contra,
+        cross_project_contra,
         canon,
         cross_entities,
+        cross_project_entities,
         backlog,
         oldest,
         consistency,
@@ -2743,6 +2817,8 @@ pub(crate) async fn knowledge_health(
             cross_team_entities: cross_entities,
             open_contradictions: open_contra,
             cross_team_contradictions: cross_contra,
+            cross_project_entities,
+            cross_project_contradictions: cross_project_contra,
             stale_beliefs: stale,
             pages_dirty,
             oldest_dirty_secs,
@@ -2872,8 +2948,12 @@ pub(crate) struct PracticeDivergence {
     pub recommended_standard: String,
     /// high | medium | low.
     pub impact: String,
-    /// Each team's approach: [{team, approach}].
+    /// Each group's approach: [{team, approach}] on the team axis,
+    /// [{project, approach}] on the project axis.
     pub approaches: serde_json::Value,
+    /// The divergence class (PROJECT-PLAN PR3): `team` (two teams disagree)
+    /// or `project` (two applications solve the same thing differently).
+    pub axis: String,
     /// Which model adjudicated it — provenance for a decision-shaping report.
     pub model_ref: Option<String>,
     pub detected_at: DateTime<Utc>,
@@ -2899,7 +2979,7 @@ pub(crate) async fn practice_divergence(
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let rows = sqlx::query(
-        "SELECT practice, summary, recommended_standard, impact, positions, model_ref, detected_at
+        "SELECT practice, summary, recommended_standard, impact, positions, model_ref, detected_at, axis
          FROM practice_divergences
          ORDER BY CASE impact WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, detected_at DESC",
     )
@@ -2914,6 +2994,7 @@ pub(crate) async fn practice_divergence(
             recommended_standard: r.get("recommended_standard"),
             impact: r.get("impact"),
             approaches: r.get("positions"),
+            axis: r.get("axis"),
             model_ref: r.get("model_ref"),
             detected_at: r.get("detected_at"),
         })
@@ -2967,6 +3048,9 @@ pub(crate) struct OverviewCanonical {
     pub memories: i64,
     pub teams: i64,
     pub team_ids: Vec<Uuid>,
+    /// DISTINCT projects whose stamped memories anchor this hub (PR3).
+    pub projects: i64,
+    pub project_ids: Vec<Uuid>,
 }
 
 /// Binding strength between two team lobes = canonicals both teams link into.
@@ -2977,11 +3061,36 @@ pub(crate) struct TeamLink {
     pub shared: i64,
 }
 
+/// A project lobe (PROJECT-PLAN PR3): the application/domain plus its
+/// stamped-memory volume and the entities those memories anchor. Only
+/// projects with at least one stamped memory appear — an empty lobe is not
+/// information; org-shared rows belong to every lobe and to none.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ProjectLobe {
+    pub id: Uuid,
+    pub name: String,
+    pub memories: i64,
+    pub entities: i64,
+}
+
+/// Binding strength between two project lobes = canonicals anchored by
+/// stamped memories of BOTH projects.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ProjectLink {
+    pub a: Uuid,
+    pub b: Uuid,
+    pub shared: i64,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct GraphOverviewResponse {
     pub teams: Vec<TeamLobe>,
     pub canonicals: Vec<OverviewCanonical>,
     pub team_links: Vec<TeamLink>,
+    /// The project lens (PR3): lobes/links parallel to the team ones. Empty
+    /// until writes are project-stamped.
+    pub projects: Vec<ProjectLobe>,
+    pub project_links: Vec<ProjectLink>,
 }
 
 /// L0/L1: team lobes with volumes, top canonical hubs with team spread, and
@@ -3014,14 +3123,52 @@ pub(crate) async fn graph_overview(
         "SELECT ce.id, ce.name, ce.kind,
                 count(DISTINCT me.memory_id) AS memories,
                 count(DISTINCT e.team_id) AS team_count,
-                array_agg(DISTINCT e.team_id) AS team_ids
+                array_agg(DISTINCT e.team_id) AS team_ids,
+                count(DISTINCT m.project_id) FILTER (WHERE m.project_id IS NOT NULL) AS project_count,
+                array_remove(array_agg(DISTINCT m.project_id), NULL) AS project_ids
          FROM canonical_entities ce
          JOIN entity_links l ON l.canonical_id = ce.id
          JOIN entities e ON e.id = l.entity_id
          LEFT JOIN memory_entities me ON me.entity_id = e.id
+         LEFT JOIN memories m ON m.id = me.memory_id
          GROUP BY ce.id, ce.name, ce.kind
          ORDER BY memories DESC, team_count DESC, ce.name
          LIMIT 60",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    // The project lens (PR3): lobes from stamped memories, entity counts via
+    // what those memories anchor. Projects with zero stamped rows are omitted.
+    let projects = sqlx::query(
+        "SELECT p.id, p.name,
+                count(DISTINCT m.id) AS memories,
+                count(DISTINCT me.entity_id) AS entities
+         FROM projects p
+         JOIN memories m ON m.project_id = p.id
+         LEFT JOIN memory_entities me ON me.memory_id = m.id
+         GROUP BY p.id, p.name
+         ORDER BY p.name",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let project_links = sqlx::query(
+        "SELECT pa.project_id AS a, pb.project_id AS b, count(DISTINCT pa.canonical_id) AS shared
+         FROM (SELECT DISTINCT l.canonical_id, m.project_id
+               FROM entity_links l
+               JOIN memory_entities me ON me.entity_id = l.entity_id
+               JOIN memories m ON m.id = me.memory_id
+               WHERE m.project_id IS NOT NULL) pa
+         JOIN (SELECT DISTINCT l.canonical_id, m.project_id
+               FROM entity_links l
+               JOIN memory_entities me ON me.entity_id = l.entity_id
+               JOIN memories m ON m.id = me.memory_id
+               WHERE m.project_id IS NOT NULL) pb
+           ON pa.canonical_id = pb.canonical_id AND pa.project_id < pb.project_id
+         GROUP BY 1, 2",
     )
     .fetch_all(&mut *tx)
     .await
@@ -3061,11 +3208,30 @@ pub(crate) async fn graph_overview(
                 // `teams` is the JSON name; the column is `team_count`.
                 teams: r.get("team_count"),
                 team_ids: r.get("team_ids"),
+                projects: r.get("project_count"),
+                project_ids: r.get("project_ids"),
             })
             .collect(),
         team_links: team_links
             .iter()
             .map(|r| TeamLink {
+                a: r.get("a"),
+                b: r.get("b"),
+                shared: r.get("shared"),
+            })
+            .collect(),
+        projects: projects
+            .iter()
+            .map(|r| ProjectLobe {
+                id: r.get("id"),
+                name: r.get("name"),
+                memories: r.get("memories"),
+                entities: r.get("entities"),
+            })
+            .collect(),
+        project_links: project_links
+            .iter()
+            .map(|r| ProjectLink {
                 a: r.get("a"),
                 b: r.get("b"),
                 shared: r.get("shared"),
@@ -3287,16 +3453,69 @@ pub(crate) async fn graph_canonical(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct MemoriesListParams {
+    /// Full-text query: websearch syntax over content, or a title substring.
+    q: Option<String>,
     kind: Option<String>,
     status: Option<String>,
     team: Option<Uuid>,
+    visibility: Option<String>,
+    /// Project facet: a project id, or `none` for org-shared rows (PR2).
+    project: Option<String>,
+    /// `recent` (default) | `valid_from` | `valid_to`. Pair with `dir`.
+    sort: Option<String>,
+    /// `asc` | `desc` (default). Ignored for `recent`.
+    dir: Option<String>,
     /// RFC3339. When set, returns rows VALID at that instant — including
     /// deprecated ones that were true then. The archive's time travel.
     as_of: Option<String>,
+    /// Compute the cross-filtered facet menu alongside the page. Off by default
+    /// so a headless page-walk pays only for the rows it reads.
+    #[serde(default, deserialize_with = "de_truthy")]
+    facets: bool,
     #[serde(default = "default_list_limit")]
     limit: i64,
     #[serde(default)]
     offset: i64,
+}
+
+/// Build the shared `MemoryFilter` from the request. Kept next to the handler
+/// so REST and (later) MCP construct it identically.
+fn memory_filter(
+    p: &MemoriesListParams,
+    as_of: Option<chrono::DateTime<chrono::Utc>>,
+) -> brainiac_store::archive::MemoryFilter {
+    brainiac_store::archive::MemoryFilter {
+        q: p.q.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        kind: p.kind.clone(),
+        status: p.status.clone(),
+        team_id: p.team,
+        visibility: p.visibility.clone(),
+        project: p
+            .project
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        as_of,
+    }
+}
+
+/// Lenient boolean for query params: accepts `1`/`true`/`yes`/`on` (and their
+/// negatives), because a browser `?facets=1` and a headless `?facets=true` must
+/// both work — axum's default bool deserializer only accepts `true`/`false`.
+pub(crate) fn de_truthy<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Bool(b) => b,
+        serde_json::Value::String(s) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        serde_json::Value::Number(n) => n.as_i64().is_some_and(|v| v != 0),
+        _ => false,
+    })
 }
 
 fn default_list_limit() -> i64 {
@@ -3321,6 +3540,9 @@ pub(crate) struct MemoryRow {
     pub visibility: String,
     pub team: String,
     pub team_id: Uuid,
+    /// Project display name; null = org-shared (PROJECT-PLAN PR2).
+    pub project: Option<String>,
+    pub project_id: Option<Uuid>,
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,
     pub superseded_by: Option<Uuid>,
@@ -3328,10 +3550,70 @@ pub(crate) struct MemoryRow {
     pub confidence: Option<f32>,
 }
 
+/// One facet option and the count behind it, across the whole console. Value is
+/// what a filter sends back; label is what the UI shows (they differ only for
+/// teams, where the value is the id and the label is the name).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct WireFacet {
+    pub value: String,
+    pub label: String,
+    pub count: i64,
+}
+
+impl From<brainiac_store::feedback::Facet> for WireFacet {
+    fn from(f: brainiac_store::feedback::Facet) -> Self {
+        WireFacet {
+            value: f.value,
+            label: f.label,
+            count: f.count,
+        }
+    }
+}
+
+fn wire_facets(v: Vec<brainiac_store::feedback::Facet>) -> Vec<WireFacet> {
+    v.into_iter().map(Into::into).collect()
+}
+
+/// The archive's cross-filtered facet menu. Present only when `?facets=1`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct MemoryFacetMenu {
+    pub kinds: Vec<WireFacet>,
+    pub statuses: Vec<WireFacet>,
+    pub teams: Vec<WireFacet>,
+    pub visibilities: Vec<WireFacet>,
+    /// Value is a project id or `"none"`; label the name or `"org-shared"`.
+    pub projects: Vec<WireFacet>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct MemoryListResponse {
+    /// The filtered depth — what matches, ignoring the page window. `memories`
+    /// is only the page; this is the number the archive counts by.
     pub total: i64,
+    /// Cross-filtered facet menu, or null when `?facets=1` was not passed.
+    pub facets: Option<MemoryFacetMenu>,
     pub memories: Vec<MemoryRow>,
+}
+
+/// Store row (DateTime) → wire row (RFC3339 strings), matching `memory_row`.
+fn memory_list_row(r: brainiac_store::archive::MemoryListRow) -> MemoryRow {
+    MemoryRow {
+        id: r.id,
+        title: r.title,
+        content: r.content,
+        kind: r.kind,
+        status: r.status,
+        visibility: r.visibility,
+        team: r.team,
+        team_id: r.team_id,
+        project: r.project,
+        project_id: r.project_id,
+        valid_from: r.valid_from.map(|d| d.to_rfc3339()),
+        valid_to: r.valid_to.map(|d| d.to_rfc3339()),
+        superseded_by: r.superseded_by,
+        created_at: r.created_at.map(|d| d.to_rfc3339()),
+        confidence: r.confidence,
+    }
 }
 
 fn memory_row(r: &sqlx::postgres::PgRow) -> MemoryRow {
@@ -3348,6 +3630,8 @@ fn memory_row(r: &sqlx::postgres::PgRow) -> MemoryRow {
         visibility: r.get("visibility"),
         team: r.get("team"),
         team_id: r.get("team_id"),
+        project: r.get("project"),
+        project_id: r.get("project_id"),
         valid_from: ts("valid_from"),
         valid_to: ts("valid_to"),
         superseded_by: r.get("superseded_by"),
@@ -3365,6 +3649,7 @@ fn memory_row(r: &sqlx::postgres::PgRow) -> MemoryRow {
         ("kind" = Option<String>, Query, description = "Filter by memory kind"),
         ("status" = Option<String>, Query, description = "Filter by memory status"),
         ("team" = Option<Uuid>, Query, description = "Filter by owning team id"),
+        ("project" = Option<String>, Query, description = "Filter by project id, or `none` for org-shared rows"),
         ("as_of" = Option<String>, Query, description = "RFC3339 instant: return rows VALID then, including since-deprecated ones"),
         ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
         ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
@@ -3390,47 +3675,93 @@ pub(crate) async fn memories_list(
     };
     let limit = p.limit.clamp(1, 200);
     let offset = p.offset.max(0);
+    let sort = brainiac_store::archive::MemorySort::parse(p.sort.as_deref(), p.dir.as_deref());
+    let filter = memory_filter(&p, as_of);
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
-    const FILTER: &str = "WHERE ($1::text IS NULL OR m.kind = $1)
-           AND ($2::text IS NULL OR m.status = $2::memory_status)
-           AND ($3::uuid IS NULL OR m.team_id = $3)
-           AND ($4::timestamptz IS NULL OR
-                ((m.valid_from IS NULL OR m.valid_from <= $4)
-                 AND (m.valid_to IS NULL OR m.valid_to > $4)))";
-
-    let rows = sqlx::query(&format!(
-        "SELECT m.id, m.title, m.content, m.kind, m.status::text AS status,
-                m.visibility::text AS visibility, t.name AS team, m.team_id,
-                m.valid_from, m.valid_to, m.superseded_by, m.created_at, m.confidence
-         FROM memories m JOIN teams t ON t.id = m.team_id
-         {FILTER}
-         ORDER BY m.created_at DESC, m.id
-         LIMIT $5 OFFSET $6"
-    ))
-    .bind(&p.kind)
-    .bind(&p.status)
-    .bind(p.team)
-    .bind(as_of)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(internal)?;
-
-    let total: i64 = sqlx::query(&format!("SELECT count(*) AS n FROM memories m {FILTER}"))
-        .bind(&p.kind)
-        .bind(&p.status)
-        .bind(p.team)
-        .bind(as_of)
-        .fetch_one(&mut *tx)
+    let rows = brainiac_store::archive::list(&mut tx, &filter, sort, limit, offset)
         .await
-        .map_err(internal)?
-        .get("n");
+        .map_err(internal)?;
+    let total = brainiac_store::archive::count(&mut tx, &filter)
+        .await
+        .map_err(internal)?;
+
+    // Facets are the expensive part — four grouped passes — so a headless
+    // page-walk that never renders a filter menu skips them entirely.
+    let facets = if p.facets {
+        let f = brainiac_store::archive::facets(&mut tx, &filter)
+            .await
+            .map_err(internal)?;
+        Some(MemoryFacetMenu {
+            kinds: wire_facets(f.kinds),
+            statuses: wire_facets(f.statuses),
+            teams: wire_facets(f.teams),
+            visibilities: wire_facets(f.visibilities),
+            projects: wire_facets(f.projects),
+        })
+    } else {
+        None
+    };
 
     Ok(Json(MemoryListResponse {
         total,
-        memories: rows.iter().map(memory_row).collect(),
+        facets,
+        memories: rows.into_iter().map(memory_list_row).collect(),
+    }))
+}
+
+/// One row of the as-of skeleton. RFC3339 timestamps, like the rest of the
+/// archive payload.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ValidityRow {
+    pub id: Uuid,
+    pub valid_from: Option<String>,
+    pub valid_to: Option<String>,
+    pub status: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ValidityResponse {
+    pub rows: Vec<ValidityRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/memories/validity",
+    tag = "memories",
+    description = "The as-of skeleton: {id, valid_from, valid_to, status} for every memory matching the filter (as_of excluded). Tiny by design — it lets a client scrub the archive's time axis instantly without holding the full corpus. Takes the same filters as /v1/memories minus paging.",
+    params(
+        ("q" = Option<String>, Query, description = "Full-text filter"),
+        ("kind" = Option<String>, Query, description = "Filter by kind"),
+        ("status" = Option<String>, Query, description = "Filter by status"),
+        ("team" = Option<Uuid>, Query, description = "Filter by owning team"),
+        ("visibility" = Option<String>, Query, description = "Filter by visibility"),
+    ),
+    responses((status = 200, description = "Validity skeleton", body = ValidityResponse)),
+)]
+pub(crate) async fn memories_validity(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(p): axum::extract::Query<MemoriesListParams>,
+    headers: HeaderMap,
+) -> Result<Json<ValidityResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    // as_of is meaningless here — the skeleton spans the whole timeline so the
+    // client can apply time travel over it — so it is forced off.
+    let filter = memory_filter(&p, None);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let skel = brainiac_store::archive::validity_skeleton(&mut tx, &filter)
+        .await
+        .map_err(internal)?;
+    Ok(Json(ValidityResponse {
+        rows: skel
+            .into_iter()
+            .map(|s| ValidityRow {
+                id: s.id,
+                valid_from: s.valid_from.map(|d| d.to_rfc3339()),
+                valid_to: s.valid_to.map(|d| d.to_rfc3339()),
+                status: s.status,
+            })
+            .collect(),
     }))
 }
 
@@ -3512,11 +3843,13 @@ pub(crate) async fn memory_detail(
     let row = sqlx::query(
         "SELECT m.id, m.title, m.content, m.kind, m.status::text AS status,
                 m.visibility::text AS visibility, t.name AS team, m.team_id,
+                pj.name AS project, m.project_id,
                 m.valid_from, m.valid_to, m.superseded_by, m.created_at, m.confidence,
                 pv.actor_kind, pv.actor_id, pv.model_ref,
                 s.kind AS source_kind, s.external_ref AS source_ref
          FROM memories m
          JOIN teams t ON t.id = m.team_id
+         LEFT JOIN projects pj ON pj.id = m.project_id
          LEFT JOIN provenance pv ON pv.id = m.provenance_id
          LEFT JOIN sources s ON s.id = pv.source_id
          WHERE m.id = $1",

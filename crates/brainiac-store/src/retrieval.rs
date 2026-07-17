@@ -71,6 +71,12 @@ pub struct RetrievalFilters {
     pub team_id: Option<Uuid>,
     /// Minimum extractor confidence (memories with NULL confidence drop).
     pub min_confidence: Option<f32>,
+    /// The project lens (PROJECT-PLAN PR1): keeps the project's rows PLUS
+    /// org-shared rows (`project_id IS NULL`) — "my project + the org's
+    /// conventions", never "my project only". Unlike the other filters this
+    /// is inclusive by design: hard project isolation is deliberately not a
+    /// retrieval concern (visibility tiers answer WHO may see).
+    pub project_id: Option<Uuid>,
 }
 
 impl RetrievalFilters {
@@ -79,6 +85,7 @@ impl RetrievalFilters {
             && self.min_status.is_none()
             && self.team_id.is_none()
             && self.min_confidence.is_none()
+            && self.project_id.is_none()
     }
 
     /// Statuses admitted by the floor, as SQL enum literals; `None` = no
@@ -110,6 +117,10 @@ impl RetrievalFilters {
             && self
                 .min_confidence
                 .is_none_or(|c| m.confidence.is_some_and(|mc| mc >= c))
+            // Project lens admits org-shared (None) rows — see the field doc.
+            && self
+                .project_id
+                .is_none_or(|p| m.project_id == Some(p) || m.project_id.is_none())
     }
 }
 

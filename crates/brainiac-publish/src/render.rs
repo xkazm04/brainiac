@@ -56,6 +56,70 @@ pub fn stale_stamp_md(reason: &str, since: &str) -> String {
     )
 }
 
+/// A one-line summary for machine-readable targets (OKF `description`): the
+/// first body line that is prose — not a heading, list, quote, fence, or table
+/// row — with citation markers stripped and truncated at a word boundary.
+/// `None` when the page has no prose at all (e.g. a pure-diagram page); an
+/// absent description is honest, a synthesized one is filler.
+pub fn derive_description(content_md: &str) -> Option<String> {
+    let mut in_code = false;
+    for line in content_md.lines() {
+        let t = line.trim();
+        if t.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code || t.is_empty() {
+            continue;
+        }
+        if ['#', '>', '-', '*', '|', '<']
+            .iter()
+            .any(|c| t.starts_with(*c))
+        {
+            continue;
+        }
+        let cleaned = strip_citations(t);
+        let cleaned = cleaned.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        return Some(truncate_at_word(cleaned, 200));
+    }
+    None
+}
+
+/// Remove `[m:<uuid>]` markers — provenance belongs in structured fields, not
+/// in a one-line summary.
+fn strip_citations(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("[m:") {
+        out.push_str(&rest[..i]);
+        match rest[i..].find(']') {
+            Some(j) => rest = &rest[i + j + 1..],
+            None => {
+                out.push_str(&rest[i..]);
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+    // Collapse the double spaces stripping leaves behind.
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_at_word(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    if let Some(i) = out.rfind(' ') {
+        out.truncate(i);
+    }
+    out.push('…');
+    out
+}
+
 /// Escape text for Confluence storage format (XHTML).
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -261,6 +325,33 @@ mod tests {
         assert!(out.contains("<h1>T</h1>"));
         assert!(out.contains("<ul><li>one</li><li>two</li></ul>"), "{out}");
         assert!(out.contains("<blockquote>"));
+    }
+
+    #[test]
+    fn description_is_the_first_prose_line_without_citations() {
+        let id = Uuid::new_v4();
+        let md = format!(
+            "# PSP Gateway\n\n> generated banner\n\n- a list item\n\nThe gateway caps retries at 30 seconds [m:{id}] and fails open.\n\nMore prose."
+        );
+        let d = derive_description(&md).expect("description");
+        assert_eq!(d, "The gateway caps retries at 30 seconds and fails open.");
+    }
+
+    #[test]
+    fn description_is_none_for_a_page_with_no_prose() {
+        assert_eq!(
+            derive_description("# Title\n\n```mermaid\ngraph LR\n```\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn description_truncates_at_a_word_boundary() {
+        let long = format!("Start {} end.", "word ".repeat(60));
+        let d = derive_description(&long).expect("description");
+        assert!(d.chars().count() <= 201, "{d}");
+        assert!(d.ends_with('…'), "{d}");
+        assert!(!d.contains("end."), "{d}");
     }
 
     #[test]

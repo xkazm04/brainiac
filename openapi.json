@@ -231,6 +231,105 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "Exact page kind: `entity_page` | `topic_page` | `runbook` | `onboarding`\n| `digest` | `standards_page`. Unknown kinds are a 400, not an empty\nlist — a typo must not read as \"no runbooks exist\".",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "tag",
+            "in": "path",
+            "description": "Canonical entity name (case-insensitive): pages citing a memory anchored\nto that entity. The same vocabulary the OKF bundle publishes as `tags`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "stale",
+            "in": "path",
+            "description": "`true` = only stale pages (an underlying memory moved), `false` = only\ncurrent ones. Omit for both.",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "space",
+            "in": "path",
+            "description": "The wiki folder (first slug segment, e.g. `payments`). What the tree\nbrowses one space at a time.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "path",
+            "description": "Exact publish status: `draft` | `published` | `archived`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "needs_review",
+            "in": "path",
+            "description": "`true` = only pages whose current revision awaits a human (review tab).",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "facets",
+            "in": "path",
+            "description": "Compute the cross-filtered facet menu (space directory + tab counts).\nOff by default so a headless page-walk pays only for the rows it reads.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -941,6 +1040,15 @@
             }
           },
           {
+            "name": "project",
+            "in": "query",
+            "description": "Filter by project id, or `none` for org-shared rows",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "as_of",
             "in": "query",
             "description": "RFC3339 instant: return rows VALID then, including since-deprecated ones",
@@ -1163,6 +1271,75 @@
         }
       }
     },
+    "/v1/memories/validity": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "description": "The as-of skeleton: {id, valid_from, valid_to, status} for every memory matching the filter (as_of excluded). Tiny by design — it lets a client scrub the archive's time axis instantly without holding the full corpus. Takes the same filters as /v1/memories minus paging.",
+        "operationId": "memories_validity",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Full-text filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Filter by kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "team",
+            "in": "query",
+            "description": "Filter by owning team",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "visibility",
+            "in": "query",
+            "description": "Filter by visibility",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validity skeleton",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/memories/{id}": {
       "get": {
         "tags": [
@@ -1352,6 +1529,211 @@
         }
       }
     },
+    "/v1/onboard/poll": {
+      "post": {
+        "tags": [
+          "onboard"
+        ],
+        "summary": "POST /v1/onboard/poll — the CLI's wait loop; the approving poll mints.",
+        "description": "Poll a pairing request by device_code. While pending returns {status: \"pending\"}; the first poll after approval claims the request and returns the minted project-scoped key EXACTLY ONCE.",
+        "operationId": "onboard_poll",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardPollBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Current pairing state (token present exactly once, on claim)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardPollResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown device code"
+          }
+        }
+      }
+    },
+    "/v1/onboard/requests": {
+      "get": {
+        "tags": [
+          "onboard"
+        ],
+        "summary": "GET /v1/onboard/requests — the console's approval queue (admin).",
+        "description": "Pending pairing requests with their whitelist match in the caller's org (admin). A null project_name means approval will be refused until the remote is registered under a project.",
+        "operationId": "requests_list",
+        "responses": {
+          "200": {
+            "description": "Pending requests, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardRequestsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      }
+    },
+    "/v1/onboard/requests/{id}/approve": {
+      "post": {
+        "tags": [
+          "onboard"
+        ],
+        "summary": "POST /v1/onboard/requests/{id}/approve — approve into the whitelist match.",
+        "description": "Approve a pending pairing (admin). The project is DERIVED from the whitelist — the remote must already be registered under a project in the caller's org, or this refuses with 409.",
+        "operationId": "request_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Pairing request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved; the CLI's next poll mints the key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardDecisionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Request not found, expired, or already decided"
+          },
+          "409": {
+            "description": "Remote not whitelisted under any project in this org"
+          }
+        }
+      }
+    },
+    "/v1/onboard/requests/{id}/deny": {
+      "post": {
+        "tags": [
+          "onboard"
+        ],
+        "summary": "POST /v1/onboard/requests/{id}/deny — refuse a pending pairing.",
+        "description": "Deny a pending pairing request (admin). The polling CLI is told {status: \"denied\"} and stops.",
+        "operationId": "request_deny",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Pairing request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardDecisionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Request not found or already decided"
+          }
+        }
+      }
+    },
+    "/v1/onboard/skill": {
+      "get": {
+        "tags": [
+          "onboard"
+        ],
+        "summary": "GET /v1/onboard/skill — the brainiac-onboard skill, served for the\ncopyable bootstrap command in the Keys module.",
+        "description": "The brainiac-onboard Claude Code skill (markdown). Open, like /health: a developer fetches this BEFORE they have a token — the skill is how they get one. Canonical source: docs/skills/brainiac-onboard/SKILL.md.",
+        "operationId": "onboard_skill",
+        "responses": {
+          "200": {
+            "description": "The skill, as markdown"
+          }
+        }
+      }
+    },
+    "/v1/onboard/start": {
+      "post": {
+        "tags": [
+          "onboard"
+        ],
+        "summary": "POST /v1/onboard/start — open a pairing request (unauthenticated).",
+        "description": "Open an onboarding pairing request for a git remote. Unauthenticated — this is how a developer with no credentials acquires one. Returns a short user_code (matched by eye in the console) and a long device_code to poll with.",
+        "operationId": "onboard_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Pairing opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Remote is not a recognizable git remote URL"
+          },
+          "429": {
+            "description": "Too many pending pairing requests; try again shortly"
+          }
+        }
+      }
+    },
     "/v1/ops/sweeps": {
       "get": {
         "tags": [
@@ -1515,6 +1897,188 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/projects": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "GET /v1/projects — the org's projects with their whitelisted repos.",
+        "description": "The org's projects with their whitelisted repos (admin).",
+        "operationId": "projects_list",
+        "responses": {
+          "200": {
+            "description": "Projects of the caller's org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectsListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "POST /v1/projects — create a project.",
+        "description": "Create a project (admin). Names are unique per org.",
+        "operationId": "project_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Project created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedProjectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty or oversized name"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "409": {
+            "description": "A project with this name already exists"
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/repos": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "POST /v1/projects/{id}/repos — whitelist a remote under a project.",
+        "description": "Whitelist a git remote under a project (admin). The remote is normalized to `host/owner/name`; within an org a remote maps to exactly one project.",
+        "operationId": "repo_add",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Project id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddRepoBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Repo whitelisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedRepoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Remote is not a recognizable git remote URL"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Project not found in this org"
+          },
+          "409": {
+            "description": "This remote is already whitelisted in the org"
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/repos/{repo_id}": {
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "DELETE /v1/projects/{id}/repos/{repo_id} — un-whitelist a remote.",
+        "description": "Remove a whitelisted remote (admin). Existing keys stay valid; only future onboarding stops matching.",
+        "operationId": "repo_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Project id (route context only)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "repo_id",
+            "in": "path",
+            "description": "Repo row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repo removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedRepoResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Repo not found in this org"
           }
         }
       }
@@ -1937,6 +2501,15 @@
             "name": "band",
             "in": "query",
             "description": "Decay band: past|d30|d90|d180|far|none",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "description": "Filter by project id, or `none` for org-shared",
             "required": false,
             "schema": {
               "type": "string"
@@ -2424,6 +2997,40 @@
   },
   "components": {
     "schemas": {
+      "AddRepoBody": {
+        "type": "object",
+        "required": [
+          "remote"
+        ],
+        "properties": {
+          "remote": {
+            "type": "string",
+            "description": "Any spelling of the remote (https, ssh, scp, bare); stored normalized."
+          }
+        }
+      },
+      "AddedRepoResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "remote"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "remote": {
+            "type": "string",
+            "description": "The normalized form that was stored — what onboarding will match on."
+          }
+        }
+      },
       "AdoptRequest": {
         "type": "object",
         "properties": {
@@ -3155,6 +3762,17 @@
           }
         }
       },
+      "CreateProjectBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "CreateTokenBody": {
         "type": "object",
         "required": [
@@ -3163,6 +3781,14 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Scope the key to one project (migration 0034); omit for org-wide."
           },
           "scopes": {
             "type": [
@@ -3181,6 +3807,22 @@
             ],
             "format": "uuid",
             "description": "Principal the token acts as; defaults to the caller."
+          }
+        }
+      },
+      "CreatedProjectResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -3205,6 +3847,14 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The project the key is scoped to; null = org-wide."
           },
           "scopes": {
             "type": "array",
@@ -3342,6 +3992,69 @@
           }
         }
       },
+      "DocFacet": {
+        "type": "object",
+        "description": "One facet option for the wiki (a space, a kind, a status) and its count.",
+        "required": [
+          "value",
+          "label",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "DocFacetMenu": {
+        "type": "object",
+        "description": "The wiki's facet menu — the space directory and the tab counts — computed\nserver-side so the client never needs the whole corpus to build its tree.\nPresent only when `?facets=1`.",
+        "required": [
+          "spaces",
+          "kinds",
+          "statuses",
+          "needs_review",
+          "dirty"
+        ],
+        "properties": {
+          "dirty": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pages behind the corpus under the current filter (the recomposing tab)."
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocFacet"
+            }
+          },
+          "needs_review": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pages awaiting review under the current filter (the review tab)."
+          },
+          "spaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocFacet"
+            },
+            "description": "The spaces (folders), each with its page count — the tree directory."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocFacet"
+            }
+          }
+        }
+      },
       "DocRevisionView": {
         "type": "object",
         "required": [
@@ -3349,7 +4062,8 @@
           "content_md",
           "composed_from",
           "policy_decision",
-          "created_at"
+          "created_at",
+          "faithfulness"
         ],
         "properties": {
           "composed_from": {
@@ -3364,6 +4078,13 @@
           },
           "created_at": {
             "type": "string"
+          },
+          "faithfulness": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Sampled citation-faithfulness verdict (0036), when the runtime judge\nran: `checked` paragraph count plus `flagged` excerpts whose prose\nmisstates the memory it cites — the reviewer's read-this-first list.\n`null` = not judged; absence of a verdict is not a verdict."
           },
           "id": {
             "type": "string",
@@ -3445,6 +4166,14 @@
             "type": "boolean",
             "description": "A revision is waiting on a human. Work, not decoration."
           },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The project this page is scoped to (PROJECT-PLAN PR4); null = an\norg-wide page. A stamped page composes only from its project +\norg-shared memories."
+          },
           "slug": {
             "type": "string"
           },
@@ -3465,6 +4194,7 @@
       "DocsListResponse": {
         "type": "object",
         "required": [
+          "total",
           "documents"
         ],
         "properties": {
@@ -3473,6 +4203,22 @@
             "items": {
               "$ref": "#/components/schemas/DocSummary"
             }
+          },
+          "facets": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DocFacetMenu",
+                "description": "Cross-filtered facet menu, or null when `?facets=1` was not passed."
+              }
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Filtered depth — what matches, ignoring the page window."
           }
         }
       },
@@ -3686,7 +4432,8 @@
         "required": [
           "kinds",
           "teams",
-          "bands"
+          "bands",
+          "projects"
         ],
         "properties": {
           "bands": {
@@ -3700,6 +4447,13 @@
             "items": {
               "$ref": "#/components/schemas/FeedbackFacet"
             }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackFacet"
+            },
+            "description": "Value is a project id or `\"none\"`; label the name or `\"org-shared\"`."
           },
           "teams": {
             "type": "array",
@@ -3877,6 +4631,20 @@
             "format": "int64",
             "description": "Age of the OLDEST open claim — how long the dispute has stood."
           },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Project display name; null = org-shared (PR2)."
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "provenance": {
             "oneOf": [
               {
@@ -4024,7 +4792,9 @@
         "required": [
           "teams",
           "canonicals",
-          "team_links"
+          "team_links",
+          "projects",
+          "project_links"
         ],
         "properties": {
           "canonicals": {
@@ -4032,6 +4802,19 @@
             "items": {
               "$ref": "#/components/schemas/OverviewCanonical"
             }
+          },
+          "project_links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectLink"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectLobe"
+            },
+            "description": "The project lens (PR3): lobes/links parallel to the team ones. Empty\nuntil writes are project-stamped."
           },
           "team_links": {
             "type": "array",
@@ -4197,6 +4980,8 @@
           "cross_team_entities",
           "open_contradictions",
           "cross_team_contradictions",
+          "cross_project_entities",
+          "cross_project_contradictions",
           "stale_beliefs",
           "pages_dirty",
           "oldest_dirty_secs",
@@ -4228,6 +5013,16 @@
           "canonical_entities": {
             "type": "integer",
             "format": "int64"
+          },
+          "cross_project_contradictions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open contradictions whose two sides are stamped with DIFFERENT\nprojects — two applications believing incompatible things (PR3)."
+          },
+          "cross_project_entities": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Canonical entities anchored by memories of ≥2 DIFFERENT projects —\nknowledge crossing application lines (PROJECT-PLAN PR3). Zero until\nwrites are project-stamped; that is coverage, not health."
           },
           "cross_team_contradictions": {
             "type": "integer",
@@ -4342,6 +5137,27 @@
           }
         }
       },
+      "KindProjectCount": {
+        "type": "object",
+        "description": "The project twin of [`KindTeamCount`] (PROJECT-PLAN PR3). `project` is the\ndisplay name, with `org-shared` standing in for the null bucket.",
+        "required": [
+          "kind",
+          "project",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          }
+        }
+      },
       "KindTeamCount": {
         "type": "object",
         "required": [
@@ -4449,6 +5265,14 @@
             ],
             "description": "Optional kind hint (fact|decision|pattern|pitfall|howto). For a `manual`\nadd this is authoritative — the F-3 verbatim path stores the statement\nunder exactly this kind (default `fact`) with no model guessing."
           },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "PROJECT-PLAN PR0: attribute this write to a project explicitly (must\nexist in the caller's org). Omitted ⇒ the key's own project scope, or\norg-shared for org-wide keys. An org-wide key (CI, imports) uses this\nto attribute correctly."
+          },
           "team_id": {
             "type": [
               "string",
@@ -4537,6 +5361,50 @@
           }
         }
       },
+      "MemoryFacetMenu": {
+        "type": "object",
+        "description": "The archive's cross-filtered facet menu. Present only when `?facets=1`.",
+        "required": [
+          "kinds",
+          "statuses",
+          "teams",
+          "visibilities",
+          "projects"
+        ],
+        "properties": {
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireFacet"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireFacet"
+            },
+            "description": "Value is a project id or `\"none\"`; label the name or `\"org-shared\"`."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireFacet"
+            }
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireFacet"
+            }
+          },
+          "visibilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireFacet"
+            }
+          }
+        }
+      },
       "MemoryListResponse": {
         "type": "object",
         "required": [
@@ -4544,6 +5412,17 @@
           "memories"
         ],
         "properties": {
+          "facets": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MemoryFacetMenu",
+                "description": "Cross-filtered facet menu, or null when `?facets=1` was not passed."
+              }
+            ]
+          },
           "memories": {
             "type": "array",
             "items": {
@@ -4552,7 +5431,8 @@
           },
           "total": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "The filtered depth — what matches, ignoring the page window. `memories`\nis only the page; this is the number the archive counts by."
           }
         }
       },
@@ -4719,6 +5599,20 @@
           "kind": {
             "type": "string"
           },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Project display name; null = org-shared (PROJECT-PLAN PR2)."
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "status": {
             "type": "string"
           },
@@ -4791,6 +5685,7 @@
           "totals",
           "weekly",
           "by_kind",
+          "by_project",
           "top_entities",
           "review",
           "contradictions",
@@ -4803,6 +5698,13 @@
             "items": {
               "$ref": "#/components/schemas/KindTeamCount"
             }
+          },
+          "by_project": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KindProjectCount"
+            },
+            "description": "Kind×project volumes — the axis-swap twin of `by_kind` (PR3)."
           },
           "contradictions": {
             "type": "array",
@@ -4889,6 +5791,204 @@
           }
         }
       },
+      "OnboardDecisionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "approved | denied"
+          }
+        }
+      },
+      "OnboardPollBody": {
+        "type": "object",
+        "required": [
+          "device_code"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string"
+          }
+        }
+      },
+      "OnboardPollResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "pending | approved | denied | expired | claimed"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The minted key — present exactly once, on the poll that claims an\napproved request. Never retrievable again."
+          }
+        }
+      },
+      "OnboardRequestView": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_code",
+          "remote",
+          "label",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The project this remote would land in (whitelist match in the caller's\norg), or null — meaning approval will 409 until the repo is registered."
+          },
+          "remote": {
+            "type": "string"
+          },
+          "user_code": {
+            "type": "string"
+          }
+        }
+      },
+      "OnboardRequestsResponse": {
+        "type": "object",
+        "required": [
+          "requests"
+        ],
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardRequestView"
+            }
+          }
+        }
+      },
+      "OnboardStartBody": {
+        "type": "object",
+        "required": [
+          "remote"
+        ],
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who is asking — hostname/username, shown to the approver."
+          },
+          "remote": {
+            "type": "string",
+            "description": "The checkout's `git remote get-url origin`, any spelling."
+          }
+        }
+      },
+      "OnboardStartResponse": {
+        "type": "object",
+        "required": [
+          "user_code",
+          "device_code",
+          "remote",
+          "verification_url",
+          "expires_in_secs",
+          "poll_interval_secs"
+        ],
+        "properties": {
+          "device_code": {
+            "type": "string",
+            "description": "Long secret the CLI polls with. Appears only here."
+          },
+          "expires_in_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "poll_interval_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "remote": {
+            "type": "string",
+            "description": "The normalized remote the request was recorded under."
+          },
+          "user_code": {
+            "type": "string",
+            "description": "Short code the approver matches by eye in the console."
+          },
+          "verification_url": {
+            "type": "string",
+            "description": "Where a human approves this — the console's projects module."
+          }
+        }
+      },
       "OrgUser": {
         "type": "object",
         "required": [
@@ -4958,7 +6058,9 @@
           "kind",
           "memories",
           "teams",
-          "team_ids"
+          "team_ids",
+          "projects",
+          "project_ids"
         ],
         "properties": {
           "id": {
@@ -4974,6 +6076,18 @@
           },
           "name": {
             "type": "string"
+          },
+          "project_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "projects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "DISTINCT projects whose stamped memories anchor this hub (PR3)."
           },
           "team_ids": {
             "type": "array",
@@ -5108,11 +6222,16 @@
           "recommended_standard",
           "impact",
           "approaches",
+          "axis",
           "detected_at"
         ],
         "properties": {
           "approaches": {
-            "description": "Each team's approach: [{team, approach}]."
+            "description": "Each group's approach: [{team, approach}] on the team axis,\n[{project, approach}] on the project axis."
+          },
+          "axis": {
+            "type": "string",
+            "description": "The divergence class (PROJECT-PLAN PR3): `team` (two teams disagree)\nor `project` (two applications solve the same thing differently)."
           },
           "detected_at": {
             "type": "string",
@@ -5170,6 +6289,120 @@
           }
         }
       },
+      "ProjectLink": {
+        "type": "object",
+        "description": "Binding strength between two project lobes = canonicals anchored by\nstamped memories of BOTH projects.",
+        "required": [
+          "a",
+          "b",
+          "shared"
+        ],
+        "properties": {
+          "a": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "b": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shared": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ProjectLobe": {
+        "type": "object",
+        "description": "A project lobe (PROJECT-PLAN PR3): the application/domain plus its\nstamped-memory volume and the entities those memories anchor. Only\nprojects with at least one stamped memory appear — an empty lobe is not\ninformation; org-shared rows belong to every lobe and to none.",
+        "required": [
+          "id",
+          "name",
+          "memories",
+          "entities"
+        ],
+        "properties": {
+          "entities": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "memories": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectRepoView": {
+        "type": "object",
+        "required": [
+          "id",
+          "remote",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "remote": {
+            "type": "string",
+            "description": "Normalized remote, e.g. `github.com/acme/payments`."
+          }
+        }
+      },
+      "ProjectView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "repos"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectRepoView"
+            }
+          }
+        }
+      },
+      "ProjectsListResponse": {
+        "type": "object",
+        "required": [
+          "projects"
+        ],
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectView"
+            }
+          }
+        }
+      },
       "PromotionMemory": {
         "type": "object",
         "description": "Memory body of a pending promotion. `None` on the parent ⇒ serialized as\n`null` (RLS-invisible memory) — never omitted.",
@@ -5192,6 +6425,13 @@
               "string",
               "null"
             ]
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Project display name (PROJECT-PLAN PR2); null = org-shared. A reviewer\ndeciding whether a claim generalizes needs to know which application it\ncame from."
           },
           "status": {
             "type": [
@@ -5511,6 +6751,22 @@
           }
         }
       },
+      "RemovedRepoResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "removed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "removed": {
+            "type": "boolean"
+          }
+        }
+      },
       "RequeueResponse": {
         "type": "object",
         "description": "Confirmation of a requeue; `requeued` is always `true` (a miss 404s).",
@@ -5781,6 +7037,14 @@
               "null"
             ],
             "description": "Trust floor: raw|candidate|canonical (candidate ⇒ candidate+canonical)."
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Project lens (PROJECT-PLAN PR1): keeps this project's memories PLUS\norg-shared ones (project_id null) — \"my project + the org's\nconventions\". Omit for the unfiltered org view."
           },
           "query": {
             "type": "string"
@@ -6717,6 +7981,21 @@
           "prefix": {
             "type": "string"
           },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The project the key is scoped to; null = org-wide."
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name of that project; null = org-wide."
+          },
           "revoked_at": {
             "type": [
               "string",
@@ -6896,6 +8175,49 @@
           }
         }
       },
+      "ValidityResponse": {
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidityRow"
+            }
+          }
+        }
+      },
+      "ValidityRow": {
+        "type": "object",
+        "description": "One row of the as-of skeleton. RFC3339 timestamps, like the rest of the\narchive payload.",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "WeeklyPoint": {
         "type": "object",
         "description": "One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the\ncaptured/promoted series stay joinable client-side.",
@@ -6909,6 +8231,27 @@
             "format": "int64"
           },
           "week": {
+            "type": "string"
+          }
+        }
+      },
+      "WireFacet": {
+        "type": "object",
+        "description": "One facet option and the count behind it, across the whole console. Value is\nwhat a filter sends back; label is what the UI shows (they differ only for\nteams, where the value is the id and the label is the name).",
+        "required": [
+          "value",
+          "label",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
             "type": "string"
           }
         }
@@ -6962,6 +8305,14 @@
     {
       "name": "keys",
       "description": "Org directory backing key minting (admin)."
+    },
+    {
+      "name": "projects",
+      "description": "The project registry + repo whitelist keys scope to (admin)."
+    },
+    {
+      "name": "onboard",
+      "description": "Developer onboarding: device-flow pairing that mints project-scoped keys, driven by the brainiac-onboard skill."
     }
   ]
 }

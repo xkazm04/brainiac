@@ -117,6 +117,7 @@ async fn healthy_corpus(ctx: &Ctx) {
                 superseded_by: None,
                 confidence: Some(0.9),
                 provenance_id: None,
+                project_id: None,
             },
         )
         .await
@@ -143,6 +144,7 @@ async fn published_page(ctx: &Ctx, slug: &str, visibility: Visibility) -> Uuid {
             title: format!("Page {slug}"),
             visibility,
             doc_kind: DocKind::TopicPage,
+            project_id: None,
         },
     )
     .await

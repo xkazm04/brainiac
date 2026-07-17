@@ -6,9 +6,11 @@
 import "server-only";
 
 import type {
+  AddedRepo,
   Analytics,
   ApiToken,
   CanonicalDetail,
+  CreatedProject,
   Contradiction,
   ContradictionResolution,
   DocApproval,
@@ -16,7 +18,7 @@ import type {
   EditSectionResponse,
   DocDetail,
   DocRevisionSummary,
-  DocSummary,
+  DocsListResponse,
   Graph,
   GraphOverview,
   KnowledgeHealth,
@@ -24,10 +26,14 @@ import type {
   LibraryStandard,
   MemoriesList,
   MemoryDetail,
+  MemoryValidity,
   MintedToken,
   ObservatoryPayload,
+  OnboardRequest,
+  OnboardDecision,
   OrgUser,
   PendingPromotion,
+  Project,
   PipelineRun,
   PracticeDivergences,
   QueueHealth,
@@ -72,7 +78,7 @@ const API_TIMEOUT_MS = Number(process.env.BRAINIAC_API_TIMEOUT_MS ?? "15000") ||
 
 async function call<T>(
   cfg: ApiConfig,
-  method: "GET" | "POST" | "PUT",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -230,6 +236,20 @@ export async function getMemoryDetail(cfg: ApiConfig, id: string): Promise<Memor
   return call(cfg, "GET", `/v1/memories/${id}`);
 }
 
+/**
+ * The as-of skeleton: {id, valid_from, valid_to, status} for the whole visible
+ * corpus under the (non-as_of) filter. Tiny — ~40 bytes/row, ~100KB at 660 —
+ * so the archive holds it to scrub the time axis instantly while row content
+ * pages server-side. Takes the same filter params as `listMemories`.
+ */
+export async function memoryValidity(
+  cfg: ApiConfig,
+  params: Record<string, string> = {},
+): Promise<MemoryValidity> {
+  const qs = new URLSearchParams(params).toString();
+  return call(cfg, "GET", `/v1/memories/validity${qs ? `?${qs}` : ""}`);
+}
+
 export async function getSourcesFeed(cfg: ApiConfig, limit = 30): Promise<SourceFeedItem[]> {
   const out = await call<{ sources: SourceFeedItem[] }>(cfg, "GET", `/v1/sources?limit=${limit}`);
   return out.sources;
@@ -271,6 +291,46 @@ export async function createToken(
 
 export async function revokeToken(cfg: ApiConfig, id: string): Promise<void> {
   await call(cfg, "POST", `/v1/tokens/${id}/revoke`);
+}
+
+// ── projects + developer onboarding (admin token) ───────────────────────
+
+export async function listProjects(cfg: ApiConfig): Promise<Project[]> {
+  const out = await call<{ projects: Project[] }>(cfg, "GET", "/v1/projects");
+  return out.projects;
+}
+
+export async function createProject(cfg: ApiConfig, name: string): Promise<CreatedProject> {
+  return call(cfg, "POST", "/v1/projects", { name });
+}
+
+export async function addProjectRepo(
+  cfg: ApiConfig,
+  projectId: string,
+  remote: string,
+): Promise<AddedRepo> {
+  return call(cfg, "POST", `/v1/projects/${projectId}/repos`, { remote });
+}
+
+export async function removeProjectRepo(
+  cfg: ApiConfig,
+  projectId: string,
+  repoId: string,
+): Promise<void> {
+  await call(cfg, "DELETE", `/v1/projects/${projectId}/repos/${repoId}`);
+}
+
+export async function listOnboardRequests(cfg: ApiConfig): Promise<OnboardRequest[]> {
+  const out = await call<{ requests: OnboardRequest[] }>(cfg, "GET", "/v1/onboard/requests");
+  return out.requests;
+}
+
+export async function decideOnboardRequest(
+  cfg: ApiConfig,
+  id: string,
+  decision: "approve" | "deny",
+): Promise<OnboardDecision> {
+  return call(cfg, "POST", `/v1/onboard/requests/${id}/${decision}`);
 }
 
 export async function getOrgUsers(cfg: ApiConfig): Promise<OrgUser[]> {
@@ -347,9 +407,54 @@ export async function getSkillDetail(cfg: ApiConfig, slug: string): Promise<Skil
 }
 
 // ── documents (KB2) ─────────────────────────────────────────────────────
-export async function listDocs(cfg: ApiConfig): Promise<DocSummary[]> {
-  const out = await call<{ documents: DocSummary[] }>(cfg, "GET", "/v1/docs");
-  return out.documents;
+
+/** The wiki's browse query — mirrors GET /v1/docs' params. The server pages,
+ *  facets and builds the space tree; the client never holds the whole corpus. */
+export interface DocsQuery {
+  /** Full-text search over title + slug. */
+  q?: string;
+  kind?: string;
+  tag?: string;
+  /** Behind its sources — the recomposing tab. */
+  stale?: boolean;
+  /** The folder = first slug segment. `""` is the un-namespaced (unfiled) space. */
+  space?: string;
+  status?: string;
+  /** A revision is waiting on a human — the review tab. */
+  needsReview?: boolean;
+  /** Ask for the cross-filtered facet menu (the space directory + tab counts). */
+  facets?: boolean;
+  /** 1..200. */
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * GET /v1/docs — the paginated, faceted envelope. Returns `total` (filtered
+ * depth), `facets` (only when `facets:1`) and the current page of `documents`.
+ * A `space` of `""` is meaningful (the un-namespaced bucket), so it is sent
+ * whenever the key is present rather than only when truthy.
+ */
+export async function listDocs(
+  cfg: ApiConfig,
+  query: DocsQuery = {},
+): Promise<DocsListResponse> {
+  const qs = new URLSearchParams();
+  if (query.q) qs.set("q", query.q);
+  if (query.kind) qs.set("kind", query.kind);
+  if (query.tag) qs.set("tag", query.tag);
+  // The server deserializes these as real booleans — they must be the literal
+  // `true`, not `1` (which 400s). `facets` is the exception the server accepts
+  // as `1`, but `true` is honoured there too, so everything speaks one dialect.
+  if (query.stale) qs.set("stale", "true");
+  if (query.space !== undefined) qs.set("space", query.space);
+  if (query.status) qs.set("status", query.status);
+  if (query.needsReview) qs.set("needs_review", "true");
+  if (query.facets) qs.set("facets", "true");
+  if (query.limit !== undefined) qs.set("limit", String(query.limit));
+  if (query.offset !== undefined) qs.set("offset", String(query.offset));
+  const s = qs.toString();
+  return call<DocsListResponse>(cfg, "GET", `/v1/docs${s ? `?${s}` : ""}`);
 }
 
 export async function getDoc(cfg: ApiConfig, slug: string): Promise<DocDetail> {

@@ -60,6 +60,7 @@ async fn mcp_handshake_and_tools() {
             team_ids: vec![stable_uuid("team-data")],
         },
         scopes: None,
+        project_id: None,
     });
 
     // initialize

@@ -72,6 +72,7 @@ export function makeLargeDivergences(n: number = SCALE_DIVERGENCES): PracticeDiv
       ],
       model_ref: "qwen:qwen-max",
       detected_at: `2026-0${1 + (i % 7)}-${String(1 + (i % 27)).padStart(2, "0")}T00:00:00Z`,
+      axis: "team",
     };
   });
   // The server orders by impact; the board assumes it ("highest impact first").

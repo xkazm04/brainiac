@@ -395,6 +395,7 @@ pub async fn run(
             "session_transcript",
             &text,
             None,
+            None,
         )
         .await?;
         source_ids.push((sid, t.id.clone()));

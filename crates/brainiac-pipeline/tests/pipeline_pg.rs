@@ -157,6 +157,7 @@ async fn full_pipeline_over_seed_transcripts() {
             "session_transcript",
             &text,
             None,
+            None,
         )
         .await
         .expect("source");
@@ -472,6 +473,7 @@ async fn failed_job_records_a_failed_run_row() {
         "session_transcript",
         "garbage",
         None,
+        None,
     )
     .await
     .expect("source");
@@ -601,6 +603,7 @@ async fn supersession_serves_only_the_winner() {
         superseded_by: None,
         confidence: Some(0.9),
         provenance_id: None,
+        project_id: None,
     };
     for (id, txt) in [(winner, win_txt), (loser, lose_txt)] {
         memories::insert(&mut tx, &mk(id, txt))
@@ -776,6 +779,7 @@ async fn alias_capture_and_resolution() {
         "session_transcript",
         "psp-gateway (PSP) owns retry backoff",
         None,
+        None,
     )
     .await
     .expect("source");
@@ -791,6 +795,7 @@ async fn alias_capture_and_resolution() {
         source_id,
         "session_transcript",
         "psp-gateway (PSP) owns retry backoff",
+        None,
         None,
     )
     .await
@@ -963,6 +968,7 @@ async fn reprocessing_source_is_idempotent() {
         "session_transcript",
         source_text,
         None,
+        None,
     )
     .await
     .expect("source");
@@ -980,6 +986,7 @@ async fn reprocessing_source_is_idempotent() {
         source_id,
         "session_transcript",
         source_text,
+        None,
         None,
     )
     .await
@@ -999,6 +1006,7 @@ async fn reprocessing_source_is_idempotent() {
         source_id,
         "session_transcript",
         source_text,
+        None,
         None,
     )
     .await
@@ -1072,6 +1080,7 @@ async fn malformed_extraction_repairs_once() {
         "session_transcript",
         "a transcript",
         None,
+        None,
     )
     .await
     .expect("source");
@@ -1088,6 +1097,7 @@ async fn malformed_extraction_repairs_once() {
         source_id,
         "session_transcript",
         "a transcript",
+        None,
         None,
     )
     .await
@@ -1150,6 +1160,7 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         "session_transcript",
         "garbage",
         None,
+        None,
     )
     .await
     .expect("source");
@@ -1167,6 +1178,7 @@ async fn persistently_malformed_source_fails_then_dead_letters() {
         source_id,
         "session_transcript",
         "garbage",
+        None,
         None,
     )
     .await;
@@ -1274,6 +1286,7 @@ async fn manual_source_ingests_verbatim_without_the_model() {
         "manual",
         &raw,
         None,
+        None,
     )
     .await
     .expect("source");
@@ -1288,6 +1301,7 @@ async fn manual_source_ingests_verbatim_without_the_model() {
         source_id,
         "manual",
         &raw,
+        None,
         None,
     )
     .await
@@ -1406,6 +1420,7 @@ async fn long_transcript_captures_head_and_tail() {
         "session_transcript",
         &transcript,
         None,
+        None,
     )
     .await
     .expect("source");
@@ -1422,6 +1437,7 @@ async fn long_transcript_captures_head_and_tail() {
         source_id,
         "session_transcript",
         &transcript,
+        None,
         None,
     )
     .await
@@ -1537,6 +1553,7 @@ async fn extraction_firewall_types_entities_and_relations() {
         "session_transcript",
         "gizmo-svc calls widget-svc",
         None,
+        None,
     )
     .await
     .expect("source");
@@ -1558,6 +1575,7 @@ async fn extraction_firewall_types_entities_and_relations() {
         source_id,
         "session_transcript",
         "gizmo-svc calls widget-svc",
+        None,
         None,
     )
     .await
@@ -1688,6 +1706,7 @@ async fn batch_jobs_process_concurrently() {
             Some(team),
             "session_transcript",
             "a short transcript",
+            None,
             None,
         )
         .await

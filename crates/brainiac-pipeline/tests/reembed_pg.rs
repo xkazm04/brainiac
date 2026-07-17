@@ -52,6 +52,7 @@ async fn seed_org(
                 superseded_by: None,
                 confidence: Some(0.9),
                 provenance_id: None,
+                project_id: None,
             },
         )
         .await

@@ -44,7 +44,9 @@ function isoDay(value: string | null | undefined): string {
   return Number.isNaN(t.getTime()) ? "—" : t.toISOString().slice(0, 10);
 }
 
-type Approach = { team: string; approach: string };
+/** One group's way: `team` on team-axis rows, `project` on project-axis ones
+ *  (PROJECT-PLAN PR3). `group` is whichever was present. */
+type Approach = { group: string; approach: string };
 
 /** impact → accent. High is the alarm colour; the sweep is conservative, so a
  *  "high" is rare and earns the strongest signal. */
@@ -54,10 +56,10 @@ const impactAccent = (impact: string): string =>
 const readApproaches = (raw: unknown): Approach[] => {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((a): a is Approach => !!a && typeof a === "object")
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === "object")
     .map((a) => ({
-      team: String((a as Approach).team ?? "—"),
-      approach: String((a as Approach).approach ?? ""),
+      group: String(a.project ?? a.team ?? "—"),
+      approach: String(a.approach ?? ""),
     }));
 };
 
@@ -82,6 +84,18 @@ function DivergenceCard({ d }: { d: PracticeDivergence }) {
         >
           {d.impact} impact
         </span>
+        {/* The divergence class: who is diverging — teams, or applications.
+            A cross-project drift usually resolves into a per-stack Library
+            rule; a cross-team one into a conversation (PR3). */}
+        <span
+          className={`${FONT_MONO} rounded-md px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]`}
+          style={{
+            color: INK_FAINT,
+            border: `1px solid ${BORDER}`,
+          }}
+        >
+          {d.axis === "project" ? "across projects" : "across teams"}
+        </span>
         <h2 className={`${FONT_DISPLAY} text-2xl`} style={{ color: INK }}>
           {d.practice}
         </h2>
@@ -100,14 +114,14 @@ function DivergenceCard({ d }: { d: PracticeDivergence }) {
             const ta = teamAccent(i);
             return (
               <div
-                key={`${a.team}-${i}`}
+                key={`${a.group}-${i}`}
                 className="flex flex-col gap-2 p-4"
                 style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${BORDER}` }}
               >
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-sm" style={{ background: ta }} />
                   <span className={LABEL} style={{ color: ta }}>
-                    {a.team}
+                    {a.group}
                   </span>
                 </div>
                 <p className={`${FONT_MONO} text-[13px] leading-relaxed`} style={{ color: INK }}>

@@ -598,6 +598,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memories/validity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The as-of skeleton: {id, valid_from, valid_to, status} for every memory matching the filter (as_of excluded). Tiny by design — it lets a client scrub the archive's time axis instantly without holding the full corpus. Takes the same filters as /v1/memories minus paging. */
+        get: operations["memories_validity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memories/{id}": {
         parameters: {
             query?: never;
@@ -676,6 +693,127 @@ export interface paths {
          * @description Re-verify a memory: extend its validity window from now and close any open feedback claims against it. Requires a maintainer of the owning team.
          */
         post: operations["memory_reverify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/onboard/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/onboard/poll — the CLI's wait loop; the approving poll mints.
+         * @description Poll a pairing request by device_code. While pending returns {status: "pending"}; the first poll after approval claims the request and returns the minted project-scoped key EXACTLY ONCE.
+         */
+        post: operations["onboard_poll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/onboard/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /v1/onboard/requests — the console's approval queue (admin).
+         * @description Pending pairing requests with their whitelist match in the caller's org (admin). A null project_name means approval will be refused until the remote is registered under a project.
+         */
+        get: operations["requests_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/onboard/requests/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/onboard/requests/{id}/approve — approve into the whitelist match.
+         * @description Approve a pending pairing (admin). The project is DERIVED from the whitelist — the remote must already be registered under a project in the caller's org, or this refuses with 409.
+         */
+        post: operations["request_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/onboard/requests/{id}/deny": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/onboard/requests/{id}/deny — refuse a pending pairing.
+         * @description Deny a pending pairing request (admin). The polling CLI is told {status: "denied"} and stops.
+         */
+        post: operations["request_deny"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/onboard/skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /v1/onboard/skill — the brainiac-onboard skill, served for the
+         *     copyable bootstrap command in the Keys module.
+         * @description The brainiac-onboard Claude Code skill (markdown). Open, like /health: a developer fetches this BEFORE they have a token — the skill is how they get one. Canonical source: docs/skills/brainiac-onboard/SKILL.md.
+         */
+        get: operations["onboard_skill"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/onboard/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/onboard/start — open a pairing request (unauthenticated).
+         * @description Open an onboarding pairing request for a git remote. Unauthenticated — this is how a developer with no credentials acquires one. Returns a short user_code (matched by eye in the console) and a long device_code to poll with.
+         */
+        post: operations["onboard_start"];
         delete?: never;
         options?: never;
         head?: never;
@@ -769,6 +907,70 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /v1/projects — the org's projects with their whitelisted repos.
+         * @description The org's projects with their whitelisted repos (admin).
+         */
+        get: operations["projects_list"];
+        put?: never;
+        /**
+         * POST /v1/projects — create a project.
+         * @description Create a project (admin). Names are unique per org.
+         */
+        post: operations["project_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{id}/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/projects/{id}/repos — whitelist a remote under a project.
+         * @description Whitelist a git remote under a project (admin). The remote is normalized to `host/owner/name`; within an org a remote maps to exactly one project.
+         */
+        post: operations["repo_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{id}/repos/{repo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * DELETE /v1/projects/{id}/repos/{repo_id} — un-whitelist a remote.
+         * @description Remove a whitelisted remote (admin). Existing keys stay valid; only future onboarding stops matching.
+         */
+        delete: operations["repo_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1110,6 +1312,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AddRepoBody: {
+            /** @description Any spelling of the remote (https, ssh, scp, bare); stored normalized. */
+            remote: string;
+        };
+        AddedRepoResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @description The normalized form that was stored — what onboarding will match on. */
+            remote: string;
+        };
         AdoptRequest: {
             /**
              * @description Adopt WITHOUT evidence, signing for it by name. Absent a decree, a rule
@@ -1403,8 +1617,16 @@ export interface components {
              */
             suggested_resolution?: string | null;
         };
+        CreateProjectBody: {
+            name: string;
+        };
         CreateTokenBody: {
             name: string;
+            /**
+             * Format: uuid
+             * @description Scope the key to one project (migration 0034); omit for org-wide.
+             */
+            project_id?: string | null;
             /** @description Subset of read|write|admin; defaults to ["read"]. */
             scopes?: string[] | null;
             /**
@@ -1412,6 +1634,11 @@ export interface components {
              * @description Principal the token acts as; defaults to the caller.
              */
             user_id?: string | null;
+        };
+        CreatedProjectResponse: {
+            /** Format: uuid */
+            id: string;
+            name: string;
         };
         /**
          * @description The mint response. `token` is the plaintext secret and is the only place
@@ -1422,6 +1649,11 @@ export interface components {
             id: string;
             name: string;
             prefix: string;
+            /**
+             * Format: uuid
+             * @description The project the key is scoped to; null = org-wide.
+             */
+            project_id?: string | null;
             scopes: string[];
             /** @description Shown exactly once — never retrievable again. */
             token: string;
@@ -1466,10 +1698,45 @@ export interface components {
             revision?: null | components["schemas"]["DocRevisionView"];
             sections: components["schemas"]["DocSectionView"][];
         };
+        /** @description One facet option for the wiki (a space, a kind, a status) and its count. */
+        DocFacet: {
+            /** Format: int64 */
+            count: number;
+            label: string;
+            value: string;
+        };
+        /**
+         * @description The wiki's facet menu — the space directory and the tab counts — computed
+         *     server-side so the client never needs the whole corpus to build its tree.
+         *     Present only when `?facets=1`.
+         */
+        DocFacetMenu: {
+            /**
+             * Format: int64
+             * @description Pages behind the corpus under the current filter (the recomposing tab).
+             */
+            dirty: number;
+            kinds: components["schemas"]["DocFacet"][];
+            /**
+             * Format: int64
+             * @description Pages awaiting review under the current filter (the review tab).
+             */
+            needs_review: number;
+            /** @description The spaces (folders), each with its page count — the tree directory. */
+            spaces: components["schemas"]["DocFacet"][];
+            statuses: components["schemas"]["DocFacet"][];
+        };
         DocRevisionView: {
             composed_from: string[];
             content_md: string;
             created_at: string;
+            /**
+             * @description Sampled citation-faithfulness verdict (0036), when the runtime judge
+             *     ran: `checked` paragraph count plus `flagged` excerpts whose prose
+             *     misstates the memory it cites — the reviewer's read-this-first list.
+             *     `null` = not judged; absence of a verdict is not a verdict.
+             */
+            faithfulness: Record<string, never> | null;
             /** Format: uuid */
             id: string;
             policy_decision: string;
@@ -1506,6 +1773,13 @@ export interface components {
             id: string;
             /** @description A revision is waiting on a human. Work, not decoration. */
             pending_review: boolean;
+            /**
+             * Format: uuid
+             * @description The project this page is scoped to (PROJECT-PLAN PR4); null = an
+             *     org-wide page. A stamped page composes only from its project +
+             *     org-shared memories.
+             */
+            project_id?: string | null;
             slug: string;
             status: string;
             title: string;
@@ -1514,6 +1788,12 @@ export interface components {
         };
         DocsListResponse: {
             documents: components["schemas"]["DocSummary"][];
+            facets?: null | components["schemas"]["DocFacetMenu"];
+            /**
+             * Format: int64
+             * @description Filtered depth — what matches, ignoring the page window.
+             */
+            total: number;
         };
         EditSectionBody: {
             /** @description The section as the human now wants it to read. */
@@ -1618,6 +1898,8 @@ export interface components {
         FeedbackFacets: {
             bands: components["schemas"]["FeedbackFacet"][];
             kinds: components["schemas"]["FeedbackFacet"][];
+            /** @description Value is a project id or `"none"`; label the name or `"org-shared"`. */
+            projects: components["schemas"]["FeedbackFacet"][];
             teams: components["schemas"]["FeedbackFacet"][];
         };
         /**
@@ -1698,6 +1980,10 @@ export interface components {
              * @description Age of the OLDEST open claim — how long the dispute has stood.
              */
             oldest_claim_secs: number;
+            /** @description Project display name; null = org-shared (PR2). */
+            project?: string | null;
+            /** Format: uuid */
+            project_id?: string | null;
             provenance?: null | components["schemas"]["FeedbackProvenance"];
             /**
              * Format: int64
@@ -1751,6 +2037,12 @@ export interface components {
         };
         GraphOverviewResponse: {
             canonicals: components["schemas"]["OverviewCanonical"][];
+            project_links: components["schemas"]["ProjectLink"][];
+            /**
+             * @description The project lens (PR3): lobes/links parallel to the team ones. Empty
+             *     until writes are project-stamped.
+             */
+            projects: components["schemas"]["ProjectLobe"][];
             team_links: components["schemas"]["TeamLink"][];
             teams: components["schemas"]["TeamLobe"][];
         };
@@ -1828,6 +2120,19 @@ export interface components {
             agent_page_reads_30d: number;
             /** Format: int64 */
             canonical_entities: number;
+            /**
+             * Format: int64
+             * @description Open contradictions whose two sides are stamped with DIFFERENT
+             *     projects — two applications believing incompatible things (PR3).
+             */
+            cross_project_contradictions: number;
+            /**
+             * Format: int64
+             * @description Canonical entities anchored by memories of ≥2 DIFFERENT projects —
+             *     knowledge crossing application lines (PROJECT-PLAN PR3). Zero until
+             *     writes are project-stamped; that is coverage, not health.
+             */
+            cross_project_entities: number;
             /**
              * Format: int64
              * @description Open contradictions where the two sides belong to DIFFERENT teams — the ones
@@ -1936,6 +2241,16 @@ export interface components {
             /** Format: int64 */
             total_memories: number;
         };
+        /**
+         * @description The project twin of [`KindTeamCount`] (PROJECT-PLAN PR3). `project` is the
+         *     display name, with `org-shared` standing in for the null bucket.
+         */
+        KindProjectCount: {
+            /** Format: int64 */
+            count: number;
+            kind: string;
+            project: string;
+        };
         KindTeamCount: {
             /** Format: int64 */
             count: number;
@@ -1984,6 +2299,14 @@ export interface components {
              *     under exactly this kind (default `fact`) with no model guessing.
              */
             kind?: string | null;
+            /**
+             * Format: uuid
+             * @description PROJECT-PLAN PR0: attribute this write to a project explicitly (must
+             *     exist in the caller's org). Omitted ⇒ the key's own project scope, or
+             *     org-shared for org-wide keys. An org-wide key (CI, imports) uses this
+             *     to attribute correctly.
+             */
+            project_id?: string | null;
             /** Format: uuid */
             team_id?: string | null;
         };
@@ -2003,9 +2326,23 @@ export interface components {
             name: string;
             team: string;
         };
+        /** @description The archive's cross-filtered facet menu. Present only when `?facets=1`. */
+        MemoryFacetMenu: {
+            kinds: components["schemas"]["WireFacet"][];
+            /** @description Value is a project id or `"none"`; label the name or `"org-shared"`. */
+            projects: components["schemas"]["WireFacet"][];
+            statuses: components["schemas"]["WireFacet"][];
+            teams: components["schemas"]["WireFacet"][];
+            visibilities: components["schemas"]["WireFacet"][];
+        };
         MemoryListResponse: {
+            facets?: null | components["schemas"]["MemoryFacetMenu"];
             memories: components["schemas"]["MemoryRow"][];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The filtered depth — what matches, ignoring the page window. `memories`
+             *     is only the page; this is the number the archive counts by.
+             */
             total: number;
         };
         /** @description A promotion attempt on this memory. Timestamps are RFC3339 strings here. */
@@ -2059,6 +2396,10 @@ export interface components {
             /** Format: uuid */
             id: string;
             kind: string;
+            /** @description Project display name; null = org-shared (PROJECT-PLAN PR2). */
+            project?: string | null;
+            /** Format: uuid */
+            project_id?: string | null;
             status: string;
             /** Format: uuid */
             superseded_by?: string | null;
@@ -2085,6 +2426,8 @@ export interface components {
         };
         ObservatoryResponse: {
             by_kind: components["schemas"]["KindTeamCount"][];
+            /** @description Kind×project volumes — the axis-swap twin of `by_kind` (PR3). */
+            by_project: components["schemas"]["KindProjectCount"][];
             contradictions: components["schemas"]["StatusCount"][];
             embedding_model: string;
             queue: components["schemas"]["QueueDepth"];
@@ -2108,6 +2451,73 @@ export interface components {
         ObservatoryWeekly: {
             captured: components["schemas"]["WeeklyPoint"][];
             promoted: components["schemas"]["WeeklyPoint"][];
+        };
+        OnboardDecisionResponse: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id?: string | null;
+            project_name?: string | null;
+            /** @description approved | denied */
+            status: string;
+        };
+        OnboardPollBody: {
+            device_code: string;
+        };
+        OnboardPollResponse: {
+            /** Format: uuid */
+            org_id?: string | null;
+            /** Format: uuid */
+            project_id?: string | null;
+            project_name?: string | null;
+            /** @description pending | approved | denied | expired | claimed */
+            status: string;
+            /**
+             * @description The minted key — present exactly once, on the poll that claims an
+             *     approved request. Never retrievable again.
+             */
+            token?: string | null;
+        };
+        OnboardRequestView: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /** Format: uuid */
+            project_id?: string | null;
+            /**
+             * @description The project this remote would land in (whitelist match in the caller's
+             *     org), or null — meaning approval will 409 until the repo is registered.
+             */
+            project_name?: string | null;
+            remote: string;
+            user_code: string;
+        };
+        OnboardRequestsResponse: {
+            requests: components["schemas"]["OnboardRequestView"][];
+        };
+        OnboardStartBody: {
+            /** @description Who is asking — hostname/username, shown to the approver. */
+            label?: string | null;
+            /** @description The checkout's `git remote get-url origin`, any spelling. */
+            remote: string;
+        };
+        OnboardStartResponse: {
+            /** @description Long secret the CLI polls with. Appears only here. */
+            device_code: string;
+            /** Format: int64 */
+            expires_in_secs: number;
+            /** Format: int64 */
+            poll_interval_secs: number;
+            /** @description The normalized remote the request was recorded under. */
+            remote: string;
+            /** @description Short code the approver matches by eye in the console. */
+            user_code: string;
+            /** @description Where a human approves this — the console's projects module. */
+            verification_url: string;
         };
         OrgUser: {
             email: string;
@@ -2146,6 +2556,12 @@ export interface components {
             /** Format: int64 */
             memories: number;
             name: string;
+            project_ids: string[];
+            /**
+             * Format: int64
+             * @description DISTINCT projects whose stamped memories anchor this hub (PR3).
+             */
+            projects: number;
             team_ids: string[];
             /** Format: int64 */
             teams: number;
@@ -2187,8 +2603,16 @@ export interface components {
             total: number;
         };
         PracticeDivergence: {
-            /** @description Each team's approach: [{team, approach}]. */
+            /**
+             * @description Each group's approach: [{team, approach}] on the team axis,
+             *     [{project, approach}] on the project axis.
+             */
             approaches: unknown;
+            /**
+             * @description The divergence class (PROJECT-PLAN PR3): `team` (two teams disagree)
+             *     or `project` (two applications solve the same thing differently).
+             */
+            axis: string;
             /** Format: date-time */
             detected_at: string;
             /** @description high | medium | low. */
@@ -2211,6 +2635,52 @@ export interface components {
             user_id: string;
         };
         /**
+         * @description Binding strength between two project lobes = canonicals anchored by
+         *     stamped memories of BOTH projects.
+         */
+        ProjectLink: {
+            /** Format: uuid */
+            a: string;
+            /** Format: uuid */
+            b: string;
+            /** Format: int64 */
+            shared: number;
+        };
+        /**
+         * @description A project lobe (PROJECT-PLAN PR3): the application/domain plus its
+         *     stamped-memory volume and the entities those memories anchor. Only
+         *     projects with at least one stamped memory appear — an empty lobe is not
+         *     information; org-shared rows belong to every lobe and to none.
+         */
+        ProjectLobe: {
+            /** Format: int64 */
+            entities: number;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            memories: number;
+            name: string;
+        };
+        ProjectRepoView: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Normalized remote, e.g. `github.com/acme/payments`. */
+            remote: string;
+        };
+        ProjectView: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            repos: components["schemas"]["ProjectRepoView"][];
+        };
+        ProjectsListResponse: {
+            projects: components["schemas"]["ProjectView"][];
+        };
+        /**
          * @description Memory body of a pending promotion. `None` on the parent ⇒ serialized as
          *     `null` (RLS-invisible memory) — never omitted.
          */
@@ -2219,6 +2689,12 @@ export interface components {
             confidence?: number | null;
             content: string;
             kind?: string | null;
+            /**
+             * @description Project display name (PROJECT-PLAN PR2); null = org-shared. A reviewer
+             *     deciding whether a claim generalizes needs to know which application it
+             *     came from.
+             */
+            project?: string | null;
             status?: string | null;
             team?: string | null;
         };
@@ -2352,6 +2828,11 @@ export interface components {
              */
             standard_id: string;
         };
+        RemovedRepoResponse: {
+            /** Format: uuid */
+            id: string;
+            removed: boolean;
+        };
         /** @description Confirmation of a requeue; `requeued` is always `true` (a miss 404s). */
         RequeueResponse: {
             /** Format: int64 */
@@ -2469,6 +2950,13 @@ export interface components {
             min_confidence?: number | null;
             /** @description Trust floor: raw|candidate|canonical (candidate ⇒ candidate+canonical). */
             min_status?: string | null;
+            /**
+             * Format: uuid
+             * @description Project lens (PROJECT-PLAN PR1): keeps this project's memories PLUS
+             *     org-shared ones (project_id null) — "my project + the org's
+             *     conventions". Omit for the unfiltered org view.
+             */
+            project_id?: string | null;
             query: string;
             /**
              * Format: uuid
@@ -2804,6 +3292,13 @@ export interface components {
             last_used_at?: string | null;
             name: string;
             prefix: string;
+            /**
+             * Format: uuid
+             * @description The project the key is scoped to; null = org-wide.
+             */
+            project_id?: string | null;
+            /** @description Display name of that project; null = org-wide. */
+            project_name?: string | null;
             /** Format: date-time */
             revoked_at?: string | null;
             scopes: string[];
@@ -2872,6 +3367,20 @@ export interface components {
         UsageResponse: {
             recorded: boolean;
         };
+        ValidityResponse: {
+            rows: components["schemas"]["ValidityRow"][];
+        };
+        /**
+         * @description One row of the as-of skeleton. RFC3339 timestamps, like the rest of the
+         *     archive payload.
+         */
+        ValidityRow: {
+            /** Format: uuid */
+            id: string;
+            status: string;
+            valid_from?: string | null;
+            valid_to?: string | null;
+        };
         /**
          * @description One point of a weekly series; `week` is an ISO label (`IYYY-Www`) so the
          *     captured/promoted series stay joinable client-side.
@@ -2880,6 +3389,17 @@ export interface components {
             /** Format: int64 */
             count: number;
             week: string;
+        };
+        /**
+         * @description One facet option and the count behind it, across the whole console. Value is
+         *     what a filter sends back; label is what the UI shows (they differ only for
+         *     teams, where the value is the id and the label is the name).
+         */
+        WireFacet: {
+            /** Format: int64 */
+            count: number;
+            label: string;
+            value: string;
         };
     };
     responses: never;
@@ -3072,6 +3592,38 @@ export interface operations {
                  *     doc search the MCP surface already had, now over REST). Omit to list all.
                  */
                 q: string | null;
+                /**
+                 * @description Exact page kind: `entity_page` | `topic_page` | `runbook` | `onboarding`
+                 *     | `digest` | `standards_page`. Unknown kinds are a 400, not an empty
+                 *     list — a typo must not read as "no runbooks exist".
+                 */
+                kind: string | null;
+                /**
+                 * @description Canonical entity name (case-insensitive): pages citing a memory anchored
+                 *     to that entity. The same vocabulary the OKF bundle publishes as `tags`.
+                 */
+                tag: string | null;
+                /**
+                 * @description `true` = only stale pages (an underlying memory moved), `false` = only
+                 *     current ones. Omit for both.
+                 */
+                stale: boolean | null;
+                /**
+                 * @description The wiki folder (first slug segment, e.g. `payments`). What the tree
+                 *     browses one space at a time.
+                 */
+                space: string | null;
+                /** @description Exact publish status: `draft` | `published` | `archived`. */
+                status: string | null;
+                /** @description `true` = only pages whose current revision awaits a human (review tab). */
+                needs_review: boolean | null;
+                /**
+                 * @description Compute the cross-filtered facet menu (space directory + tab counts).
+                 *     Off by default so a headless page-walk pays only for the rows it reads.
+                 */
+                facets: boolean;
+                limit: number;
+                offset: number;
             };
             cookie?: never;
         };
@@ -3625,6 +4177,8 @@ export interface operations {
                 status?: string;
                 /** @description Filter by owning team id */
                 team?: string;
+                /** @description Filter by project id, or `none` for org-shared rows */
+                project?: string;
                 /** @description RFC3339 instant: return rows VALID then, including since-deprecated ones */
                 as_of?: string;
                 /** @description Page size (default 50, clamped 1..200) */
@@ -3819,6 +4373,37 @@ export interface operations {
             };
         };
     };
+    memories_validity: {
+        parameters: {
+            query?: {
+                /** @description Full-text filter */
+                q?: string;
+                /** @description Filter by kind */
+                kind?: string;
+                /** @description Filter by status */
+                status?: string;
+                /** @description Filter by owning team */
+                team?: string;
+                /** @description Filter by visibility */
+                visibility?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validity skeleton */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidityResponse"];
+                };
+            };
+        };
+    };
     memory_detail: {
         parameters: {
             query?: never;
@@ -3997,6 +4582,222 @@ export interface operations {
             };
         };
     };
+    onboard_poll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardPollBody"];
+            };
+        };
+        responses: {
+            /** @description Current pairing state (token present exactly once, on claim) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardPollResponse"];
+                };
+            };
+            /** @description Unknown device code */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    requests_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending requests, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardRequestsResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    request_approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Pairing request id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approved; the CLI's next poll mints the key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardDecisionResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request not found, expired, or already decided */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Remote not whitelisted under any project in this org */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    request_deny: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Pairing request id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Denied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardDecisionResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request not found or already decided */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onboard_skill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skill, as markdown */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onboard_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardStartBody"];
+            };
+        };
+        responses: {
+            /** @description Pairing opened */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardStartResponse"];
+                };
+            };
+            /** @description Remote is not a recognizable git remote URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many pending pairing requests; try again shortly */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sweeps_list: {
         parameters: {
             query?: never;
@@ -4123,6 +4924,200 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PipelineRunsResponse"];
                 };
+            };
+        };
+    };
+    projects_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Projects of the caller's org */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectsListResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    project_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProjectBody"];
+            };
+        };
+        responses: {
+            /** @description Project created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedProjectResponse"];
+                };
+            };
+            /** @description Empty or oversized name */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A project with this name already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repo_add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddRepoBody"];
+            };
+        };
+        responses: {
+            /** @description Repo whitelisted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddedRepoResponse"];
+                };
+            };
+            /** @description Remote is not a recognizable git remote URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project not found in this org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description This remote is already whitelisted in the org */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repo_remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project id (route context only) */
+                id: string;
+                /** @description Repo row id */
+                repo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repo removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovedRepoResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Repo not found in this org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -4407,6 +5402,8 @@ export interface operations {
                 min_claims?: number;
                 /** @description Decay band: past|d30|d90|d180|far|none */
                 band?: string;
+                /** @description Filter by project id, or `none` for org-shared */
+                project?: string;
             };
             header?: never;
             path?: never;

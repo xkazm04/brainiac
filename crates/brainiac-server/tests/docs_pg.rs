@@ -92,6 +92,15 @@ fn principal(org: Uuid, user: Uuid) -> brainiac_core::Principal {
     }
 }
 
+/// A lexical-only filter — the pre-filter search shape, for the tests that
+/// exercise the needle and RLS rather than the deterministic predicates.
+fn lexical(needle: &str) -> brainiac_store::documents::DocFilter<'_> {
+    brainiac_store::documents::DocFilter {
+        q: Some(needle),
+        ..Default::default()
+    }
+}
+
 /// A published page owned by team A, visible to team A only.
 ///
 /// NB: seeded through `worker_tx`, not `scoped_tx`. A TEAM document is only
@@ -115,6 +124,7 @@ async fn team_page(ctx: &Ctx) -> Uuid {
             title: "Payments runbook".into(),
             visibility: Visibility::Team,
             doc_kind: DocKind::Runbook,
+            project_id: None,
         },
     )
     .await
@@ -239,17 +249,17 @@ async fn doc_search_matches_title_body_and_respects_rls() {
         .scoped_tx(&principal(ctx.org_id, ctx.user_a))
         .await
         .expect("tx");
-    let by_title = brainiac_store::documents::search_documents(&mut tx, "payments", 50)
+    let by_title = brainiac_store::documents::search_documents(&mut tx, lexical("payments"), 50)
         .await
         .expect("title");
     assert_eq!(by_title.len(), 1, "title/slug match");
     assert_eq!(by_title[0].slug, "payments-runbook");
-    let by_body = brainiac_store::documents::search_documents(&mut tx, "Owned by", 50)
+    let by_body = brainiac_store::documents::search_documents(&mut tx, lexical("Owned by"), 50)
         .await
         .expect("body");
     assert_eq!(by_body.len(), 1, "body match through the current revision");
     assert!(
-        brainiac_store::documents::search_documents(&mut tx, "kafka ingestion", 50)
+        brainiac_store::documents::search_documents(&mut tx, lexical("kafka ingestion"), 50)
             .await
             .expect("miss")
             .is_empty(),
@@ -264,13 +274,175 @@ async fn doc_search_matches_title_body_and_respects_rls() {
         .await
         .expect("tx");
     assert!(
-        brainiac_store::documents::search_documents(&mut tx, "payments", 50)
+        brainiac_store::documents::search_documents(&mut tx, lexical("payments"), 50)
             .await
             .expect("outsider")
             .is_empty(),
         "search must not leak another team's page"
     );
     tx.commit().await.expect("c");
+}
+
+/// The deterministic filters (kind / tag / stale) added alongside the OKF
+/// target: "every runbook", "everything about psp-gateway", "what is stale"
+/// must be exact predicates, not fuzzy matches — the same vocabulary the
+/// published bundle exposes as frontmatter.
+#[tokio::test]
+async fn doc_search_filters_by_kind_tag_and_staleness() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let doc_id = team_page(&ctx).await;
+
+    // An org-visible memory anchored (via a raw entity) to the canonical
+    // entity "PSP Gateway", and a new published revision citing it — which
+    // rebuilds document_dependencies, the join the tag filter walks.
+    let p = brainiac_pipeline::pipeline_principal(ctx.org_id);
+    let mem_id = Uuid::new_v4();
+    {
+        let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+        let raw_entity = Uuid::new_v4();
+        brainiac_store::entities::insert_entity(
+            &mut tx,
+            raw_entity,
+            ctx.org_id,
+            Some(ctx.team_a),
+            "psp gw",
+            "tech",
+            &[],
+            None,
+        )
+        .await
+        .expect("entity");
+        let canonical = Uuid::new_v4();
+        brainiac_store::entities::insert_canonical(
+            &mut tx,
+            canonical,
+            ctx.org_id,
+            "PSP Gateway",
+            "tech",
+        )
+        .await
+        .expect("canonical");
+        brainiac_store::entities::link(&mut tx, raw_entity, canonical, 1.0, "test", None)
+            .await
+            .expect("link");
+        brainiac_store::memories::insert(
+            &mut tx,
+            &NewMemory {
+                id: mem_id,
+                org_id: ctx.org_id,
+                team_id: Some(ctx.team_a),
+                owner_user_id: None,
+                visibility: Visibility::Org,
+                status: MemoryStatus::Canonical,
+                kind: MemoryKind::Fact,
+                title: None,
+                content: "the gateway caps retries at 30 seconds".into(),
+                lifecycle: Lifecycle::Shipped,
+                detail_md: None,
+                language: "en".into(),
+                valid_from: None,
+                valid_to: None,
+                superseded_by: None,
+                confidence: Some(0.9),
+                provenance_id: None,
+                project_id: None,
+            },
+        )
+        .await
+        .expect("memory");
+        brainiac_store::memories::link_entity(&mut tx, mem_id, raw_entity)
+            .await
+            .expect("anchor");
+        brainiac_store::documents::insert_revision(
+            &mut tx,
+            &NewRevision {
+                id: Uuid::new_v4(),
+                document_id: doc_id,
+                org_id: ctx.org_id,
+                content_md: "# Payments runbook\n\nRetries cap at 30s.\n".into(),
+                composed_from: vec![mem_id],
+                trigger: "memory_change".into(),
+                policy_decision: brainiac_core::RevisionPolicy::AutoPublished,
+                claimed_updated_at: None,
+            },
+        )
+        .await
+        .expect("rev");
+        tx.commit().await.expect("commit");
+    }
+
+    use brainiac_store::documents::DocFilter;
+    let search = |filter: DocFilter<'static>| {
+        let store = ctx.store.clone();
+        let principal = principal(ctx.org_id, ctx.user_a);
+        async move {
+            let mut tx = store.scoped_tx(&principal).await.expect("tx");
+            let out = brainiac_store::documents::search_documents(&mut tx, filter, 50)
+                .await
+                .expect("search");
+            tx.commit().await.expect("c");
+            out
+        }
+    };
+
+    // kind is exact: the page is a runbook, not a topic page.
+    assert_eq!(
+        search(DocFilter { kind: Some("runbook"), ..Default::default() }).await.len(),
+        1
+    );
+    assert!(search(DocFilter { kind: Some("topic_page"), ..Default::default() })
+        .await
+        .is_empty());
+
+    // tag walks revision provenance → entity links → CANONICAL name,
+    // case-insensitively; a name nothing cites matches no page.
+    assert_eq!(
+        search(DocFilter { tag: Some("psp gateway"), ..Default::default() }).await.len(),
+        1,
+        "canonical entity name should match case-insensitively"
+    );
+    assert!(search(DocFilter { tag: Some("kafka"), ..Default::default() })
+        .await
+        .is_empty());
+
+    // Staleness: the fresh revision left the page clean; dirtying the cited
+    // memory flips which side of the filter it lands on.
+    assert_eq!(
+        search(DocFilter { stale: Some(false), ..Default::default() }).await.len(),
+        1
+    );
+    assert!(search(DocFilter { stale: Some(true), ..Default::default() })
+        .await
+        .is_empty());
+    {
+        let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
+        brainiac_store::documents::mark_dirty_for_memory(&mut tx, mem_id)
+            .await
+            .expect("dirty");
+        tx.commit().await.expect("commit");
+    }
+    assert_eq!(
+        search(DocFilter { stale: Some(true), ..Default::default() }).await.len(),
+        1
+    );
+
+    // Filters AND with the lexical needle.
+    assert_eq!(
+        search(DocFilter { q: Some("payments"), kind: Some("runbook"), ..Default::default() })
+            .await
+            .len(),
+        1
+    );
+    assert!(
+        search(DocFilter { q: Some("kafka"), kind: Some("runbook"), ..Default::default() })
+            .await
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -297,6 +469,7 @@ async fn mcp_doc_get_serves_published_pages_and_refuses_unsigned_drafts() {
             title: "Draft".into(),
             visibility: Visibility::Team,
             doc_kind: DocKind::TopicPage,
+            project_id: None,
         },
     )
     .await
@@ -415,6 +588,7 @@ async fn mcp_state(ctx: &Ctx, user: Uuid) -> std::sync::Arc<brainiac_server::mcp
         embedding_version: version,
         principal: principal(ctx.org_id, user),
         scopes: None,
+        project_id: None,
     })
 }
 
@@ -545,6 +719,7 @@ async fn entity_pages_scaffold_only_where_knowledge_actually_crosses_teams() {
                 superseded_by: None,
                 confidence: Some(0.9),
                 provenance_id: None,
+                project_id: None,
             },
         )
         .await
@@ -729,6 +904,7 @@ async fn weekly_digest_is_a_time_windowed_projection() {
                 superseded_by: None,
                 confidence: Some(0.9),
                 provenance_id: None,
+                project_id: None,
             },
         )
         .await

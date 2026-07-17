@@ -76,6 +76,18 @@ pub struct ComposeOutcome {
 /// audience is entitled to it — checked in code, on top of RLS, because this is
 /// the invariant we cannot afford to get wrong exactly once.
 fn admits(doc: &Document, m: &Memory) -> bool {
+    // The project cap (PROJECT-PLAN PR4). A project-stamped page composes from
+    // its OWN project's memories plus org-shared ones (the inclusive lens);
+    // another project's claim on a shared entity must never leak into it. An
+    // unstamped page has no project constraint — every page that existed
+    // before PR4 composes exactly as it always did.
+    let project_ok = match doc.project_id {
+        None => true,
+        Some(p) => m.project_id.is_none() || m.project_id == Some(p),
+    };
+    if !project_ok {
+        return false;
+    }
     match doc.visibility {
         // An org page may carry only org-wide knowledge.
         Visibility::Org => m.visibility == Visibility::Org,
@@ -706,6 +718,8 @@ pub async fn scaffold_entity_pages(
                 title: name.clone(),
                 visibility: Visibility::Org,
                 doc_kind: brainiac_core::DocKind::EntityPage,
+                // Auto-scaffolded pages are org-wide; project pages are authored (PR4).
+                project_id: None,
             },
         )
         .await?;
@@ -832,6 +846,8 @@ pub async fn scaffold_digest(conn: &mut PgConnection, org_id: Uuid) -> Result<Op
             title: "This week in the knowledge base".into(),
             visibility: Visibility::Org,
             doc_kind: DocKind::Digest,
+            // Auto-scaffolded pages are org-wide; project pages are authored (PR4).
+            project_id: None,
         },
     )
     .await?;
@@ -953,6 +969,7 @@ mod tests {
             superseded_by: None,
             confidence: None,
             provenance_id: None,
+            project_id: None,
             created_at: Utc::now(),
         }
     }
@@ -968,6 +985,7 @@ mod tests {
             doc_kind: Default::default(),
             status: Default::default(),
             current_revision: None,
+            project_id: None,
             dirty_at: None,
             updated_at: Utc::now(),
         }
@@ -1009,6 +1027,34 @@ mod tests {
             &page,
             &mem(Uuid::new_v4(), Visibility::Org, Some(theirs))
         ));
+    }
+
+    /// PROJECT-PLAN PR4: the project cap in one assertion set. A stamped page
+    /// takes its own project + org-shared, never a sibling project; an
+    /// unstamped page composes exactly as before the dimension existed.
+    #[test]
+    fn project_page_takes_its_own_project_and_org_shared_never_a_sibling() {
+        let mine = Uuid::new_v4();
+        let theirs = Uuid::new_v4();
+        let with_project = |project: Option<Uuid>| {
+            let mut m = mem(Uuid::new_v4(), Visibility::Org, None);
+            m.project_id = project;
+            m
+        };
+        let mut page = doc(Visibility::Org, None);
+        page.project_id = Some(mine);
+        assert!(admits(&page, &with_project(Some(mine))));
+        assert!(admits(&page, &with_project(None)), "org-shared always enters");
+        assert!(
+            !admits(&page, &with_project(Some(theirs))),
+            "a sibling project's claim must not leak into this page"
+        );
+
+        let unstamped = doc(Visibility::Org, None);
+        assert!(
+            admits(&unstamped, &with_project(Some(theirs))),
+            "an unstamped page has no project constraint (back-compat)"
+        );
     }
 
     #[test]

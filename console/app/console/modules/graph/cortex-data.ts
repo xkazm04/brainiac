@@ -42,23 +42,34 @@ export const DEMO_CORTEX: CortexData = {
       { id: T.platform, name: "platform", memories: 26, entities: 14 },
     ],
     canonicals: [
-      { id: "c-kafka", name: "kafka", kind: "tech", memories: 14, teams: 3, team_ids: [T.payments, T.platform, T.data] },
-      { id: "c-psp", name: "psp-gateway", kind: "service", memories: 11, teams: 2, team_ids: [T.payments, T.platform] },
-      { id: "c-checkout", name: "checkout-feature", kind: "feature", memories: 9, teams: 3, team_ids: [T.payments, T.platform, T.data] },
-      { id: "c-argocd", name: "argocd", kind: "tech", memories: 8, teams: 2, team_ids: [T.platform, T.payments] },
-      { id: "c-refund", name: "refund-worker", kind: "service", memories: 7, teams: 2, team_ids: [T.payments, T.platform] },
-      { id: "c-fraud", name: "fraud scoring", kind: "concept", memories: 6, teams: 2, team_ids: [T.data, T.payments] },
-      { id: "c-lake", name: "event-lake", kind: "repo", memories: 6, teams: 1, team_ids: [T.data] },
-      { id: "c-opa", name: "opa", kind: "tech", memories: 5, teams: 2, team_ids: [T.platform, T.data] },
-      { id: "c-retry", name: "std-retry policy", kind: "concept", memories: 5, teams: 2, team_ids: [T.platform, T.payments] },
-      { id: "c-ledger", name: "ledger-service", kind: "service", memories: 4, teams: 2, team_ids: [T.payments, T.data] },
-      { id: "c-feast", name: "feast", kind: "service", memories: 3, teams: 1, team_ids: [T.data] },
-      { id: "c-grafana", name: "grafana", kind: "tech", memories: 3, teams: 1, team_ids: [T.platform] },
+      { id: "c-kafka", name: "kafka", kind: "tech", memories: 14, teams: 3, team_ids: [T.payments, T.platform, T.data], projects: 2, project_ids: ["p-payments-api", "p-feature-store"] },
+      { id: "c-psp", name: "psp-gateway", kind: "service", memories: 11, teams: 2, team_ids: [T.payments, T.platform], projects: 1, project_ids: ["p-payments-api"] },
+      { id: "c-checkout", name: "checkout-feature", kind: "feature", memories: 9, teams: 3, team_ids: [T.payments, T.platform, T.data], projects: 2, project_ids: ["p-payments-api", "p-checkout-web"] },
+      { id: "c-argocd", name: "argocd", kind: "tech", memories: 8, teams: 2, team_ids: [T.platform, T.payments], projects: 0, project_ids: [] },
+      { id: "c-refund", name: "refund-worker", kind: "service", memories: 7, teams: 2, team_ids: [T.payments, T.platform], projects: 1, project_ids: ["p-payments-api"] },
+      { id: "c-fraud", name: "fraud scoring", kind: "concept", memories: 6, teams: 2, team_ids: [T.data, T.payments], projects: 1, project_ids: ["p-feature-store"] },
+      { id: "c-lake", name: "event-lake", kind: "repo", memories: 6, teams: 1, team_ids: [T.data], projects: 1, project_ids: ["p-feature-store"] },
+      { id: "c-opa", name: "opa", kind: "tech", memories: 5, teams: 2, team_ids: [T.platform, T.data], projects: 0, project_ids: [] },
+      { id: "c-retry", name: "std-retry policy", kind: "concept", memories: 5, teams: 2, team_ids: [T.platform, T.payments], projects: 2, project_ids: ["p-payments-api", "p-checkout-web"] },
+      { id: "c-ledger", name: "ledger-service", kind: "service", memories: 4, teams: 2, team_ids: [T.payments, T.data], projects: 1, project_ids: ["p-payments-api"] },
+      { id: "c-feast", name: "feast", kind: "service", memories: 3, teams: 1, team_ids: [T.data], projects: 1, project_ids: ["p-feature-store"] },
+      { id: "c-grafana", name: "grafana", kind: "tech", memories: 3, teams: 1, team_ids: [T.platform], projects: 0, project_ids: [] },
     ],
     team_links: [
       { a: T.payments, b: T.platform, shared: 6 },
       { a: T.payments, b: T.data, shared: 4 },
       { a: T.platform, b: T.data, shared: 3 },
+    ],
+    // The project lens (PR3): application-shaped, deliberately not the team
+    // names, and NOT covering everything — org-shared knowledge has no lobe.
+    projects: [
+      { id: "p-checkout-web", name: "checkout-web", memories: 12, entities: 7 },
+      { id: "p-feature-store", name: "feature-store", memories: 14, entities: 9 },
+      { id: "p-payments-api", name: "payments-api", memories: 22, entities: 11 },
+    ],
+    project_links: [
+      { a: "p-checkout-web", b: "p-payments-api", shared: 2 },
+      { a: "p-feature-store", b: "p-payments-api", shared: 1 },
     ],
   },
 };
@@ -118,6 +129,8 @@ export function makeLargeCortex(): CortexData {
       memories: 2 + Math.round(hash01(name, 29) * 18),
       teams: new Set(team_ids).size,
       team_ids: [...new Set(team_ids)],
+      projects: 0,
+      project_ids: [],
     };
   });
 
@@ -136,7 +149,7 @@ export function makeLargeCortex(): CortexData {
     return { a, b, shared };
   });
 
-  return { live: false, overview: { teams, canonicals, team_links } };
+  return { live: false, overview: { teams, canonicals, team_links, projects: [], project_links: [] } };
 }
 
 export function demoDetail(id: string, overview: GraphOverview): CanonicalDetail {

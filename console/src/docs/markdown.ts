@@ -43,6 +43,11 @@ export type Block =
   | { t: "quote"; kids: InlineNode[] }
   | { t: "list"; ordered: boolean; items: InlineNode[][] }
   | { t: "code"; lang: string | null; v: string }
+  /** A ```mermaid fence — the deterministic diagram compose emits. `v` is the
+   *  UNTRUSTED diagram source, verbatim; the reader hands it to MermaidBlock,
+   *  which renders it under mermaid's strict security level and falls back to
+   *  the plain code fence when it does not parse. Nothing here is markup. */
+  | { t: "mermaid"; v: string }
   | { t: "table"; head: InlineNode[][]; rows: InlineNode[][][] }
   | { t: "rule" };
 
@@ -163,13 +168,17 @@ export function parseDoc(md: string): ParsedDoc {
     }
 
     // Fenced code — verbatim `detail_md` evidence lives here; never re-parsed.
+    // A mermaid fence is lifted into its own block kind so the reader can
+    // hydrate it into a diagram; every other fence stays a plain code block.
     const fence = line.match(/^\s*```+\s*(\S+)?\s*$/);
     if (fence) {
       const body: string[] = [];
       i++;
       while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) body.push(lines[i++]);
       i++; // closing fence
-      blocks.push({ t: "code", lang: fence[1] ?? null, v: body.join("\n") });
+      const lang = fence[1] ?? null;
+      if (lang?.toLowerCase() === "mermaid") blocks.push({ t: "mermaid", v: body.join("\n") });
+      else blocks.push({ t: "code", lang, v: body.join("\n") });
       continue;
     }
 

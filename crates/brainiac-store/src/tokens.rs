@@ -14,6 +14,8 @@ pub struct ResolvedToken {
     pub org_id: Uuid,
     pub user_id: Uuid,
     pub scopes: Vec<String>,
+    /// The project this key is scoped to; None = org-wide (migration 0034).
+    pub project_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +24,9 @@ pub struct TokenRow {
     pub name: String,
     pub prefix: String,
     pub scopes: Vec<String>,
+    pub project_id: Option<Uuid>,
+    /// Resolved for display; None for org-wide keys.
+    pub project_name: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -32,7 +37,7 @@ pub async fn resolve(pool: &PgPool, token_hash: &[u8]) -> Result<Option<Resolved
     let row = sqlx::query(
         "UPDATE api_tokens SET last_used_at = now()
          WHERE token_hash = $1 AND revoked_at IS NULL
-         RETURNING org_id, user_id, scopes",
+         RETURNING org_id, user_id, scopes, project_id",
     )
     .bind(token_hash)
     .fetch_optional(pool)
@@ -41,6 +46,7 @@ pub async fn resolve(pool: &PgPool, token_hash: &[u8]) -> Result<Option<Resolved
         org_id: r.get("org_id"),
         user_id: r.get("user_id"),
         scopes: r.get("scopes"),
+        project_id: r.get("project_id"),
     }))
 }
 
@@ -90,11 +96,12 @@ pub async fn create(
     prefix: &str,
     token_hash: &[u8],
     scopes: &[String],
+    project_id: Option<Uuid>,
     created_by: Uuid,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO api_tokens (id, org_id, user_id, name, prefix, token_hash, scopes, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        "INSERT INTO api_tokens (id, org_id, user_id, name, prefix, token_hash, scopes, project_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(id)
     .bind(org_id)
@@ -103,6 +110,7 @@ pub async fn create(
     .bind(prefix)
     .bind(token_hash)
     .bind(scopes)
+    .bind(project_id)
     .bind(created_by)
     .execute(pool)
     .await?;
@@ -111,8 +119,11 @@ pub async fn create(
 
 pub async fn list(pool: &PgPool, org_id: Uuid) -> Result<Vec<TokenRow>> {
     let rows = sqlx::query(
-        "SELECT id, name, prefix, scopes, created_at, last_used_at, revoked_at
-         FROM api_tokens WHERE org_id = $1 ORDER BY created_at DESC",
+        "SELECT t.id, t.name, t.prefix, t.scopes, t.project_id, p.name AS project_name,
+                t.created_at, t.last_used_at, t.revoked_at
+         FROM api_tokens t
+         LEFT JOIN projects p ON p.id = t.project_id
+         WHERE t.org_id = $1 ORDER BY t.created_at DESC",
     )
     .bind(org_id)
     .fetch_all(pool)
@@ -124,6 +135,8 @@ pub async fn list(pool: &PgPool, org_id: Uuid) -> Result<Vec<TokenRow>> {
             name: r.get("name"),
             prefix: r.get("prefix"),
             scopes: r.get("scopes"),
+            project_id: r.get("project_id"),
+            project_name: r.get("project_name"),
             created_at: r.get("created_at"),
             last_used_at: r.get("last_used_at"),
             revoked_at: r.get("revoked_at"),

@@ -44,6 +44,32 @@ const split = (slug: string): { space: string; leaf: string } => {
   return { space: slug.slice(0, at), leaf: slug.slice(at + 1) };
 };
 
+/**
+ * The server's own space key for a slug: `split_part(slug, '/', 1)` — the first
+ * segment, or the WHOLE slug when it has no `/`, or `""` for a leading slash.
+ *
+ * This is deliberately NOT `toPage().space` (which buckets every un-namespaced
+ * slug under one `unfiled` label). The wiki's space directory now comes from the
+ * server's `facets.spaces`, so the client must group by the SAME key the server
+ * does — otherwise the demo mirror and the live view would disagree on what a
+ * space is. `spaceLabel` handles the `""` case for DISPLAY.
+ */
+export const spaceKey = (slug: string): string => {
+  const at = slug.indexOf("/");
+  return at < 0 ? slug : slug.slice(0, at);
+};
+
+/** The leaf name to show for a slug inside its space — everything after the
+ *  first `/`, or the whole slug when there is none. */
+export const leafName = (slug: string): string => {
+  const at = slug.indexOf("/");
+  return at < 0 ? slug : slug.slice(at + 1);
+};
+
+/** How a space FACET value reads on screen: the empty key (a leading-slash slug
+ *  the server groups under `""`) is the un-namespaced bucket, shown as `unfiled`. */
+export const spaceLabel = (value: string): string => (value === "" ? UNFILED : value);
+
 export const toPage = (doc: DocSummary): WikiPage => {
   const { space, leaf } = split(doc.slug);
   return { doc, space, leaf, hay: `${doc.title} ${doc.slug}`.toLowerCase() };

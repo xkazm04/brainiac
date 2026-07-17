@@ -36,6 +36,7 @@ export const DEMO_PROMOTIONS: PromotionQueueItem[] = [
       status: "candidate",
       confidence: 0.93,
       team: "payments",
+      project: "payments-api",
     },
     provenance: {
       actor_kind: "pipeline",
@@ -59,6 +60,7 @@ export const DEMO_PROMOTIONS: PromotionQueueItem[] = [
       status: "raw",
       confidence: 1.0,
       team: "payments",
+      project: "checkout-web",
     },
     provenance: {
       actor_kind: "pipeline",
@@ -82,6 +84,7 @@ export const DEMO_PROMOTIONS: PromotionQueueItem[] = [
       status: "candidate",
       confidence: 0.88,
       team: "platform",
+      project: null,
     },
     provenance: {
       actor_kind: "human",

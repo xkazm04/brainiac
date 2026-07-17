@@ -150,6 +150,9 @@ pub(crate) async fn provision_project(
             &prefix,
             &crate::auth::hash_token(&secret),
             &DEVICE_SCOPES.map(str::to_string),
+            // Org-wide: the free-tier project IS the org; project scoping
+            // arrives via the onboarding pairing flow (crate::onboard).
+            None,
             // Attributed to the person who owns the project, not to the console's
             // bootstrap principal — the audit trail should name the human.
             p.user_id,

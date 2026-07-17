@@ -1,10 +1,18 @@
 import DemoBanner from "@/components/DemoBanner";
-import { configFromEnv, listMemories, type ApiConfig } from "@/lib/api";
+import { configFromEnv, listMemories, memoryValidity, type ApiConfig } from "@/lib/api";
 import { withDemoFallback } from "@/lib/demo-fallback";
-import type { MemoryRow } from "@/lib/types";
 
 import Archive from "./Archive";
-import { DEMO_ARCHIVE, type ArchiveData } from "./archive-data";
+import {
+  DEMO_ROWS,
+  PAGE_SIZE,
+  demoArchive,
+  emptyFacets,
+  type ArchiveData,
+  type ArchiveDir,
+  type ArchiveFilter,
+  type ArchiveSort,
+} from "./archive-data";
 
 export const dynamic = "force-dynamic";
 
@@ -12,54 +20,118 @@ export const metadata = {
   title: "Brainiac — Archive",
 };
 
-/**
- * The visible corpus, fetched server-side and scrubbed client-side.
+/*
+ * The archive, server-paginated.
  *
- * This used to be one `limit: "200"` call, which was a lie with a number on it:
- * the handler clamps limit to 1..200, so at 660 memories the archive dropped
- * 70% of the org on the floor and then rendered confident counts over what was
- * left — "88 canonical" meaning "88 of the first 200". No client-side view can
- * fix that; the rows are simply not there. So it pages.
+ * This used to loop `listMemories` up to 5000 rows into the browser and do all
+ * of search / facets / cross-filter / sort / as-of / paginate in-memory. The
+ * server now owns every one of those (GET /v1/memories?…&facets=1), so this
+ * component makes exactly TWO calls:
+ *
+ *   (a) the page + its cross-filtered facet menu, under the full filter incl.
+ *       as_of;
+ *   (b) the tiny as-of skeleton (id + validity window) under the SAME filter
+ *       minus as_of — ~40 bytes/row — which is all the client needs to scrub
+ *       the time axis instantly and re-query the page on release.
+ *
+ * The URL is the single source of truth (parse here, once), so a filtered view
+ * is shareable and survives refresh; `withDemoFallback` keeps it from ever
+ * 500ing when the backend is down.
  */
 
-/** The server's own ceiling (`limit.clamp(1, 200)` in console.rs) — asking for
- *  more just gets 200 back, which would read as a short page and stop early. */
-const PAGE = 200;
+type Params = Record<string, string | string[] | undefined>;
 
-/**
- * The safety cap, in rows. A very large org should not stall this server
- * component behind 50 sequential fetches, and the browser should not be handed
- * a corpus it cannot filter on a keystroke.
- *
- * When it bites, `capped` is set and the Archive says so ON SCREEN. That is the
- * entire difference between this and the bug it replaces: a cap is honest
- * engineering, silence about one is not.
- */
-const MAX_ROWS = 5000;
+const one = (v: string | string[] | undefined): string | undefined =>
+  Array.isArray(v) ? v[0] : v;
 
-async function fetchCorpus(cfg: ApiConfig): Promise<ArchiveData> {
-  const rows: MemoryRow[] = [];
-  let total = 0;
-  for (let offset = 0; offset < MAX_ROWS; offset += PAGE) {
-    const page = await listMemories(cfg, {
-      limit: String(Math.min(PAGE, MAX_ROWS - offset)),
-      offset: String(offset),
-    });
-    total = page.total;
-    rows.push(...page.memories);
-    // Three independent stops, because a paging loop that trusts only one of
-    // them is a hang waiting for a server that disagrees: a short page, the
-    // total reached, and the `offset < MAX_ROWS` bound above.
-    if (page.memories.length < PAGE || rows.length >= total) break;
-  }
-  return { live: true, total, rows, capped: rows.length < total };
+const SORTS: ArchiveSort[] = ["recent", "valid_from", "valid_to"];
+const asSort = (v: string | string[] | undefined): ArchiveSort => {
+  const s = one(v);
+  return s && (SORTS as string[]).includes(s) ? (s as ArchiveSort) : "recent";
+};
+const asDir = (v: string | string[] | undefined): ArchiveDir =>
+  one(v) === "asc" ? "asc" : "desc";
+
+export function parseFilter(params: Params): {
+  filter: ArchiveFilter;
+  page: number;
+  sort: ArchiveSort;
+  dir: ArchiveDir;
+  asOf: string | null;
+} {
+  const filter: ArchiveFilter = {
+    q: one(params.q) || undefined,
+    kind: one(params.kind) || undefined,
+    status: one(params.status) || undefined,
+    team: one(params.team) || undefined,
+    visibility: one(params.visibility) || undefined,
+    project: one(params.project) || undefined,
+  };
+  const n = Number(one(params.page));
+  const page = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  return { filter, page, sort: asSort(params.sort), dir: asDir(params.dir), asOf: one(params.as_of) || null };
 }
 
-export default async function MemoriesPage() {
+/** The filter as query params — empties omitted. Shared by both live calls. */
+function filterParams(f: ArchiveFilter): Record<string, string> {
+  const p: Record<string, string> = {};
+  if (f.q) p.q = f.q;
+  if (f.kind) p.kind = f.kind;
+  if (f.status) p.status = f.status;
+  if (f.team) p.team = f.team;
+  if (f.visibility) p.visibility = f.visibility;
+  if (f.project) p.project = f.project;
+  return p;
+}
+
+async function fetchArchive(
+  cfg: ApiConfig,
+  filter: ArchiveFilter,
+  page: number,
+  sort: ArchiveSort,
+  dir: ArchiveDir,
+  asOf: string | null,
+): Promise<ArchiveData> {
+  const base = filterParams(filter);
+  const listParams: Record<string, string> = {
+    ...base,
+    sort,
+    dir,
+    facets: "1",
+    limit: String(PAGE_SIZE),
+    offset: String(page * PAGE_SIZE),
+  };
+  if (asOf) listParams.as_of = asOf;
+
+  // (a) the page + facet menu, (b) the as_of-excluded skeleton — in parallel.
+  const [list, validity] = await Promise.all([
+    listMemories(cfg, listParams),
+    memoryValidity(cfg, base),
+  ]);
+
+  return {
+    live: true,
+    total: list.total,
+    facets: list.facets ?? emptyFacets(),
+    rows: list.memories,
+    skeleton: validity.rows,
+    filter,
+    page,
+    pageSize: PAGE_SIZE,
+    sort,
+    dir,
+    asOf,
+  };
+}
+
+export default async function MemoriesPage({ searchParams }: { searchParams: Params }) {
+  const { filter, page, sort, dir, asOf } = parseFilter(searchParams);
+
   const { data, live } = await withDemoFallback<ArchiveData>(
-    () => fetchCorpus(configFromEnv()),
-    DEMO_ARCHIVE,
+    () => fetchArchive(configFromEnv(), filter, page, sort, dir, asOf),
+    demoArchive(DEMO_ROWS, filter, page, PAGE_SIZE, sort, dir, asOf),
   );
+
   return (
     <>
       {!live && <DemoBanner />}

@@ -90,6 +90,7 @@ mod tests {
             superseded_by: None,
             confidence: Some(conf),
             provenance_id: None,
+            project_id: None,
             created_at: Utc::now(),
         }
     }

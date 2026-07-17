@@ -146,6 +146,7 @@ mod tests {
             superseded_by: superseded_by.map(uuid),
             confidence: None,
             provenance_id: None,
+            project_id: None,
             created_at: ts(1),
         }
     }

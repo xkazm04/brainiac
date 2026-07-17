@@ -62,6 +62,23 @@ enum Command {
     /// the /v1/analytics/practice-divergence surface. Operator/scheduled sweep;
     /// needs a real provider (QWEN_API_KEY). Point it at the production DB.
     ScanDivergence,
+    /// Harvest an OKF knowledge bundle (a repo wiki à la OpenWiki) into the
+    /// extraction pipeline: each concept document becomes an `okf` source →
+    /// candidate memories → the review gate. Never direct-to-canonical: the
+    /// wiki is a witness, not an authority. Idempotent by file content —
+    /// re-running ingests only what changed. Brainiac's own published pages
+    /// (x_brainiac_* frontmatter) are refused, closing the self-citation loop.
+    OkfHarvest {
+        /// Org to ingest into.
+        #[arg(long)]
+        org: uuid::Uuid,
+        /// Path to the bundle directory (e.g. a checkout's docs/okf).
+        #[arg(long)]
+        path: String,
+        /// Attribute the sources to a team (org-wide otherwise).
+        #[arg(long)]
+        team: Option<uuid::Uuid>,
+    },
     /// Run an eval profile against a fixture tree. DESTRUCTIVE to the
     /// connected database (re-seeds the tenant) — point it at a dev/eval DB.
     Eval {
@@ -204,6 +221,7 @@ async fn main() -> Result<()> {
         Command::Reembed { embedder } => reembed(embedder.as_deref()).await,
         Command::Worker { mock } => worker(mock).await,
         Command::ScanDivergence => scan_divergence().await,
+        Command::OkfHarvest { org, path, team } => okf_harvest(org, &path, team).await,
         Command::Eval {
             fixtures,
             profile,
@@ -288,6 +306,33 @@ fn fixtures_lint(root: &str, format: &str) -> Result<()> {
     if errors > 0 {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// OKF bundle → extraction pipeline (see `brainiac_pipeline::okf_ingest`).
+/// Runs under the pipeline principal: sources are org rows, and the review
+/// gate — not this command — decides what the org ends up believing.
+async fn okf_harvest(org: uuid::Uuid, path: &str, team: Option<uuid::Uuid>) -> Result<()> {
+    let url = database_url()?;
+    brainiac_store::migrate(&url).await?;
+    let store = Store::connect(&url).await?;
+    let principal = brainiac_pipeline::pipeline_principal(org);
+    let stats = brainiac_pipeline::okf_ingest::harvest(
+        &store,
+        &principal,
+        team,
+        std::path::Path::new(path),
+        None,
+    )
+    .await?;
+    println!(
+        "harvested {path}: {} file(s) — {} ingested, {} unchanged, {} own page(s) refused, {} invalid",
+        stats.files, stats.ingested, stats.unchanged, stats.own_pages, stats.invalid
+    );
+    println!(
+        "extraction runs on the worker (`brainiac worker`, or serve --with-worker); \
+         candidates land in the review queue, never straight into the corpus."
+    );
     Ok(())
 }
 

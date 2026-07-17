@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocSummary } from "@/lib/types";
 
-import { buildSpaces, toPage, UNFILED } from "./tree";
+import { buildSpaces, leafName, spaceKey, spaceLabel, toPage, UNFILED } from "./tree";
 
 const doc = (slug: string, over: Partial<DocSummary> = {}): DocSummary => ({
   id: slug,
@@ -90,5 +90,42 @@ describe("buildSpaces", () => {
 
   it("is empty for an empty corpus", () => {
     expect(buildSpaces([])).toEqual([]);
+  });
+});
+
+// These mirror the SERVER's `split_part(slug, '/', 1)` — the wiki's space
+// directory now comes from the server facet, so the demo mirror must group by
+// the same key. Deliberately NOT toPage().space (which buckets under `unfiled`).
+describe("spaceKey", () => {
+  it("takes the first slug segment as the space", () => {
+    expect(spaceKey("payments/psp-gateway")).toBe("payments");
+  });
+
+  it("treats a whole un-namespaced slug as its own space (as split_part does)", () => {
+    expect(spaceKey("retry-policy")).toBe("retry-policy");
+  });
+
+  it("yields the empty space for a leading slash, matching split_part", () => {
+    expect(spaceKey("/orphan")).toBe("");
+  });
+});
+
+describe("leafName", () => {
+  it("is everything after the first slash", () => {
+    expect(leafName("payments/psp/timeouts")).toBe("psp/timeouts");
+  });
+
+  it("is the whole slug when there is no namespace", () => {
+    expect(leafName("retry-policy")).toBe("retry-policy");
+  });
+});
+
+describe("spaceLabel", () => {
+  it("shows the empty (leading-slash) space as unfiled", () => {
+    expect(spaceLabel("")).toBe(UNFILED);
+  });
+
+  it("shows a named space as itself", () => {
+    expect(spaceLabel("payments")).toBe("payments");
   });
 });

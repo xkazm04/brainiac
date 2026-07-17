@@ -159,6 +159,37 @@ pub async fn anchors_of_memories(
         .collect())
 }
 
+/// Names of the CANONICAL entities a set of memories anchor to, alphabetical.
+/// This is how a published page gets its machine-readable tags (the OKF
+/// target): the entities are resolved through `entity_links`, so two teams'
+/// raw mentions of the same service tag the page with one canonical name.
+pub async fn canonical_names_of_memories(
+    conn: &mut PgConnection,
+    memory_ids: &[Uuid],
+    limit: i64,
+) -> Result<Vec<String>> {
+    if memory_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT DISTINCT ce.name
+         FROM memory_entities me
+         JOIN entity_links el ON el.entity_id = me.entity_id
+         JOIN canonical_entities ce ON ce.id = el.canonical_id
+         WHERE me.memory_id = ANY($1)
+         ORDER BY ce.name
+         LIMIT $2",
+    )
+    .bind(memory_ids)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("name"))
+        .collect())
+}
+
 /// Neighborhood of the anchor entities, up to `hops` (1 or 2):
 /// one hop = (a) same-canonical siblings via entity_links — the cross-team
 /// bridge — and (b) direct edge neighbors. The second hop repeats over the

@@ -24,6 +24,8 @@ import KeysModule from "./modules/keys/Module";
 import KeysSkeleton from "./modules/keys/Skeleton";
 import MemoriesModule from "./modules/memories/Module";
 import MemoriesSkeleton from "./modules/memories/Skeleton";
+import ProjectsModule from "./modules/projects/Module";
+import ProjectsSkeleton from "./modules/projects/Skeleton";
 import ReviewsModule from "./modules/reviews/Module";
 import ReviewsSkeleton from "./modules/reviews/Skeleton";
 import SkillsModule from "./modules/skills/Module";
@@ -77,6 +79,7 @@ const MODULES: Record<
   divergence: { Module: DivergenceModule, Skeleton: DivergenceSkeleton },
   standards: { Module: StandardsModule, Skeleton: StandardsSkeleton },
   skills: { Module: SkillsModule, Skeleton: SkillsSkeleton },
+  projects: { Module: ProjectsModule, Skeleton: ProjectsSkeleton },
   keys: { Module: KeysModule, Skeleton: KeysSkeleton },
 };
 

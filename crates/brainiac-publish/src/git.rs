@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-use crate::{PageToPublish, Publisher};
+use crate::{pointer, BundleToPublish, PageToPublish, Publisher};
 
 #[derive(Debug, Deserialize)]
 struct GitConfig {
@@ -24,6 +24,14 @@ struct GitConfig {
     /// Directory within it (default `docs/knowledge`).
     #[serde(default = "default_docs_dir")]
     docs_dir: String,
+    /// Maintain AGENTS.md / CLAUDE.md pointer blocks at the repo root so
+    /// coding agents consult the published pages with zero integration.
+    /// OPT-IN for the git target (unlike `okf`, where it defaults on): this
+    /// target may predate the pointer feature in an operator's repo, and a
+    /// publisher that starts writing new files at the repo root unasked is
+    /// exactly the surprise this module's header promises not to spring.
+    #[serde(default)]
+    agent_pointers: bool,
 }
 
 fn default_docs_dir() -> String {
@@ -32,13 +40,20 @@ fn default_docs_dir() -> String {
 
 pub struct GitPublisher {
     root: PathBuf,
+    repo_root: PathBuf,
+    docs_dir: String,
+    agent_pointers: bool,
 }
 
 impl GitPublisher {
     pub fn from_config(config: &serde_json::Value) -> Result<Self> {
         let cfg: GitConfig = serde_json::from_value(config.clone()).context("git target config")?;
+        let repo_root = PathBuf::from(&cfg.repo_path);
         Ok(Self {
-            root: PathBuf::from(cfg.repo_path).join(cfg.docs_dir),
+            root: repo_root.join(&cfg.docs_dir),
+            repo_root,
+            docs_dir: cfg.docs_dir,
+            agent_pointers: cfg.agent_pointers,
         })
     }
 }
@@ -66,6 +81,18 @@ impl Publisher for GitPublisher {
             .with_context(|| format!("writing {}", path.display()))?;
         Ok(Some(path.to_string_lossy().to_string()))
     }
+
+    async fn finish(&self, bundle: &BundleToPublish<'_>) -> Result<()> {
+        if self.agent_pointers {
+            pointer::write_pointer_files(
+                &self.repo_root,
+                &self.docs_dir,
+                bundle.console_url,
+                false,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +112,7 @@ mod tests {
             doc_kind: DocKind::TopicPage,
             status: DocStatus::Published,
             current_revision: None,
+            project_id: None,
             dirty_at: None,
             updated_at: chrono::Utc::now(),
         }
@@ -103,6 +131,7 @@ mod tests {
                 document: &d,
                 markdown: "# psp-gateway\n\nhello\n",
                 external_ref: None,
+                meta: &crate::PageMeta::default(),
             })
             .await
             .expect("publish");
@@ -124,9 +153,37 @@ mod tests {
             .publish(&PageToPublish {
                 document: &d,
                 markdown: "x",
-                external_ref: None
+                external_ref: None,
+                meta: &crate::PageMeta::default(),
             })
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn pointer_files_are_opt_in_and_written_only_when_asked() {
+        let tmp = std::env::temp_dir().join(format!("brainiac-git-{}", Uuid::new_v4()));
+        let bundle = crate::BundleToPublish {
+            console_url: "https://console.test",
+            entries: &[],
+        };
+
+        // Default: the repo root is left alone.
+        let quiet =
+            GitPublisher::from_config(&serde_json::json!({ "repo_path": tmp.to_string_lossy() }))
+                .expect("config");
+        quiet.finish(&bundle).await.expect("finish");
+        assert!(!tmp.join("AGENTS.md").exists());
+
+        // Opted in: both pointer files appear, pointing at the docs dir.
+        let loud = GitPublisher::from_config(&serde_json::json!({
+            "repo_path": tmp.to_string_lossy(), "agent_pointers": true
+        }))
+        .expect("config");
+        loud.finish(&bundle).await.expect("finish");
+        let agents = std::fs::read_to_string(tmp.join("AGENTS.md")).expect("AGENTS.md");
+        assert!(agents.contains("docs/knowledge"), "{agents}");
+        assert!(tmp.join("CLAUDE.md").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

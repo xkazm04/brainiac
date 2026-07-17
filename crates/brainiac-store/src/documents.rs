@@ -26,12 +26,14 @@ pub struct NewDocument {
     pub title: String,
     pub visibility: Visibility,
     pub doc_kind: DocKind,
+    /// PROJECT-PLAN PR4; `None` = an org-wide page (today's default).
+    pub project_id: Option<Uuid>,
 }
 
 pub async fn insert_document(conn: &mut PgConnection, d: &NewDocument) -> Result<()> {
     sqlx::query(
-        "INSERT INTO documents (id, org_id, team_id, slug, title, visibility, doc_kind, status)
-         VALUES ($1,$2,$3,$4,$5,$6::visibility,$7,'draft')",
+        "INSERT INTO documents (id, org_id, team_id, slug, title, visibility, doc_kind, status, project_id)
+         VALUES ($1,$2,$3,$4,$5,$6::visibility,$7,'draft',$8)",
     )
     .bind(d.id)
     .bind(d.org_id)
@@ -40,6 +42,7 @@ pub async fn insert_document(conn: &mut PgConnection, d: &NewDocument) -> Result
     .bind(&d.title)
     .bind(d.visibility.as_str())
     .bind(d.doc_kind.as_str())
+    .bind(d.project_id)
     .execute(conn)
     .await?;
     Ok(())
@@ -88,13 +91,14 @@ fn row_to_document(r: &sqlx::postgres::PgRow) -> Document {
         doc_kind: DocKind::parse(r.get::<String, _>("doc_kind").as_str()).unwrap_or_default(),
         status: DocStatus::parse(r.get::<String, _>("status").as_str()).unwrap_or_default(),
         current_revision: r.get("current_revision"),
+        project_id: r.get("project_id"),
         dirty_at: r.get("dirty_at"),
         updated_at: r.get("updated_at"),
     }
 }
 
 const DOC_COLUMNS: &str = "id, org_id, team_id, slug, title, visibility::text AS visibility,
-     doc_kind, status, current_revision, dirty_at, updated_at";
+     doc_kind, status, current_revision, project_id, dirty_at, updated_at";
 
 pub async fn get_document(conn: &mut PgConnection, id: Uuid) -> Result<Option<Document>> {
     let row = sqlx::query(&format!(
@@ -125,33 +129,246 @@ pub async fn list_documents(conn: &mut PgConnection) -> Result<Vec<Document>> {
     Ok(rows.iter().map(row_to_document).collect())
 }
 
-/// Lexical search over pages by title, slug, or current-revision body (F-5:
-/// gives REST the doc search the MCP surface already had). Deliberately simple
-/// LIKE, like the MCP `doc_search` and for the same reason: pages are few and
-/// titled for what they cover. The match is done in a subquery so the outer
-/// `DOC_COLUMNS` select stays join-free (no ambiguous `id`); RLS scopes both.
+/// What a doc search can filter on. Every field is optional and they AND
+/// together; an empty filter is a plain list. The vocabulary deliberately
+/// mirrors what the OKF publish target emits — `kind` is the page's OKF
+/// `type`, `tag` matches the canonical entity names the bundle publishes as
+/// OKF `tags` — so an agent filtering our REST/MCP surface and an agent
+/// filtering a published bundle ask the same questions in the same words.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DocFilter<'a> {
+    /// Lexical needle over title, slug, and current-revision body.
+    pub q: Option<&'a str>,
+    /// Exact `doc_kind` slug (`entity_page`, `runbook`, …) — validated by the
+    /// caller via `DocKind::parse`.
+    pub kind: Option<&'a str>,
+    /// Case-insensitive CANONICAL entity name; matches pages whose live
+    /// revision cites a memory anchored to that entity.
+    pub tag: Option<&'a str>,
+    /// `true` = only pages behind the corpus; `false` = only current ones.
+    pub stale: Option<bool>,
+    /// The wiki's folder: the first slug segment (`payments/psp-gateway` → the
+    /// `payments` space). What the tree browses one space at a time.
+    pub space: Option<&'a str>,
+    /// Exact publish status (`draft` | `published` | `archived`).
+    pub status: Option<&'a str>,
+    /// Restrict to pages whose current revision awaits a human — the review
+    /// tab. Distinct from `stale`: a page can be stale (memory moved) without a
+    /// revision pending, and vice versa.
+    pub needs_review: Option<bool>,
+    /// Restrict to pages with a published revision (the MCP surface's rule:
+    /// an agent never sees a draft nobody signed).
+    pub published_only: bool,
+}
+
+/// Filtered search over pages (F-5, extended with deterministic filters).
+/// The lexical part stays a deliberately simple LIKE — pages are few and
+/// titled for what they cover — but kind/tag/stale are exact predicates, so
+/// "every runbook", "everything about psp-gateway", or "what is stale" is a
+/// filter, not a fuzzy match. Subqueries keep the outer `DOC_COLUMNS` select
+/// join-free (no ambiguous `id`); RLS scopes all of them.
 pub async fn search_documents(
     conn: &mut PgConnection,
-    query: &str,
+    filter: DocFilter<'_>,
     limit: i64,
 ) -> Result<Vec<Document>> {
     let rows = sqlx::query(&format!(
         "SELECT {DOC_COLUMNS} FROM documents
-         WHERE id IN (
-             SELECT d.id FROM documents d
-             LEFT JOIN document_revisions r ON r.id = d.current_revision
-             WHERE d.title ILIKE '%' || $1 || '%'
-                OR d.slug ILIKE '%' || $1 || '%'
-                OR r.content_md ILIKE '%' || $1 || '%'
-         )
-         ORDER BY updated_at DESC
-         LIMIT $2"
+         WHERE ($1::text IS NULL OR id IN (
+                 SELECT d.id FROM documents d
+                 LEFT JOIN document_revisions r ON r.id = d.current_revision
+                 WHERE d.title ILIKE '%' || $1 || '%'
+                    OR d.slug ILIKE '%' || $1 || '%'
+                    OR r.content_md ILIKE '%' || $1 || '%'))
+           AND ($2::text IS NULL OR doc_kind = $2)
+           AND ($3::text IS NULL OR id IN (
+                 SELECT dd.document_id FROM document_dependencies dd
+                 JOIN memory_entities me ON me.memory_id = dd.memory_id
+                 JOIN entity_links el ON el.entity_id = me.entity_id
+                 JOIN canonical_entities ce ON ce.id = el.canonical_id
+                 WHERE ce.name ILIKE $3))
+           AND ($4::boolean IS NULL OR (dirty_at IS NOT NULL) = $4)
+           AND (NOT $5 OR status = 'published')
+         ORDER BY (title ILIKE '%' || COALESCE($1, '') || '%') DESC, updated_at DESC
+         LIMIT $6"
     ))
-    .bind(query)
+    .bind(filter.q)
+    .bind(filter.kind)
+    .bind(filter.tag)
+    .bind(filter.stale)
+    .bind(filter.published_only)
     .bind(limit)
     .fetch_all(conn)
     .await?;
     Ok(rows.iter().map(row_to_document).collect())
+}
+
+// ── the wiki's paged/faceted browse (console + MCP) ──────────────────────
+//
+// The console wiki moved from "fetch every page and build the tree in the
+// browser" to "page and facet in the database". These three fns are the shared
+// query (REST handler + MCP tool both call them), mirroring `archive.rs` for
+// memories. `pending_review` is folded into the row as a correlated EXISTS
+// rather than scanned per doc in app code.
+
+/// The shared WHERE for the wiki browse. Bind order is fixed:
+///   $1 q, $2 kind, $3 tag, $4 stale, $5 space, $6 status, $7 needs_review,
+///   $8 published_only. A facet query nulls its own dimension's bind.
+const DOC_WHERE: &str = "
+    WHERE ($1::text IS NULL OR d.id IN (
+             SELECT dd.id FROM documents dd
+             LEFT JOIN document_revisions r ON r.id = dd.current_revision
+             WHERE dd.title ILIKE '%' || $1 || '%'
+                OR dd.slug  ILIKE '%' || $1 || '%'
+                OR r.content_md ILIKE '%' || $1 || '%'))
+      AND ($2::text IS NULL OR d.doc_kind = $2)
+      AND ($3::text IS NULL OR d.id IN (
+             SELECT ddp.document_id FROM document_dependencies ddp
+             JOIN memory_entities me ON me.memory_id = ddp.memory_id
+             JOIN entity_links el ON el.entity_id = me.entity_id
+             JOIN canonical_entities ce ON ce.id = el.canonical_id
+             WHERE ce.name ILIKE $3))
+      AND ($4::boolean IS NULL OR (d.dirty_at IS NOT NULL) = $4)
+      AND ($5::text IS NULL OR split_part(d.slug, '/', 1) = $5)
+      AND ($6::text IS NULL OR d.status = $6)
+      AND ($7::boolean IS NULL OR EXISTS (
+             SELECT 1 FROM document_revisions rr
+             WHERE rr.document_id = d.id
+               AND rr.policy_decision = 'needs_review'
+               AND rr.reviewed_by IS NULL) = $7)
+      AND (NOT $8 OR d.status = 'published')";
+
+/// A wiki dimension whose own bind a facet query nulls (cross-filter).
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum DocDim {
+    None,
+    Kind,
+    Space,
+    Status,
+}
+
+fn bind_doc<'q>(
+    query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    f: &DocFilter<'q>,
+    mask: DocDim,
+) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    query
+        .bind(f.q)
+        .bind(if mask == DocDim::Kind { None } else { f.kind })
+        .bind(f.tag)
+        .bind(f.stale)
+        .bind(if mask == DocDim::Space { None } else { f.space })
+        .bind(if mask == DocDim::Status { None } else { f.status })
+        .bind(f.needs_review)
+        .bind(f.published_only)
+}
+
+/// One wiki row: the document plus whether it awaits review (computed in-query).
+pub struct DocPage {
+    pub doc: Document,
+    pub pending_review: bool,
+}
+
+/// One page of the wiki, ordered newest-updated first.
+pub async fn browse(
+    conn: &mut PgConnection,
+    f: &DocFilter<'_>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DocPage>> {
+    let sql = format!(
+        "SELECT {DOC_COLUMNS},
+                EXISTS (SELECT 1 FROM document_revisions rr
+                        WHERE rr.document_id = d.id
+                          AND rr.policy_decision = 'needs_review'
+                          AND rr.reviewed_by IS NULL) AS pending_review
+         FROM documents d
+         {DOC_WHERE}
+         ORDER BY d.updated_at DESC, d.id
+         LIMIT $9 OFFSET $10"
+    );
+    let rows = bind_doc(sqlx::query(&sql), f, DocDim::None)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(conn)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| DocPage {
+            doc: row_to_document(r),
+            pending_review: r.get("pending_review"),
+        })
+        .collect())
+}
+
+/// The filtered total — same WHERE as `browse`.
+pub async fn browse_count(conn: &mut PgConnection, f: &DocFilter<'_>) -> Result<i64> {
+    let sql = format!("SELECT count(*) AS n FROM documents d {DOC_WHERE}");
+    let n: i64 = bind_doc(sqlx::query(&sql), f, DocDim::None)
+        .fetch_one(conn)
+        .await?
+        .get("n");
+    Ok(n)
+}
+
+/// The wiki's facet menu, cross-filtered: spaces (the tree directory), kinds,
+/// statuses, and the two boolean tabs (needs-review, dirty) as totals.
+pub struct DocFacets {
+    pub spaces: Vec<crate::feedback::Facet>,
+    pub kinds: Vec<crate::feedback::Facet>,
+    pub statuses: Vec<crate::feedback::Facet>,
+    /// Pages awaiting review under the current filter (the review tab count).
+    pub needs_review: i64,
+    /// Pages behind the corpus under the current filter (the dirty tab count).
+    pub dirty: i64,
+}
+
+pub async fn browse_facets(conn: &mut PgConnection, f: &DocFilter<'_>) -> Result<DocFacets> {
+    use crate::feedback::Facet;
+
+    async fn grouped(
+        conn: &mut PgConnection,
+        f: &DocFilter<'_>,
+        expr: &str,
+        mask: DocDim,
+    ) -> Result<Vec<Facet>> {
+        let sql = format!(
+            "SELECT {expr} AS value, count(*) AS n
+             FROM documents d {DOC_WHERE}
+             GROUP BY {expr} ORDER BY n DESC, value ASC"
+        );
+        let rows = bind_doc(sqlx::query(&sql), f, mask).fetch_all(conn).await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let value: String = r.get("value");
+                Facet {
+                    label: value.clone(),
+                    value,
+                    count: r.get("n"),
+                }
+            })
+            .collect())
+    }
+
+    let spaces = grouped(conn, f, "split_part(d.slug, '/', 1)", DocDim::Space).await?;
+    let kinds = grouped(conn, f, "d.doc_kind", DocDim::Kind).await?;
+    let statuses = grouped(conn, f, "d.status", DocDim::Status).await?;
+
+    // The two tabs are booleans, so their "cross-filtered" count is just the
+    // filtered total with that predicate forced on — one count each.
+    let review_filter = DocFilter { needs_review: Some(true), ..*f };
+    let needs_review = browse_count(conn, &review_filter).await?;
+    let dirty_filter = DocFilter { stale: Some(true), ..*f };
+    let dirty = browse_count(conn, &dirty_filter).await?;
+
+    Ok(DocFacets {
+        spaces,
+        kinds,
+        statuses,
+        needs_review,
+        dirty,
+    })
 }
 
 /// Pages whose underlying memories moved. The compose worker's work list.
@@ -424,11 +641,12 @@ fn row_to_revision(r: &sqlx::postgres::PgRow) -> Result<DocumentRevision> {
         reviewed_by: r.get("reviewed_by"),
         published_at: r.get("published_at"),
         created_at: r.get("created_at"),
+        faithfulness: r.get("faithfulness"),
     })
 }
 
 const REV_COLUMNS: &str = "id, document_id, content_md, composed_from, trigger,
-     policy_decision, reviewed_by, published_at, created_at";
+     policy_decision, reviewed_by, published_at, created_at, faithfulness";
 
 pub async fn get_revision(conn: &mut PgConnection, id: Uuid) -> Result<Option<DocumentRevision>> {
     let row = sqlx::query(&format!(
@@ -469,6 +687,24 @@ pub async fn revisions(
     .fetch_all(conn)
     .await?;
     rows.iter().map(row_to_revision).collect()
+}
+
+/// Attach the citation-faithfulness verdict to a revision (0036). Written
+/// AFTER the revision's own transaction committed, best-effort: a judge
+/// verdict is advice to a reviewer, and failing to store it must never cost
+/// the revision itself. Judging is idempotent per revision — a re-run
+/// overwrites, it never accumulates.
+pub async fn set_revision_faithfulness(
+    conn: &mut PgConnection,
+    revision_id: Uuid,
+    verdict: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query("UPDATE document_revisions SET faithfulness = $2 WHERE id = $1")
+        .bind(revision_id)
+        .bind(verdict)
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Revisions a human must sign before they go live (KB2's review queue).

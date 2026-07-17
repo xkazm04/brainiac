@@ -42,6 +42,7 @@ export function parseFilter(params: Params): { filter: DisputeFilter; page: numb
   const filter: DisputeFilter = {
     kind: one(params.kind) || undefined,
     teamId: one(params.team) || undefined,
+    project: one(params.project) || undefined,
     band: asBand(params.band),
     minClaims: num(params.minClaims),
     minAgeHours: num(params.minAge),

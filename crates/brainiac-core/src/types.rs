@@ -404,6 +404,10 @@ pub struct Memory {
     /// Extractor confidence 0..1.
     pub confidence: Option<f32>,
     pub provenance_id: Option<Uuid>,
+    /// The application/domain this claim is about (PROJECT-PLAN PR0);
+    /// `None` = org-shared. Orthogonal to `team_id`: team answers WHO,
+    /// project answers WHAT ABOUT.
+    pub project_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -592,6 +596,10 @@ pub struct Document {
     pub doc_kind: DocKind,
     pub status: DocStatus,
     pub current_revision: Option<Uuid>,
+    /// The application/domain this page is about (PROJECT-PLAN PR4); `None` =
+    /// an org-wide page. A stamped page composes from its project's memories
+    /// plus org-shared ones — never another project's.
+    pub project_id: Option<Uuid>,
     /// Set when a memory this page depends on changed; cleared on recompose.
     pub dirty_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
@@ -653,6 +661,11 @@ pub struct DocumentRevision {
     pub reviewed_by: Option<Uuid>,
     pub published_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Sampled runtime citation-faithfulness verdicts (0036). `None` = not
+    /// judged — the judge is best-effort, and absence of a verdict is not a
+    /// verdict. When present: which paragraphs were checked and which cite a
+    /// real memory while misstating it, for the reviewer to look at first.
+    pub faithfulness: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------

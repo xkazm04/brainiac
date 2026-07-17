@@ -46,6 +46,8 @@ export interface PromotionMemory {
   status: string | null;
   confidence: number | null;
   team: string | null;
+  /** Project display name; null = org-shared (PROJECT-PLAN PR2). */
+  project: string | null;
 }
 
 export interface PromotionProvenance {
@@ -268,6 +270,9 @@ export interface FlaggedMemory {
   team_id: string | null;
   /** The owning team's name; null for org-wide memories. */
   team: string | null;
+  /** Project display name; null = org-shared (PROJECT-PLAN PR2). */
+  project: string | null;
+  project_id: string | null;
   confidence: number | null;
   valid_to: string | null;
   provenance: FeedbackProvenance | null;
@@ -294,6 +299,8 @@ export interface FeedbackFacets {
   kinds: FeedbackFacet[];
   teams: FeedbackFacet[];
   bands: FeedbackFacet[];
+  /** Value is a project id or `"none"`; label the name or `"org-shared"`. */
+  projects: FeedbackFacet[];
 }
 
 export interface FeedbackFilter {
@@ -302,6 +309,8 @@ export interface FeedbackFilter {
   minAgeHours?: number;
   minClaims?: number;
   band?: DecayBand;
+  /** A project id, or `"none"` for org-shared memories. */
+  project?: string;
 }
 
 export interface FeedbackQueuePage {
@@ -329,6 +338,7 @@ export async function feedbackQueue(
   if (opts.minAgeHours !== undefined) params.set("min_age_hours", String(opts.minAgeHours));
   if (opts.minClaims !== undefined) params.set("min_claims", String(opts.minClaims));
   if (opts.band) params.set("band", opts.band);
+  if (opts.project) params.set("project", opts.project);
   return call(cfg, `/v1/reviews/feedback?${params.toString()}`);
 }
 

@@ -8,6 +8,7 @@ use sqlx::{PgConnection, Row};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_source(
     conn: &mut PgConnection,
     id: Uuid,
@@ -16,10 +17,11 @@ pub async fn insert_source(
     kind: &str,
     raw_text: &str,
     created_by: Option<Uuid>,
+    project_id: Option<Uuid>,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO sources (id, org_id, team_id, kind, raw_text, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6)",
+        "INSERT INTO sources (id, org_id, team_id, kind, raw_text, created_by, project_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)",
     )
     .bind(id)
     .bind(org_id)
@@ -27,6 +29,7 @@ pub async fn insert_source(
     .bind(kind)
     .bind(raw_text)
     .bind(created_by)
+    .bind(project_id)
     .execute(conn)
     .await?;
     Ok(())
@@ -37,7 +40,7 @@ pub async fn insert_source(
 /// an existing keyed source already claims `(org_id, idempotency_key)` — the
 /// caller then replays that source's original receipt via
 /// [`keyed_source_id`]. The partial unique index scopes keys per org.
-#[allow(clippy::too_many_arguments)] // one extra arg over insert_source
+#[allow(clippy::too_many_arguments)] // two extra args over the base shape
 pub async fn insert_source_idempotent(
     conn: &mut PgConnection,
     id: Uuid,
@@ -47,10 +50,11 @@ pub async fn insert_source_idempotent(
     raw_text: &str,
     created_by: Option<Uuid>,
     idempotency_key: &str,
+    project_id: Option<Uuid>,
 ) -> Result<Option<Uuid>> {
     let row = sqlx::query(
-        "INSERT INTO sources (id, org_id, team_id, kind, raw_text, created_by, idempotency_key)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
+        "INSERT INTO sources (id, org_id, team_id, kind, raw_text, created_by, idempotency_key, project_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (org_id, idempotency_key) WHERE idempotency_key IS NOT NULL
          DO NOTHING
          RETURNING id",
@@ -62,6 +66,7 @@ pub async fn insert_source_idempotent(
     .bind(raw_text)
     .bind(created_by)
     .bind(idempotency_key)
+    .bind(project_id)
     .fetch_optional(conn)
     .await?;
     Ok(row.map(|r| r.get::<Uuid, _>("id")))
@@ -82,15 +87,17 @@ pub async fn keyed_source_id(
     Ok(row.map(|r| r.get::<Uuid, _>("id")))
 }
 
-/// (team_id, kind, raw_text). The kind rides along because the extraction
-/// stage dispatches on it: a `manual` source is a pre-distilled statement and
-/// ingests verbatim (F-3); transcripts/docs go to the model.
+/// (team_id, kind, raw_text, project_id). The kind rides along because the
+/// extraction stage dispatches on it: a `manual` source is a pre-distilled
+/// statement and ingests verbatim (F-3); transcripts/docs go to the model.
+/// The project rides along so extraction stamps memories from the source row
+/// — the single source of truth — rather than the queue payload (PR0).
 pub async fn get_source_text(
     conn: &mut PgConnection,
     id: Uuid,
-) -> Result<Option<(Option<Uuid>, String, String)>> {
+) -> Result<Option<(Option<Uuid>, String, String, Option<Uuid>)>> {
     use sqlx::Row;
-    let row = sqlx::query("SELECT team_id, kind, raw_text FROM sources WHERE id = $1")
+    let row = sqlx::query("SELECT team_id, kind, raw_text, project_id FROM sources WHERE id = $1")
         .bind(id)
         .fetch_optional(conn)
         .await?;
@@ -99,6 +106,7 @@ pub async fn get_source_text(
             r.get("team_id"),
             r.get::<String, _>("kind"),
             r.get::<Option<String>, _>("raw_text").unwrap_or_default(),
+            r.get("project_id"),
         )
     }))
 }

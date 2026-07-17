@@ -15,6 +15,45 @@ import { refreshTokens, revokeKey } from "./keys-data";
 import { fmtAgo, MintPanel } from "./KeyShared";
 import { FONT_DISPLAY, FONT_MONO, GROUND, LABEL, MAGENTA } from "@/design/theme";
 
+/** The developer-facing bootstrap: one copyable command that installs the
+ *  brainiac-onboard skill into a checkout. No secret in it — the key arrives
+ *  via the pairing the skill drives (approved in the Projects module). */
+function OnboardPanel({ apiUrl }: { apiUrl: string }) {
+  const [copied, setCopied] = useState(false);
+  const cmd = `mkdir -p .claude/skills/brainiac-onboard && curl -fsSL ${apiUrl}/v1/onboard/skill -o .claude/skills/brainiac-onboard/SKILL.md`;
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.015] p-5">
+      <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
+        onboard a repo — no key handling required
+      </div>
+      <p className={`${FONT_MONO} mt-2 text-xs leading-relaxed text-[#e9edff]/55`}>
+        A developer runs this in their checkout, then <span className="text-[#e9edff]/80">/brainiac-onboard</span> in
+        Claude Code. The skill pairs the repo here (approve it in the Projects module), writes a
+        project-scoped key straight into their <span className="text-[#e9edff]/80">.env</span>, and verifies the
+        round trip.
+      </p>
+      <div className={`${FONT_MONO} mt-3 select-all break-all rounded-lg border border-white/15 bg-white/[0.03] p-3 text-xs text-[#e9edff]/80`}>
+        {cmd}
+      </div>
+      <button
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(cmd);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          } catch {
+            setCopied(false);
+          }
+        }}
+        className={`${FONT_MONO} mt-3 rounded-full border px-4 py-1.5 text-xs transition`}
+        style={{ borderColor: GROUND, color: GROUND }}
+      >
+        {copied ? "✓ copied" : "copy command"}
+      </button>
+    </div>
+  );
+}
+
 export default function Keys({ data }: { data: KeysData }) {
   const [tokens, setTokens] = useState(data.tokens);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -68,7 +107,14 @@ export default function Keys({ data }: { data: KeysData }) {
               >
                 <div className="min-w-0">
                   <div className="truncate text-[#e9edff]/85">{t.name}</div>
-                  <div className="text-[10px] tracking-wider text-[#e9edff]/35">{t.prefix}</div>
+                  <div className="truncate text-[10px] tracking-wider text-[#e9edff]/35">
+                    {t.prefix}
+                    {t.project_name ? (
+                      <span style={{ color: GROUND }}> · {t.project_name}</span>
+                    ) : (
+                      " · org-wide"
+                    )}
+                  </div>
                 </div>
                 <span className="text-xs text-[#e9edff]/60">
                   {t.scopes.map((s) => (
@@ -111,9 +157,12 @@ export default function Keys({ data }: { data: KeysData }) {
           </div>
         </div>
 
-        {/* mint */}
-        <div className="rounded-xl border border-white/10 bg-white/[0.015] p-5 lg:sticky lg:top-4 lg:self-start">
-          <MintPanel users={data.users} live={data.live} onMinted={reload} />
+        {/* mint + onboarding bootstrap */}
+        <div className="space-y-6 lg:sticky lg:top-4 lg:self-start">
+          <div className="rounded-xl border border-white/10 bg-white/[0.015] p-5">
+            <MintPanel users={data.users} live={data.live} onMinted={reload} />
+          </div>
+          <OnboardPanel apiUrl={data.apiUrl} />
         </div>
       </div>
     </div>

@@ -114,6 +114,11 @@ pub struct AuthContext {
     pub principal: Principal,
     /// None = env bootstrap token (unrestricted).
     pub scopes: Option<Vec<String>>,
+    /// The project a managed key is scoped to (migration 0034). None for
+    /// env tokens and org-wide keys. Carried here so the next phase (project
+    /// stamping on memories/KB) has the value at every handler without
+    /// another resolution round-trip; nothing enforces on it yet.
+    pub project_id: Option<Uuid>,
 }
 
 impl AuthContext {
@@ -153,6 +158,7 @@ pub async fn resolve_bearer(
         return Ok(Some(AuthContext {
             principal: principal.clone(),
             scopes: None,
+            project_id: None,
         }));
     }
     if !bearer.starts_with(TOKEN_PREFIX) {
@@ -172,6 +178,7 @@ pub async fn resolve_bearer(
             team_ids,
         },
         scopes: Some(resolved.scopes),
+        project_id: resolved.project_id,
     }))
 }
 
@@ -189,11 +196,13 @@ mod tests {
         let env = AuthContext {
             principal: p.clone(),
             scopes: None,
+            project_id: None,
         };
         assert!(env.allows("admin"));
         let read_only = AuthContext {
             principal: p.clone(),
             scopes: Some(vec!["read".into()]),
+            project_id: None,
         };
         assert!(read_only.allows("read"));
         assert!(!read_only.allows("write"));
@@ -201,6 +210,7 @@ mod tests {
         let admin = AuthContext {
             principal: p,
             scopes: Some(vec!["admin".into()]),
+            project_id: None,
         };
         assert!(admin.allows("read") && admin.allows("write") && admin.allows("admin"));
     }

@@ -40,6 +40,9 @@ export type AuditEvent = S["AuditEvent"];
 // ── memories ────────────────────────────────────────────────────────────
 export type MemoryRow = S["MemoryRow"];
 export type MemoriesList = S["MemoryListResponse"];
+export type MemoryFacetMenu = S["MemoryFacetMenu"];
+export type MemoryValidity = S["ValidityResponse"];
+export type ValidityRow = S["ValidityRow"];
 export type MemoryDetail = S["MemoryDetailResponse"];
 export type ChainLink = S["ChainLink"];
 export type ExpiringMemory = S["ExpiringMemory"];
@@ -91,6 +94,15 @@ export type MintedToken = S["CreatedTokenResponse"];
 export type OrgUser = S["OrgUser"];
 export type TokenPreview = S["TokenPreviewResponse"];
 
+// ── projects + developer onboarding (migration 0034) ────────────────────
+export type Project = S["ProjectView"];
+export type ProjectRepo = S["ProjectRepoView"];
+export type ProjectsList = S["ProjectsListResponse"];
+export type CreatedProject = S["CreatedProjectResponse"];
+export type AddedRepo = S["AddedRepoResponse"];
+export type OnboardRequest = S["OnboardRequestView"];
+export type OnboardDecision = S["OnboardDecisionResponse"];
+
 // ── documents / the knowledge base (KB2, ARCHITECTURE §8) ───────────────
 // Generated like everything else now that the /v1/docs endpoints ship.
 
@@ -101,6 +113,12 @@ export type MemoryLifecycle = "shipped" | "in_flight" | "proposed";
 export type RevisionPolicy = "auto_published" | "needs_review" | "rejected";
 
 export type DocSummary = S["DocSummary"];
+/** GET /v1/docs — the paginated, faceted envelope (server does the tree). */
+export type DocsListResponse = S["DocsListResponse"];
+/** The wiki's cross-filtered facet menu: the space directory + tab counts. */
+export type DocFacetMenu = S["DocFacetMenu"];
+/** One facet option (a space / kind / status) and its count. */
+export type DocFacet = S["DocFacet"];
 export type DocRevision = S["DocRevisionView"];
 /** A revision awaiting a human — the page's unpublished future. */
 export type DocPendingRevision = S["DocRevisionView"];

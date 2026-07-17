@@ -169,6 +169,8 @@ pub async fn scaffold_standards_pages(
                 // this is the tier that may publish externally (KB-PLAN D5).
                 visibility: brainiac_core::Visibility::Org,
                 doc_kind: brainiac_core::DocKind::StandardsPage,
+                // Auto-scaffolded pages are org-wide; project pages are authored (PR4).
+                project_id: None,
             },
         )
         .await?;

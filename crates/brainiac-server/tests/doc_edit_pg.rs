@@ -76,6 +76,7 @@ async fn a_human_edit_is_captured_as_knowledge_not_written_into_the_page() {
             title: "Retry policy".into(),
             visibility: Visibility::Org,
             doc_kind: DocKind::TopicPage,
+            project_id: None,
         },
     )
     .await
@@ -178,7 +179,7 @@ async fn a_human_edit_is_captured_as_knowledge_not_written_into_the_page() {
     // comes through — and carries the human's reason, which is the part a diff
     // could never recover.
     let mut tx = store.scoped_tx(&p).await.expect("tx");
-    let (_, _, raw) = brainiac_store::governance::get_source_text(&mut tx, source_id)
+    let (_, _, raw, _) = brainiac_store::governance::get_source_text(&mut tx, source_id)
         .await
         .expect("source")
         .expect("exists");

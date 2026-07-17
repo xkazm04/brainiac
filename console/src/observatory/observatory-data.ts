@@ -18,6 +18,9 @@ export interface ObservatoryData {
   totals: Record<string, number>;
   weekly: WeekPoint[];
   byKind: { kind: string; team: string; count: number }[];
+  /** The axis-swap twin: kind×project, with "org-shared" as its own column
+   *  (PROJECT-PLAN PR3). */
+  byProject: { kind: string; project: string; count: number }[];
   topEntities: { name: string; kind: string; memories: number; teams: number }[];
   review: {
     pending: number;
@@ -51,6 +54,7 @@ export function normalizeObservatory(p: ObservatoryPayload): ObservatoryData {
     totals: Object.fromEntries(p.totals.map((t) => [t.status, t.count])),
     weekly: weeklyIsDemo ? DEMO_WEEKLY : weekly,
     byKind: p.by_kind,
+    byProject: p.by_project,
     topEntities: p.top_entities,
     review: {
       pending: p.review.pending,
@@ -83,6 +87,23 @@ export const DEMO_OBSERVATORY: ObservatoryData = {
     { kind: "howto", team: "payments", count: 4 },
     { kind: "howto", team: "platform", count: 4 },
     { kind: "howto", team: "data", count: 3 },
+  ],
+  // Application-shaped, deliberately not the team names — and org-shared is
+  // its own column, not a gap (PR3).
+  byProject: [
+    { kind: "fact", project: "payments-api", count: 12 },
+    { kind: "fact", project: "checkout-web", count: 8 },
+    { kind: "fact", project: "feature-store", count: 6 },
+    { kind: "fact", project: "org-shared", count: 5 },
+    { kind: "decision", project: "payments-api", count: 5 },
+    { kind: "decision", project: "checkout-web", count: 4 },
+    { kind: "decision", project: "org-shared", count: 6 },
+    { kind: "pitfall", project: "payments-api", count: 4 },
+    { kind: "pitfall", project: "feature-store", count: 3 },
+    { kind: "pitfall", project: "org-shared", count: 3 },
+    { kind: "howto", project: "payments-api", count: 3 },
+    { kind: "howto", project: "feature-store", count: 3 },
+    { kind: "howto", project: "org-shared", count: 5 },
   ],
   topEntities: [
     { name: "kafka", kind: "tech", memories: 14, teams: 3 },

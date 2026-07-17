@@ -86,6 +86,25 @@ describe("block parsing", () => {
     ]);
   });
 
+  it("lifts a ```mermaid fence into a mermaid block, source verbatim", () => {
+    // The exact shape compose emits (compose.rs render_mermaid): graph LR,
+    // opaque node ids, quoted labels, |relation| edges.
+    const src = 'graph LR\n  n0["payments \'core\' service"]\n  n1["refund-worker"]\n  n0 -->|depends_on| n1';
+    const { blocks } = parseDoc("```mermaid\n" + src + "\n```");
+    expect(blocks).toEqual([{ t: "mermaid", v: src }]);
+  });
+
+  it("matches the mermaid info string case-insensitively", () => {
+    const { blocks } = parseDoc("```Mermaid\ngraph LR\n```");
+    expect(blocks).toEqual([{ t: "mermaid", v: "graph LR" }]);
+  });
+
+  it("keeps a mermaid fence inert: no citations lifted, no inline parsing", () => {
+    const { blocks, order } = parseDoc('```mermaid\ngraph LR\n  n0["**x** [m:' + A + ']"]\n```');
+    expect(order).toEqual([]);
+    expect(blocks).toEqual([{ t: "mermaid", v: 'graph LR\n  n0["**x** [m:' + A + ']"]' }]);
+  });
+
   it("renders unknown HTML as literal text (no raw-HTML escape hatch)", () => {
     const { blocks } = parseDoc('<img src=x onerror="alert(1)">');
     expect(blocks[0]).toEqual({

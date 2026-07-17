@@ -43,6 +43,7 @@ import type { DocCitation, DocSection, MemoryLifecycle } from "@/lib/types";
 
 import { asLifecycle } from "./facets";
 import { parseDoc, type Block, type InlineNode } from "./markdown";
+import MermaidBlock from "./MermaidBlock";
 import SectionEditor, { type SectionEditorProps } from "./SectionEditor";
 
 /** A citation whose `lifecycle` has been narrowed at the boundary (facets.ts):
@@ -237,6 +238,24 @@ function blockLifecycles(b: Block, byId: Map<string, Cited>): MemoryLifecycle[] 
   }
 }
 
+/** The fenced-block presentation — also what a mermaid block degrades to while
+ *  loading or if its source will not render, so failure looks like today. */
+function Fence({ lang, v }: { lang: string | null; v: string }) {
+  return (
+    <pre
+      className={`${FONT_MONO} my-5 overflow-x-auto rounded-lg border p-4 text-[12.5px] leading-relaxed`}
+      style={{ background: "rgba(255,255,255,0.02)", borderColor: BORDER, color: INK_DIM }}
+    >
+      {lang && (
+        <span className={`${LABEL} mb-2 block`} style={{ color: INK_FAINT }}>
+          {lang} · verbatim
+        </span>
+      )}
+      <code>{v}</code>
+    </pre>
+  );
+}
+
 function BlockView({ b, ctx, path }: { b: Block; ctx: Ctx; path: string }) {
   const inner = (nodes: InlineNode[]) => <Inline nodes={nodes} ctx={ctx} path={path} />;
   switch (b.t) {
@@ -282,19 +301,12 @@ function BlockView({ b, ctx, path }: { b: Block; ctx: Ctx; path: string }) {
     case "code":
       // Verbatim evidence: `detail_md` copied from the memory, never re-typed
       // by the model. It is quoted, so it is displayed as a quote.
-      return (
-        <pre
-          className={`${FONT_MONO} my-5 overflow-x-auto rounded-lg border p-4 text-[12.5px] leading-relaxed`}
-          style={{ background: "rgba(255,255,255,0.02)", borderColor: BORDER, color: INK_DIM }}
-        >
-          {b.lang && (
-            <span className={`${LABEL} mb-2 block`} style={{ color: INK_FAINT }}>
-              {b.lang} · verbatim
-            </span>
-          )}
-          <code>{b.v}</code>
-        </pre>
-      );
+      return <Fence lang={b.lang} v={b.v} />;
+    case "mermaid":
+      // The deterministic neighborhood diagram compose emits (every arrow is
+      // an `edges` row). Rendered client-side by mermaid under strict
+      // security; the fence it came from is the loading and failure state.
+      return <MermaidBlock source={b.v} fallback={<Fence lang="mermaid" v={b.v} />} />;
     case "table":
       return (
         <div className="my-5 overflow-x-auto">

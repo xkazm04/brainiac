@@ -10,6 +10,7 @@
 //!   `app.user_id` set LOCAL from the verified principal. Every read/write
 //!   goes through such a transaction; there is no unscoped query path.
 
+pub mod archive;
 pub mod documents;
 pub mod entities;
 pub mod feedback;
@@ -17,7 +18,9 @@ pub mod governance;
 pub mod identities;
 pub mod library;
 pub mod memories;
+pub mod onboard;
 pub mod orgs;
+pub mod projects;
 pub mod publishing;
 pub mod queue;
 pub mod retrieval;

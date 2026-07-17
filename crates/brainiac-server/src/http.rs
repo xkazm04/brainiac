@@ -108,6 +108,8 @@ pub async fn router(
         .route("/v1/queue/dead-letters/{id}/requeue", post(queue_requeue))
         .merge(crate::console::routes())
         .merge(crate::library::routes())
+        .merge(crate::onboard::routes())
+        .merge(crate::projects::routes())
         .merge(crate::provision::routes())
         // Explicit request-body cap. The largest free-text field REST accepts
         // is `memory_add` content (MAX_CONTENT_CHARS = 8000 chars ≈ 32 KiB of
@@ -236,6 +238,11 @@ pub(crate) struct SearchBody {
     /// Minimum extractor confidence 0..1.
     #[serde(default)]
     min_confidence: Option<f32>,
+    /// Project lens (PROJECT-PLAN PR1): keeps this project's memories PLUS
+    /// org-shared ones (project_id null) — "my project + the org's
+    /// conventions". Omit for the unfiltered org view.
+    #[serde(default)]
+    project_id: Option<Uuid>,
 }
 
 impl SearchBody {
@@ -271,6 +278,10 @@ impl SearchBody {
             min_status,
             team_id: self.team_id,
             min_confidence: self.min_confidence,
+            // Not validated against the org on purpose: this is a lens, not
+            // attribution — an unknown id simply matches only org-shared rows,
+            // and RLS already walls off other orgs.
+            project_id: self.project_id,
         })
     }
 }
@@ -441,6 +452,12 @@ pub(crate) struct MemoryAddBody {
     /// carried through to resolution so the memory anchors them.
     #[serde(default)]
     entities: Vec<String>,
+    /// PROJECT-PLAN PR0: attribute this write to a project explicitly (must
+    /// exist in the caller's org). Omitted ⇒ the key's own project scope, or
+    /// org-shared for org-wide keys. An org-wide key (CI, imports) uses this
+    /// to attribute correctly.
+    #[serde(default)]
+    project_id: Option<Uuid>,
 }
 
 /// Per-add entity-hint ceiling — a note anchors a handful of things, never a
@@ -543,13 +560,40 @@ fn idempotency_key(headers: &HeaderMap) -> Result<Option<String>, HttpError> {
     Ok(Some(key.to_string()))
 }
 
+/// Resolve the project a write is attributed to (PROJECT-PLAN PR0): an
+/// explicit `body.project_id` wins (validated against the caller's org — a
+/// typo'd or foreign UUID must not mint an unresolvable stamp), else the
+/// key's own project scope, else org-shared (None).
+async fn effective_project(
+    state: &AppState,
+    ctx: &crate::auth::AuthContext,
+    requested: Option<Uuid>,
+) -> Result<Option<Uuid>, HttpError> {
+    let Some(project_id) = requested else {
+        return Ok(ctx.project_id);
+    };
+    let ok = brainiac_store::projects::belongs(state.store.pool(), ctx.principal.org_id, project_id)
+        .await
+        .map_err(internal)?;
+    if !ok {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("project {project_id} does not exist in this org"),
+        )
+            .into());
+    }
+    Ok(Some(project_id))
+}
+
 /// Validate one item of content, write its source, and enqueue extraction —
 /// the shared, non-idempotent ingest path behind single-add (no key) and every
 /// bulk item. An empty or oversized body is a 400 before any DB work.
+/// `project_id` is the already-resolved attribution (see [`effective_project`]).
 async fn ingest_source(
     state: &AppState,
     principal: &Principal,
     body: &MemoryAddBody,
+    project_id: Option<Uuid>,
 ) -> Result<MemoryAcceptedResponse, HttpError> {
     let raw_text = encode_add_source(body)?;
     let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
@@ -563,6 +607,7 @@ async fn ingest_source(
         "manual",
         &raw_text,
         Some(principal.user_id),
+        project_id,
     )
     .await
     .map_err(internal)?;
@@ -593,10 +638,12 @@ pub(crate) async fn memory_add(
     headers: HeaderMap,
     Json(body): Json<MemoryAddBody>,
 ) -> Result<(StatusCode, Json<MemoryAcceptedResponse>), HttpError> {
-    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let ctx = auth_of(&state, &headers, "write").await?;
+    let project_id = effective_project(&state, &ctx, body.project_id).await?;
+    let principal = ctx.principal;
     let Some(key) = idempotency_key(&headers)? else {
         // No key: the plain async ingest.
-        let receipt = ingest_source(&state, &principal, &body).await?;
+        let receipt = ingest_source(&state, &principal, &body, project_id).await?;
         return Ok((StatusCode::ACCEPTED, Json(receipt)));
     };
 
@@ -615,6 +662,7 @@ pub(crate) async fn memory_add(
         &raw_text,
         Some(principal.user_id),
         &key,
+        project_id,
     )
     .await
     .map_err(internal)?;
@@ -717,7 +765,8 @@ pub(crate) async fn memory_add_bulk(
     headers: HeaderMap,
     Json(body): Json<BulkAddBody>,
 ) -> Result<(StatusCode, Json<BulkAcceptedResponse>), HttpError> {
-    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let ctx = auth_of(&state, &headers, "write").await?;
+    let principal = ctx.principal.clone();
     if body.items.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -737,7 +786,22 @@ pub(crate) async fn memory_add_bulk(
     }
     let mut results = Vec::with_capacity(body.items.len());
     for item in &body.items {
-        match ingest_source(&state, &principal, item).await {
+        // Per-item attribution: an invalid explicit project is that ITEM's
+        // error (like an empty content), never the batch's.
+        let attributed = match effective_project(&state, &ctx, item.project_id).await {
+            Ok(p) => p,
+            Err(e) if e.status == StatusCode::INTERNAL_SERVER_ERROR => return Err(e),
+            Err(e) => {
+                results.push(BulkItemResult {
+                    source_id: None,
+                    job_id: None,
+                    error: Some(e.message),
+                    code: Some(e.code.to_string()),
+                });
+                continue;
+            }
+        };
+        match ingest_source(&state, &principal, item, attributed).await {
             Ok(r) => results.push(BulkItemResult {
                 source_id: Some(r.source_id),
                 job_id: Some(r.job_id),
@@ -987,6 +1051,10 @@ pub(crate) struct PromotionMemory {
     status: Option<String>,
     confidence: Option<f32>,
     team: Option<String>,
+    /// Project display name (PROJECT-PLAN PR2); null = org-shared. A reviewer
+    /// deciding whether a claim generalizes needs to know which application it
+    /// came from.
+    project: Option<String>,
 }
 
 /// Provenance of a pending promotion; `null` alongside an invisible memory.
@@ -1060,12 +1128,13 @@ pub(crate) async fn pending_promotions(
                 p.to_status::text AS to_status, p.policy_rule, p.created_at,
                 EXTRACT(EPOCH FROM now() - p.created_at)::bigint AS age_secs,
                 m.content, m.kind, m.status::text AS memory_status, m.confidence,
-                t.name AS team,
+                t.name AS team, pj.name AS project,
                 pv.actor_kind, pv.actor_id, pv.model_ref,
                 s.kind AS source_kind, s.external_ref AS source_ref
          FROM promotions p
          LEFT JOIN memories m ON m.id = p.memory_id
          LEFT JOIN teams t ON t.id = m.team_id
+         LEFT JOIN projects pj ON pj.id = m.project_id
          LEFT JOIN provenance pv ON pv.id = m.provenance_id
          LEFT JOIN sources s ON s.id = pv.source_id
          WHERE p.policy_decision = 'needs_review' AND p.reviewed_at IS NULL
@@ -1114,6 +1183,7 @@ pub(crate) async fn pending_promotions(
                         status: r.get::<Option<String>, _>("memory_status"),
                         confidence: r.get::<Option<f32>, _>("confidence"),
                         team: r.get::<Option<String>, _>("team"),
+                        project: r.get::<Option<String>, _>("project"),
                     }),
                 provenance,
             }
@@ -1292,6 +1362,9 @@ pub(crate) struct CreateTokenBody {
     /// Principal the token acts as; defaults to the caller.
     #[serde(default)]
     user_id: Option<Uuid>,
+    /// Scope the key to one project (migration 0034); omit for org-wide.
+    #[serde(default)]
+    project_id: Option<Uuid>,
 }
 
 /// The mint response. `token` is the plaintext secret and is the only place
@@ -1303,6 +1376,8 @@ pub(crate) struct CreatedTokenResponse {
     prefix: String,
     scopes: Vec<String>,
     user_id: Uuid,
+    /// The project the key is scoped to; null = org-wide.
+    project_id: Option<Uuid>,
     /// Shown exactly once — never retrievable again.
     token: String,
 }
@@ -1353,6 +1428,21 @@ pub(crate) async fn create_token(
             .into());
     }
     let user_id = body.user_id.unwrap_or(ctx.principal.user_id);
+    // A project-scoped key must point at a project the caller's org actually
+    // owns — otherwise a typo'd/foreign UUID would mint a key whose scope
+    // nothing can resolve (or worse, referencing another org's project).
+    if let Some(project_id) = body.project_id {
+        let ok = brainiac_store::projects::belongs(state.store.pool(), ctx.principal.org_id, project_id)
+            .await
+            .map_err(internal)?;
+        if !ok {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("project {project_id} does not exist in this org"),
+            )
+                .into());
+        }
+    }
     let (secret, prefix) = crate::auth::mint_secret();
     let id = Uuid::new_v4();
     brainiac_store::tokens::create(
@@ -1364,6 +1454,7 @@ pub(crate) async fn create_token(
         &prefix,
         &crate::auth::hash_token(&secret),
         &scopes,
+        body.project_id,
         ctx.principal.user_id,
     )
     .await
@@ -1376,6 +1467,7 @@ pub(crate) async fn create_token(
             prefix,
             scopes,
             user_id,
+            project_id: body.project_id,
             // Shown exactly once — never retrievable again.
             token: secret,
         }),
@@ -1389,6 +1481,10 @@ pub(crate) struct TokenSummary {
     name: String,
     prefix: String,
     scopes: Vec<String>,
+    /// The project the key is scoped to; null = org-wide.
+    project_id: Option<Uuid>,
+    /// Display name of that project; null = org-wide.
+    project_name: Option<String>,
     created_at: DateTime<Utc>,
     last_used_at: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
@@ -1427,6 +1523,8 @@ pub(crate) async fn list_tokens(
                 name: t.name.clone(),
                 prefix: t.prefix.clone(),
                 scopes: t.scopes.clone(),
+                project_id: t.project_id,
+                project_name: t.project_name.clone(),
                 created_at: t.created_at,
                 last_used_at: t.last_used_at,
                 revoked_at: t.revoked_at,

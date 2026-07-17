@@ -120,6 +120,7 @@ export const DEMO_DOC: DocDetail = {
     policy_decision: "auto_published",
     published_at: "2026-07-13T09:12:00Z",
     created_at: "2026-07-13T09:11:41Z",
+    faithfulness: null,
   },
   // A recompose triggered by the idempotency-key decision landing as canonical:
   // it is held back because the new draft drops a previously published claim.
@@ -134,6 +135,7 @@ client-side timeout cannot double-charge. [m:${M.idem}]`,
     composed_from: Object.values(M),
     policy_decision: "needs_review",
     created_at: "2026-07-14T06:41:20Z",
+    faithfulness: null,
   },
   citations: [
     {
@@ -200,6 +202,7 @@ export const DEMO_REVISIONS: DocRevisionSummary[] = [
     published_at: "2026-07-13T09:12:00Z",
     created_at: "2026-07-13T09:11:41Z",
     composed_from: Object.values(M),
+    faithfulness: null, // auto-published — the judge only runs on needs_review
   },
   {
     id: "r0000000-0000-4000-8000-000000000005",
@@ -208,6 +211,7 @@ export const DEMO_REVISIONS: DocRevisionSummary[] = [
     published_at: "2026-06-29T11:03:00Z",
     created_at: "2026-06-29T10:47:12Z",
     composed_from: [M.routing, M.retry, M.webhook, M.timeout],
+    faithfulness: null,
   },
   {
     id: "r0000000-0000-4000-8000-000000000001",
@@ -216,5 +220,6 @@ export const DEMO_REVISIONS: DocRevisionSummary[] = [
     published_at: "2026-06-02T08:20:00Z",
     created_at: "2026-06-02T08:19:55Z",
     composed_from: [M.routing, M.retry],
+    faithfulness: null,
   },
 ];

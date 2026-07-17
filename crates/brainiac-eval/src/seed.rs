@@ -143,6 +143,7 @@ pub async fn seed_gold(store: &Store, fx: &Fixtures, embedder: &dyn Embedder) ->
                 superseded_by: m.superseded_by.as_ref().map(|s| stable_uuid(s)),
                 confidence: None,
                 provenance_id: None,
+                project_id: None,
             },
         )
         .await?;

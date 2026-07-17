@@ -119,6 +119,37 @@
           ]
         },
         {
+          "name": "Server: Projects + Onboarding Pairing",
+          "description": "Project registry + repo whitelist (the unit API keys scope to) and the device-flow onboarding pairing: unauthenticated start/poll, console-approved claim that mints a project-scoped read+write key exactly once, and the served brainiac-onboard skill.",
+          "businessFeature": "Server: Projects + Onboarding Pairing",
+          "category": "api",
+          "filePaths": [
+            "crates/brainiac-server/src/projects.rs",
+            "crates/brainiac-server/src/onboard.rs",
+            "crates/brainiac-server/tests/onboard_pg.rs",
+            "crates/brainiac-store/src/projects.rs",
+            "crates/brainiac-store/src/onboard.rs",
+            "migrations/0034_projects_onboarding.sql",
+            "migrations/0035_project_stamping.sql",
+            "migrations/0037_divergence_axis.sql",
+            "migrations/0038_document_project.sql",
+            "docs/PROJECT-PLAN.md",
+            "docs/skills/brainiac-onboard/SKILL.md"
+          ],
+          "target": null,
+          "apiRoutes": [
+            "/v1/projects",
+            "/v1/projects/:id/repos",
+            "/v1/projects/:id/repos/:repo_id",
+            "/v1/onboard/start",
+            "/v1/onboard/poll",
+            "/v1/onboard/skill",
+            "/v1/onboard/requests",
+            "/v1/onboard/requests/:id/approve",
+            "/v1/onboard/requests/:id/deny"
+          ]
+        },
+        {
           "name": "Server: Library Distribution API",
           "description": "Library distribution surface (LIBRARY-PLAN LB1): REST /v1/library/* (lib:read reads + usage, lib:publish adopt/deprecate/ratify) and the MCP tools standards_for / skill_search / skill_fetch / skill_report_usage; integration-tested over real HTTP and JSON-RPC.",
           "businessFeature": "Server: Library Distribution API",
@@ -179,12 +210,13 @@
         },
         {
           "name": "Pipeline: Worker + Compose + Ingest",
-          "description": "Background worker draining the ingest queue + document composition (the anti-rot compose loop) writing memories with provenance under governance.",
+          "description": "Background worker draining the ingest queue + document composition (the anti-rot compose loop) writing memories with provenance under governance, plus the sampled runtime citation-faithfulness judge on needs_review revisions.",
           "businessFeature": "Pipeline: Worker + Compose + Ingest",
           "category": "pipeline",
           "filePaths": [
             "crates/brainiac-pipeline/src/worker.rs",
             "crates/brainiac-pipeline/src/compose.rs",
+            "crates/brainiac-pipeline/src/faithfulness.rs",
             "crates/brainiac-pipeline/tests/compose_pg.rs"
           ],
           "target": null,
@@ -192,11 +224,12 @@
         },
         {
           "name": "Pipeline: Extract + Resolve + Contradict + Policy",
-          "description": "Knowledge extraction pipeline core: extract candidates from transcripts, resolve entities, detect contradictions, apply promotion policy.",
+          "description": "Knowledge extraction pipeline core: extract candidates from transcripts (and harvested OKF bundle documents), resolve entities, detect contradictions, apply promotion policy.",
           "businessFeature": "Pipeline: Extract + Resolve + Contradict + Policy",
           "category": "pipeline",
           "filePaths": [
             "crates/brainiac-pipeline/src/extract.rs",
+            "crates/brainiac-pipeline/src/okf_ingest.rs",
             "crates/brainiac-pipeline/src/resolve.rs",
             "crates/brainiac-pipeline/src/contradict.rs",
             "crates/brainiac-pipeline/src/policy.rs",
@@ -606,6 +639,7 @@
             "console/src/docs/DocReader.tsx",
             "console/src/docs/DocPage.tsx",
             "console/src/docs/DocIndex.tsx",
+            "console/src/docs/MermaidBlock.tsx",
             "console/src/docs/SectionEditor.tsx",
             "console/src/docs/ApproveRevision.tsx",
             "console/src/docs/docs-demo.ts",
@@ -638,7 +672,7 @@
         },
         {
           "name": "Console: API Keys Management",
-          "description": "API Keys Management: create/list/preview/revoke the org's API keys.",
+          "description": "API Keys Management: create/list/preview/revoke the org's API keys (project-scoped keys show their project), plus the copyable brainiac-onboard skill bootstrap.",
           "businessFeature": "Console: API Keys Management",
           "category": "ui",
           "filePaths": [
@@ -647,6 +681,25 @@
             "console/app/console/modules/keys/keys-data.ts",
             "console/app/console/modules/keys/Module.tsx",
             "console/app/console/modules/keys/Skeleton.tsx"
+          ],
+          "target": null,
+          "apiRoutes": []
+        },
+        {
+          "name": "Console: Projects & Onboarding Desk",
+          "description": "Projects module: the project registry + repo whitelist (the onboarding allow-list) and the pairing approval rail — approve derives the project from the whitelist match; unmatched requests can only be denied.",
+          "businessFeature": "Console: Projects & Onboarding Desk",
+          "category": "ui",
+          "filePaths": [
+            "console/app/console/modules/projects/Projects.tsx",
+            "console/app/console/modules/projects/projects-data.ts",
+            "console/app/console/modules/projects/Module.tsx",
+            "console/app/console/modules/projects/Skeleton.tsx",
+            "console/app/api/projects/route.ts",
+            "console/app/api/projects/[id]/repos/route.ts",
+            "console/app/api/projects/[id]/repos/[repoId]/route.ts",
+            "console/app/api/onboard/requests/route.ts",
+            "console/app/api/onboard/requests/[id]/[decision]/route.ts"
           ],
           "target": null,
           "apiRoutes": []
@@ -935,14 +988,16 @@
       "contexts": [
         {
           "name": "Publish: Render + Confluence + Git",
-          "description": "Publish crate: render knowledge documents and publish them to Confluence (HTTP API) and Git.",
+          "description": "Publish crate: render knowledge documents and publish them to Confluence (HTTP API), Git, and OKF bundles (Open Knowledge Format, with index/log artifacts and AGENTS.md/CLAUDE.md agent pointer blocks).",
           "businessFeature": "Publish: Render + Confluence + Git",
           "category": "publish",
           "filePaths": [
             "crates/brainiac-publish/src/lib.rs",
             "crates/brainiac-publish/src/render.rs",
             "crates/brainiac-publish/src/confluence.rs",
-            "crates/brainiac-publish/src/git.rs"
+            "crates/brainiac-publish/src/git.rs",
+            "crates/brainiac-publish/src/okf.rs",
+            "crates/brainiac-publish/src/pointer.rs"
           ],
           "target": null,
           "apiRoutes": []
@@ -1121,6 +1176,8 @@
     "Console: Marketing & Explainers › Console: Library Explainer [ui] — 6 files",
     "Server: Storage & Retrieval › Store: Library (Standards + Skills + Usage) [store] — 9 files",
     "Server: Agent & API Surface › Server: Library Distribution API [api] — 2 files",
+    "Server: Agent & API Surface › Server: Projects + Onboarding Pairing [api] — 7 files",
+    "Console: Governance Workbench › Console: Projects & Onboarding Desk [ui] — 9 files",
     "Console: Governance Workbench › Console: Library Modules (Standards + Skills) [ui] — 15 files",
     "Server: Knowledge Pipeline & Model Gateway › Pipeline: Library Mining Sweep [pipeline] — 3 files",
     "Server: Knowledge Pipeline & Model Gateway › Pipeline: Standards Pages (L8) [pipeline] — 3 files"

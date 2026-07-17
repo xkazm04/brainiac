@@ -509,6 +509,79 @@ Ordered roughly by leverage; none block the phase ladder.
       - Deliberately DB-free (`eval --profile drift` needs no DATABASE_URL) —
         the instrument is claim-vs-corpus classification; RLS enters at the
         production-integration rung, not here.
+- [x] **OKF interop: publish target, harvest, filtered search, runtime judge,
+      reader diagrams** (2026-07-17) — the OpenWiki/OKF gap-closure round.
+      Research: LangChain's OpenWiki 0.2 adopted OKF (Open Knowledge Format,
+      GoogleCloudPlatform/knowledge-catalog, v0.1) — markdown + YAML
+      frontmatter bundles as the emerging lingua franca for repo wikis agents
+      read. Our verdict: adopt the FORMAT as one more render target and one
+      more witness source; the projection architecture is the moat and none of
+      it moved.
+      - **`okf` publish target** (`brainiac-publish/src/okf.rs`): pages render
+        as an OKF bundle — frontmatter `type` (from doc_kind) / `title` /
+        `description` (derived first-prose-line) / `resource` (console URL) /
+        `tags` (canonical entity names) / `timestamp`, plus generated
+        `index.md` (root `okf_version: "0.1"`, kind-grouped listing) and
+        `log.md` (date-grouped changelog from revisions). Our differentiator
+        travels in extension frontmatter the spec obliges consumers to
+        preserve: `x_brainiac_cited_memories` (the exact provenance closure),
+        `x_brainiac_policy`, `x_brainiac_stale`. Same health gate, same
+        org-only visibility rule, same banner. `Publisher` grew a `finish`
+        hook (bundle-level artifacts, once per run); `PageToPublish` grew
+        `meta` computed once in `publish_org` so every target sees one truth.
+      - **Agent pointer files** (`pointer.rs`): managed
+        `<!-- BRAINIAC:START/END -->` blocks in repo-root AGENTS.md +
+        CLAUDE.md — OpenWiki's zero-integration distribution trick, pointed at
+        our governed bundle. Default ON for `okf` (new target, the pointer is
+        the point), OPT-IN for `git` (`agent_pointers: true`) — an existing
+        target must not start writing repo-root files unasked. User prose
+        outside the markers survives byte-for-byte.
+      - **Deterministic doc search** (store `DocFilter`; REST
+        `/v1/docs?q&kind&tag&stale`; MCP `doc_search` args): kind/tag/stale
+        are exact predicates ANDed with the lexical needle; `tag` walks
+        revision provenance → entity_links → CANONICAL name, so the filter
+        vocabulary IS the OKF frontmatter vocabulary. Unknown `kind` is a 400
+        (an empty 200 would read as "no runbooks exist"); MCP requires ≥1
+        argument. Filters pinned in `docs_pg` (kind exact, tag
+        case-insensitive + provenance-scoped, stale flips with
+        `mark_dirty_for_memory`, AND-composition).
+      - **OKF harvest** (`brainiac-pipeline/src/okf_ingest.rs`, CLI
+        `brainiac okf-harvest --org --path [--team]`): someone else's repo
+        wiki as an extraction SOURCE — concept docs (reserved index/log/hidden
+        skipped, 64KB/500-file caps) → `okf` sources → candidates → the
+        review gate. Never direct-to-canonical: a wiki is a witness, not an
+        authority. Idempotent per (path, FNV-64 content) via
+        `insert_source_idempotent` — re-runs ingest only what changed. Our own
+        published pages (`x_brainiac_*` frontmatter) are REFUSED: harvesting a
+        projection back would launder composed prose into evidence.
+      - **Runtime citation-faithfulness judge** (0036,
+        `brainiac-pipeline/src/faithfulness.rs`): the honesty gap the plan
+        itself flagged ("cites a real memory while misstating it" lived only
+        in the eval). Sampled (≤8 cited paragraphs, spread), on exactly the
+        revisions a human is about to read (`needs_review`), advisory only —
+        verdict JSONB on the revision (`checked` + `flagged` excerpts),
+        surfaced in the revision REST views as the reviewer's
+        read-this-first list. Best-effort after the compose commit: a crashed
+        critic never costs the revision. Same provider as compose — a model
+        grading its own homework is precisely why it informs a human instead
+        of gating.
+      - **Mermaid rendering in the reader** (ladder rung (e), un-deferred):
+        `MermaidBlock.tsx` client island, lazy `import("mermaid")`,
+        `securityLevel: 'strict'`, no HTML labels, render failure falls back
+        to the code fence forever. Server-side markdown parser stays
+        dependency-free; `/docs/[slug]` first-load JS unchanged (mermaid lives
+        in a lazy chunk).
+      - Verification note: workspace compiles; publish/pipeline/console unit
+        suites green (23 + 51 Rust, 178 console); `openapi.json` + console
+        types regenerated. The `_pg` integration suites were NOT run this
+        session — a parallel session was live on the shared dev DB and the
+        suites TRUNCATE; run them before trusting the tag-filter and
+        faithfulness paths end-to-end.
+      - Follow-up seeds: drift detection against harvested OKF bundles (the
+        detector MVP + this harvest are the two halves); typed OpenAPI schema
+        for the faithfulness verdict (currently `Object`); reviewer UI for
+        flagged paragraphs in `ApproveRevision`; OKF `log.md` → per-page
+        `# Citations` section once the spec grows one.
       - Measured: deterministic-bow baseline 1.0/1.0/1.0 with the margin doing
         real work (the 10s-timeout claim scores 0.935 stale vs 0.73 fresh —
         both above threshold; the margin decides). Unit tests pin the margin

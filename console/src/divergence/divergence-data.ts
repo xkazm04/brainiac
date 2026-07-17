@@ -27,6 +27,7 @@ export const DEMO_DIVERGENCES: PracticeDivergences = {
       ],
       model_ref: "qwen:qwen-max",
       detected_at: "2026-07-14T00:00:00Z",
+      axis: "team",
     },
     {
       practice: "idempotency key TTL",
@@ -41,6 +42,24 @@ export const DEMO_DIVERGENCES: PracticeDivergences = {
       ],
       model_ref: "qwen:qwen-max",
       detected_at: "2026-07-14T00:00:00Z",
+      axis: "team",
+    },
+    // The PR3 class: two APPLICATIONS diverging — a per-stack rule candidate
+    // for the Library, not a team conversation.
+    {
+      practice: "client timeout budget",
+      summary:
+        "payments-api calls the PSP with a 30-second timeout while checkout-web abandons the same call at 5 seconds, so one user journey gives up while the other is still waiting.",
+      recommended_standard:
+        "Adopt a shared 10-second end-to-end timeout budget for PSP calls, with checkout surfacing a pending state instead of abandoning.",
+      impact: "medium",
+      approaches: [
+        { project: "payments-api", approach: "30s PSP client timeout after the incident review" },
+        { project: "checkout-web", approach: "5s fetch abort to keep the checkout interactive" },
+      ],
+      model_ref: "qwen:qwen-max",
+      detected_at: "2026-07-14T00:00:00Z",
+      axis: "project",
     },
   ],
 };

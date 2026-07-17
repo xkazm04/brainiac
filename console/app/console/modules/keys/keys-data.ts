@@ -7,6 +7,10 @@ export interface KeysData {
   live: boolean;
   tokens: ApiToken[];
   users: OrgUser[];
+  /// The API base developers reach from THEIR machines — rendered into the
+  /// copyable onboarding command (never a secret; the pairing flow is what
+  /// carries those).
+  apiUrl: string;
 }
 
 export async function mintKey(
@@ -44,7 +48,20 @@ export async function refreshTokens(): Promise<ApiToken[]> {
   return (await r.json()).tokens;
 }
 
-export const SCOPES = ["read", "write", "admin"] as const;
+// The FULL mintable vocabulary — must mirror the server's auth::SCOPES. The
+// day these drifted (this list stuck at read/write/admin while kb:*/lib:*
+// were enforced server-side) the UI could not mint a key that any KB or
+// Library endpoint would accept — see auth.rs's doc comment for the autopsy.
+export const SCOPES = [
+  "read",
+  "write",
+  "kb:read",
+  "kb:publish",
+  "lib:read",
+  "lib:propose",
+  "lib:publish",
+  "admin",
+] as const;
 
 // ── demo shapes ─────────────────────────────────────────────────────────
 
@@ -52,6 +69,7 @@ const DAY = 86400000;
 
 export const DEMO_KEYS: KeysData = {
   live: false,
+  apiUrl: "https://brainiac.example:8600",
   tokens: [
     {
       id: "dk-1",

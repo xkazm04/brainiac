@@ -70,11 +70,52 @@ pub(crate) struct DocSummary {
     pub dirty: bool,
     /// A revision is waiting on a human. Work, not decoration.
     pub pending_review: bool,
+    /// The project this page is scoped to (PROJECT-PLAN PR4); null = an
+    /// org-wide page. A stamped page composes only from its project +
+    /// org-shared memories.
+    pub project_id: Option<Uuid>,
     pub updated_at: String,
+}
+
+/// One facet option for the wiki (a space, a kind, a status) and its count.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct DocFacet {
+    pub value: String,
+    pub label: String,
+    pub count: i64,
+}
+
+impl From<brainiac_store::feedback::Facet> for DocFacet {
+    fn from(f: brainiac_store::feedback::Facet) -> Self {
+        DocFacet {
+            value: f.value,
+            label: f.label,
+            count: f.count,
+        }
+    }
+}
+
+/// The wiki's facet menu — the space directory and the tab counts — computed
+/// server-side so the client never needs the whole corpus to build its tree.
+/// Present only when `?facets=1`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct DocFacetMenu {
+    /// The spaces (folders), each with its page count — the tree directory.
+    pub spaces: Vec<DocFacet>,
+    pub kinds: Vec<DocFacet>,
+    pub statuses: Vec<DocFacet>,
+    /// Pages awaiting review under the current filter (the review tab).
+    pub needs_review: i64,
+    /// Pages behind the corpus under the current filter (the recomposing tab).
+    pub dirty: i64,
 }
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct DocsListResponse {
+    /// Filtered depth — what matches, ignoring the page window.
+    pub total: i64,
+    /// Cross-filtered facet menu, or null when `?facets=1` was not passed.
+    pub facets: Option<DocFacetMenu>,
     pub documents: Vec<DocSummary>,
 }
 
@@ -86,6 +127,12 @@ pub(crate) struct DocRevisionView {
     pub policy_decision: String,
     pub published_at: Option<String>,
     pub created_at: String,
+    /// Sampled citation-faithfulness verdict (0036), when the runtime judge
+    /// ran: `checked` paragraph count plus `flagged` excerpts whose prose
+    /// misstates the memory it cites — the reviewer's read-this-first list.
+    /// `null` = not judged; absence of a verdict is not a verdict.
+    #[schema(value_type = Object, nullable)]
+    pub faithfulness: Option<serde_json::Value>,
 }
 
 /// A memory a page's revision cites, resolved for the reader's provenance popover.
@@ -149,6 +196,7 @@ fn view(r: &brainiac_core::DocumentRevision) -> DocRevisionView {
         policy_decision: r.policy_decision.as_str().to_string(),
         published_at: r.published_at.map(|t| t.to_rfc3339()),
         created_at: r.created_at.to_rfc3339(),
+        faithfulness: r.faithfulness.clone(),
     }
 }
 
@@ -162,6 +210,7 @@ fn summary(d: &brainiac_core::Document, pending_review: bool) -> DocSummary {
         status: d.status.as_str().to_string(),
         dirty: d.dirty_at.is_some(),
         pending_review,
+        project_id: d.project_id,
         updated_at: d.updated_at.to_rfc3339(),
     }
 }
@@ -171,11 +220,36 @@ pub(crate) struct DocsListQuery {
     /// Optional lexical query: filter pages by title, slug, or body (F-5 — the
     /// doc search the MCP surface already had, now over REST). Omit to list all.
     pub q: Option<String>,
+    /// Exact page kind: `entity_page` | `topic_page` | `runbook` | `onboarding`
+    /// | `digest` | `standards_page`. Unknown kinds are a 400, not an empty
+    /// list — a typo must not read as "no runbooks exist".
+    pub kind: Option<String>,
+    /// Canonical entity name (case-insensitive): pages citing a memory anchored
+    /// to that entity. The same vocabulary the OKF bundle publishes as `tags`.
+    pub tag: Option<String>,
+    /// `true` = only stale pages (an underlying memory moved), `false` = only
+    /// current ones. Omit for both.
+    pub stale: Option<bool>,
+    /// The wiki folder (first slug segment, e.g. `payments`). What the tree
+    /// browses one space at a time.
+    pub space: Option<String>,
+    /// Exact publish status: `draft` | `published` | `archived`.
+    pub status: Option<String>,
+    /// `true` = only pages whose current revision awaits a human (review tab).
+    pub needs_review: Option<bool>,
+    /// Compute the cross-filtered facet menu (space directory + tab counts).
+    /// Off by default so a headless page-walk pays only for the rows it reads.
+    #[serde(default, deserialize_with = "crate::console::de_truthy")]
+    pub facets: bool,
+    #[serde(default = "default_docs_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }
 
-/// Result ceiling for a doc search — pages are few; a search is a shortlist,
-/// not a dump.
-const DOC_SEARCH_LIMIT: i64 = 50;
+fn default_docs_limit() -> i64 {
+    50
+}
 
 #[utoipa::path(
     get,
@@ -189,29 +263,76 @@ pub(crate) async fn docs_list(
     Query(q): Query<DocsListQuery>,
 ) -> Result<Json<DocsListResponse>, HttpError> {
     let principal = auth_of(&state, &headers, SCOPE_KB_READ).await?.principal;
+
+    // Validate `kind` before touching the store: an unknown kind must be a 400,
+    // because an empty 200 would read as "the org has no runbooks".
+    let kind = q
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            brainiac_core::DocKind::parse(s)
+                .map(|k| k.as_str())
+                .ok_or_else(|| -> HttpError {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("unknown page kind `{s}`"),
+                    )
+                        .into()
+                })
+        })
+        .transpose()?;
+
+    let filter = brainiac_store::documents::DocFilter {
+        q: q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        kind,
+        tag: q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        stale: q.stale,
+        space: q.space.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        status: q.status.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        needs_review: q.needs_review,
+        published_only: false,
+    };
+    let limit = q.limit.clamp(1, 200);
+    let offset = q.offset.max(0);
+
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
 
-    let query = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let docs = match query {
-        Some(query) => {
-            brainiac_store::documents::search_documents(&mut tx, query, DOC_SEARCH_LIMIT)
-                .await
-                .map_err(internal)?
-        }
-        None => brainiac_store::documents::list_documents(&mut tx)
-            .await
-            .map_err(internal)?,
-    };
-    let pending = brainiac_store::documents::pending_revisions(&mut tx)
+    // `pending_review` is computed IN the browse query (a correlated EXISTS),
+    // not by scanning every pending revision and matching in app code — that
+    // scan was O(pages × pending) on every list.
+    let pages = brainiac_store::documents::browse(&mut tx, &filter, limit, offset)
         .await
         .map_err(internal)?;
+    let total = brainiac_store::documents::browse_count(&mut tx, &filter)
+        .await
+        .map_err(internal)?;
+    let facets = if q.facets {
+        let f = brainiac_store::documents::browse_facets(&mut tx, &filter)
+            .await
+            .map_err(internal)?;
+        Some(DocFacetMenu {
+            spaces: f.spaces.into_iter().map(Into::into).collect(),
+            kinds: f.kinds.into_iter().map(Into::into).collect(),
+            statuses: f.statuses.into_iter().map(Into::into).collect(),
+            needs_review: f.needs_review,
+            dirty: f.dirty,
+        })
+    } else {
+        None
+    };
     tx.commit().await.map_err(internal)?;
 
-    let documents = docs
+    let documents: Vec<DocSummary> = pages
         .iter()
-        .map(|d| summary(d, pending.iter().any(|r| r.document_id == d.id)))
+        .map(|p| summary(&p.doc, p.pending_review))
         .collect();
-    Ok(Json(DocsListResponse { documents }))
+    Ok(Json(DocsListResponse {
+        total,
+        facets,
+        documents,
+    }))
 }
 
 #[utoipa::path(
@@ -564,6 +685,9 @@ pub(crate) async fn doc_edit(
         "doc",
         &raw,
         Some(principal.user_id),
+        // Project attribution for doc-edit captures arrives with PR4 (the
+        // document layer gains its own project binding); org-shared until then.
+        None,
     )
     .await
     .map_err(internal)?;

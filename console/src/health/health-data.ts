@@ -20,6 +20,10 @@ export const DEMO_HEALTH: KnowledgeHealth = {
     cross_team_entities: 26,
     open_contradictions: 3,
     cross_team_contradictions: 1,
+    // The project axis (PR3): knowledge crosses application lines less than
+    // team lines here — consistent with a "Watch" org still stamping writes.
+    cross_project_entities: 9,
+    cross_project_contradictions: 1,
     stale_beliefs: 12,
     org_wide: 138,
     team_only: 231,

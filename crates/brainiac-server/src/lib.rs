@@ -9,6 +9,8 @@ pub mod docs;
 pub mod http;
 pub mod library;
 pub mod mcp;
+pub mod onboard;
 pub mod openapi;
+pub mod projects;
 pub mod provision;
 pub mod sweeps;

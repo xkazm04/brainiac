@@ -196,6 +196,10 @@ pub struct McpState {
     /// library and propose to it without ever being able to publish a rule —
     /// the same gate the REST surface applies (see [`tool_scope`]).
     pub scopes: Option<Vec<String>>,
+    /// PROJECT-PLAN PR0: the project the session's key is scoped to (an
+    /// onboarded device key carries the repo's project). Stamped onto every
+    /// source this session writes; `None` = org-wide key ⇒ org-shared writes.
+    pub project_id: Option<Uuid>,
 }
 
 /// The scope a tool requires — the MCP mirror of the `auth_of(&state, scope)`
@@ -205,8 +209,8 @@ pub struct McpState {
 fn tool_scope(tool: &str) -> &'static str {
     match tool {
         // reads over the governed memory
-        "memory_search" | "memory_context" | "memory_provenance" | "entity_lookup"
-        | "memory_status" => "read",
+        "memory_search" | "memory_list" | "memory_context" | "memory_provenance"
+        | "entity_lookup" | "memory_status" => "read",
         // writes: a proposal, a memory, a feedback verdict
         "memory_add" | "knowledge_propose" | "memory_feedback" => "write",
         // the knowledge base
@@ -240,6 +244,7 @@ impl McpState {
             .context("BRAINIAC_MCP_TOKEN does not resolve to a principal")?;
         let principal = ctx.principal;
         let scopes = ctx.scopes;
+        let project_id = ctx.project_id;
         let embedding_version = {
             let mut tx = store.scoped_tx(&principal).await?;
             // Serve path: refuse to start on a version whose reembed backfill did
@@ -260,6 +265,7 @@ impl McpState {
             embedding_version,
             principal,
             scopes,
+            project_id,
         })
     }
 
@@ -415,13 +421,29 @@ fn tool_definitions() -> Value {
                     "query": { "type": "string", "description": "What you want to know" },
                     "k": { "type": "integer", "description": "Max results (default 10, cap 25)" },
                     "as_of": { "type": "string", "description": "RFC3339 timestamp: answer as of this moment in time" },
-                    "scope": { "type": "string", "enum": ["team", "org"], "description": "\"org\" (default): everything you can see across the org. \"team\": only memories owned by your team." },
+                    "scope": { "type": "string", "enum": ["team", "project", "org"], "description": "\"org\" (default): everything you can see across the org. \"team\": only memories owned by your team. \"project\": this key's project plus org-shared memories (needs a project-scoped key)." },
                     "kinds": { "type": "array", "items": { "type": "string", "enum": ["fact", "decision", "pattern", "pitfall", "howto"] }, "description": "Keep only these memory kinds (default: all)" },
                     "min_confidence": { "type": "number", "description": "0-1: drop memories below this extractor confidence (memories with no confidence are dropped)" },
                     "include_unreviewed": { "type": "boolean", "description": "Default false. When false, raw (never-reviewed) memories are excluded — you see only knowledge that cleared at least an automated gate. Set true ONLY when you deliberately want to see unpromoted/raw captures (e.g. triaging your own recent memory_add); such rows carry no governance guarantee." },
                     "include_contested": { "type": "boolean", "description": "Default false. When false, memories in an UNRESOLVED contradiction are withheld (the response reports how many, so you know the area is contested and can escalate). Their truth is undetermined; do not act on them. Set true only to inspect the conflict for reconciliation — never to pick a side by recency or provenance." }
                 },
                 "required": ["query"]
+            }
+        },
+        {
+            "name": "memory_list",
+            "description": "Browse the organization's memory archive deterministically, filtered and PAGED — the tool for exhaustive sweeps, not relevance ranking. Where memory_search returns a top-k by relevance, this returns EVERY memory matching a filter, newest first, one page at a time: page by incrementing `offset` while `has_more` is true. Reach for it when the task is 'audit/list/count ALL X' — every payments decision, every pitfall touched this quarter, the whole of a status. Permission-scoped to you, same filters as the console archive.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": { "type": "string", "description": "Optional full-text filter over content and title" },
+                    "kind": { "type": "string", "enum": ["fact", "decision", "pattern", "pitfall", "howto"], "description": "Keep only this kind" },
+                    "status": { "type": "string", "description": "Keep only this status (canonical|candidate|raw|deprecated)" },
+                    "scope": { "type": "string", "enum": ["team", "project", "org"], "description": "\"org\" (default), \"team\" (memories owned by your team), or \"project\" (this key's project plus org-shared; needs a project-scoped key)" },
+                    "as_of": { "type": "string", "description": "RFC3339: list rows VALID at that instant (time travel), including since-deprecated ones" },
+                    "limit": { "type": "integer", "description": "Page size (default 50, cap 200)" },
+                    "offset": { "type": "integer", "description": "Page offset. The response carries `total` and `has_more` so you know when to stop." }
+                }
             }
         },
         {
@@ -508,13 +530,15 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "doc_search",
-            "description": "Find knowledge-base PAGES (compiled, human-published views over the org's memories) by topic. A page is the org's settled, reviewed account of a service or topic — prefer it over raw memory_search when you need the whole picture of something rather than a specific fact. Returns page slugs + titles; read one with doc_get.",
+            "description": "Find knowledge-base PAGES (compiled, human-published views over the org's memories) by topic and/or deterministic filters. A page is the org's settled, reviewed account of a service or topic — prefer it over raw memory_search when you need the whole picture of something rather than a specific fact. Filters compose: e.g. every runbook about one entity, or everything currently stale. Give at least one argument. Returns page slugs + titles; read one with doc_get.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "Topic, service, or entity you want the org's page on" }
-                },
-                "required": ["query"]
+                    "query": { "type": "string", "description": "Free-text topic to match against titles and page bodies. Optional when a filter is given." },
+                    "kind": { "type": "string", "enum": ["entity_page", "topic_page", "runbook", "onboarding", "digest", "standards_page"], "description": "Only pages of this kind" },
+                    "tag": { "type": "string", "description": "Canonical entity name (case-insensitive, e.g. from entity_lookup): only pages citing knowledge about that entity" },
+                    "stale": { "type": "boolean", "description": "true = only pages behind the corpus (an underlying memory changed); false = only current pages" }
+                }
             }
         },
         {
@@ -632,6 +656,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
 
     let payload = match name {
         "memory_search" => memory_search(state, &args).await,
+        "memory_list" => memory_list(state, &args).await,
         "memory_context" => memory_context(state, &args).await,
         "memory_add" => memory_add(state, &args).await,
         "memory_status" => memory_status(state, &args).await,
@@ -684,6 +709,8 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
 ///   - `"team"`: restrict to memories OWNED BY the caller's primary team
 ///     (`principal.team_ids[0]`). A caller who belongs to no team has nothing to
 ///     scope to, so it is refused.
+///   - `"project"`: the session key's project plus org-shared rows (PROJECT-PLAN
+///     PR1). Refused for an org-wide key, which has no project to scope to.
 fn parse_filters(state: &McpState, args: &Value) -> Result<RetrievalFilters, ToolError> {
     let mut filters = RetrievalFilters::default();
 
@@ -700,9 +727,21 @@ fn parse_filters(state: &McpState, args: &Value) -> Result<RetrievalFilters, Too
                 })?;
                 filters.team_id = Some(team);
             }
+            // PROJECT-PLAN PR1: the session key's project + org-shared rows.
+            // Only meaningful for a project-scoped key (an onboarded repo);
+            // an org-wide key has no project to scope to and is told so.
+            "project" => {
+                let project = state.project_id.ok_or_else(|| {
+                    rejected(
+                        "`scope`=\"project\" needs a project-scoped key, but this session's \
+                         key is org-wide",
+                    )
+                })?;
+                filters.project_id = Some(project);
+            }
             other => {
                 return Err(invalid(format!(
-                    "`scope` must be \"team\" or \"org\" (got \"{other}\")"
+                    "`scope` must be \"team\", \"project\", or \"org\" (got \"{other}\")"
                 )))
             }
         }
@@ -899,6 +938,102 @@ fn provenance_tag(p: &brainiac_store::governance::ProvenanceRef) -> Option<Strin
     })
 }
 
+/// `memory_list` — deterministic, paginated browse of the archive.
+///
+/// The difference from `memory_search`: search RANKS and returns a top-k by
+/// relevance; this LISTS, ordered by recency, and pages exhaustively. It is the
+/// tool for "walk every payments decision" — an agent loops `offset` until
+/// `offset + memories.len() >= total`. Same filters as the console archive
+/// (`kind`, `status`, `q`, `scope`, `as_of`), same RLS, so what an operator
+/// browses and what an agent iterates are the one query.
+async fn memory_list(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let q = match args.get("q").or_else(|| args.get("query")) {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let s = within_cap(
+                v.as_str().ok_or_else(|| invalid("`q` must be a string"))?,
+                MAX_QUERY_CHARS,
+                "q",
+            )?
+            .trim();
+            (!s.is_empty()).then(|| s.to_string())
+        }
+    };
+    let kind = match args.get("kind") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let s = v.as_str().ok_or_else(|| invalid("`kind` must be a string"))?.trim();
+            Some(
+                MemoryKind::parse(s)
+                    .ok_or_else(|| invalid(format!("unknown kind `{s}`")))?
+                    .as_str()
+                    .to_string(),
+            )
+        }
+    };
+    let status = match args.get("status") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let s = v.as_str().ok_or_else(|| invalid("`status` must be a string"))?.trim();
+            Some(
+                MemoryStatus::parse(s)
+                    .ok_or_else(|| invalid(format!("unknown status `{s}`")))?
+                    .as_str()
+                    .to_string(),
+            )
+        }
+    };
+    // `scope` = the same org/team/project lever memory_search uses.
+    let scoped = parse_filters(state, args)?;
+    let as_of = parse_as_of(args)?;
+
+    let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).clamp(1, 200);
+    let offset = args.get("offset").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+
+    let filter = brainiac_store::archive::MemoryFilter {
+        q,
+        kind,
+        status,
+        team_id: scoped.team_id,
+        visibility: None,
+        // The archive filter is EXACT per project (it has its own org-shared
+        // bucket), unlike the inclusive retrieval lens — for a browse listing
+        // "show me this project's rows" is the intuitive read.
+        project: scoped.project_id.map(|u| u.to_string()),
+        as_of,
+    };
+
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    let rows = brainiac_store::archive::list(
+        &mut tx,
+        &filter,
+        brainiac_store::archive::MemorySort::Recent,
+        limit,
+        offset,
+    )
+    .await?;
+    let total = brainiac_store::archive::count(&mut tx, &filter).await?;
+
+    Ok(json!({
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        // The agent's continuation signal: fetch the next page while this holds.
+        "has_more": offset + (rows.len() as i64) < total,
+        "memories": rows.iter().map(|m| json!({
+            "id": m.id,
+            "title": m.title,
+            "kind": m.kind,
+            "status": m.status,
+            "content": m.content,
+            "team": m.team,
+            "valid_from": m.valid_from,
+            "valid_to": m.valid_to,
+            "created_at": m.created_at,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let hint = within_cap(
         required_str(args, "task_hint")?,
@@ -1088,6 +1223,9 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         "manual",
         &raw_text,
         Some(state.principal.user_id),
+        // The session key's project scope — an onboarded repo's writes are
+        // attributed to its project without the agent saying anything.
+        state.project_id,
     )
     .await?;
     tx.commit().await?;
@@ -1339,37 +1477,87 @@ async fn doc_get(state: &McpState, args: &Value) -> Result<Value, ToolError> {
 /// needs the whole picture of a service should read the org's settled account of
 /// it rather than reassembling one from twenty facts.
 async fn doc_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {
-    use sqlx::Row;
-    let query = within_cap(required_str(args, "query")?, MAX_QUERY_CHARS, "query")?;
-    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    // Lexical needle over title/slug + the published markdown, PLUS the
+    // deterministic filters (kind/tag/stale) the OKF work aligned across every
+    // surface. The lexical part stays a deliberately simple LIKE: pages are few
+    // and their titles name the thing they are about. If page count ever makes
+    // this weak, the fix is a page embedding — not a cleverer LIKE.
+    let query = match args.get("query") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("`query` must be a string"))?
+                .trim();
+            (!s.is_empty()).then(|| within_cap(s, MAX_QUERY_CHARS, "query").map(str::to_string))
+        }
+        .transpose()?,
+    };
+    let kind = match args.get("kind") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("`kind` must be a string"))?
+                .trim();
+            Some(
+                brainiac_core::DocKind::parse(s)
+                    .map(|k| k.as_str())
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "unknown page kind `{s}` (entity_page|topic_page|runbook|onboarding|digest|standards_page)"
+                        ))
+                    })?,
+            )
+        }
+    };
+    let tag = match args.get("tag") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            within_cap(
+                v.as_str().ok_or_else(|| invalid("`tag` must be a string"))?,
+                MAX_NAME_CHARS,
+                "tag",
+            )?
+            .trim()
+            .to_string(),
+        ),
+    };
+    let stale = match args.get("stale") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_bool()
+                .ok_or_else(|| invalid("`stale` must be a boolean"))?,
+        ),
+    };
+    if query.is_none() && kind.is_none() && tag.is_none() && stale.is_none() {
+        return Err(invalid(
+            "give at least one of `query`, `kind`, `tag`, or `stale`",
+        ));
+    }
 
-    // Lexical over title/slug + the published markdown. Deliberately simple:
-    // pages are few and their titles name the thing they are about, so embedding
-    // the corpus of pages would buy little and cost an index to keep fresh.
-    // If page count ever makes this weak, the fix is a page embedding — not a
-    // cleverer LIKE.
-    let rows = sqlx::query(
-        "SELECT d.slug, d.title, d.doc_kind, d.dirty_at IS NOT NULL AS stale
-         FROM documents d
-         LEFT JOIN document_revisions r ON r.id = d.current_revision
-         WHERE d.status = 'published'
-           AND (d.title ILIKE '%' || $1 || '%'
-                OR d.slug ILIKE '%' || $1 || '%'
-                OR r.content_md ILIKE '%' || $1 || '%')
-         ORDER BY (d.title ILIKE '%' || $1 || '%') DESC, d.updated_at DESC
-         LIMIT 10",
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    let docs = brainiac_store::documents::search_documents(
+        &mut tx,
+        brainiac_store::documents::DocFilter {
+            q: query.as_deref(),
+            kind,
+            tag: tag.as_deref(),
+            stale,
+            published_only: true,
+            ..Default::default()
+        },
+        10,
     )
-    .bind(query)
-    .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
 
     Ok(json!({
-        "pages": rows.iter().map(|r| json!({
-            "slug": r.get::<String, _>("slug"),
-            "title": r.get::<String, _>("title"),
-            "kind": r.get::<String, _>("doc_kind"),
-            "stale": r.get::<bool, _>("stale"),
+        "pages": docs.iter().map(|d| json!({
+            "slug": d.slug,
+            "title": d.title,
+            "kind": d.doc_kind.as_str(),
+            "stale": d.dirty_at.is_some(),
         })).collect::<Vec<_>>()
     }))
 }

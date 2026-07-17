@@ -544,6 +544,7 @@ async fn seed_case(
                 superseded_by: None,
                 confidence: None,
                 provenance_id: None,
+                project_id: None,
             },
         )
         .await?;

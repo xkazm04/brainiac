@@ -77,12 +77,19 @@ const CONTRA_WINDOW = 12;
 
 interface Filters {
   team: string | null;
+  /** Project display name, with `"org-shared"` standing in for null — chips
+   *  here filter by label, like team (PROJECT-PLAN PR2). */
+  project: string | null;
   kind: string | null;
   rule: string | null;
   stale: boolean;
 }
 
-const EMPTY: Filters = { team: null, kind: null, rule: null, stale: false };
+const EMPTY: Filters = { team: null, project: null, kind: null, rule: null, stale: false };
+
+/** The project bucket a visible memory falls in; null while RLS hides it. */
+const projectOf = (p: PromotionQueueItem): string | null =>
+  p.memory ? (p.memory.project ?? "org-shared") : null;
 
 /**
  * `ignore` is what makes the chip counts honest: a facet's tally is computed
@@ -91,6 +98,7 @@ const EMPTY: Filters = { team: null, kind: null, rule: null, stale: false };
  */
 const passes = (p: PromotionQueueItem, f: Filters, ignore?: keyof Filters) =>
   (ignore === "team" || f.team === null || p.memory?.team === f.team) &&
+  (ignore === "project" || f.project === null || projectOf(p) === f.project) &&
   (ignore === "kind" || f.kind === null || p.memory?.kind === f.kind) &&
   (ignore === "rule" || f.rule === null || p.policy_rule === f.rule) &&
   (ignore === "stale" || !f.stale || p.age_secs > STALE_SECS);
@@ -179,12 +187,18 @@ export default function ReviewWorklist({
   const matched = useMemo(() => ordered.filter((p) => passes(p, filters)), [ordered, filters]);
 
   const facets = useMemo(() => {
-    const tally = (dim: "team" | "kind" | "rule") => {
+    const tally = (dim: "team" | "project" | "kind" | "rule") => {
       const m = new Map<string, number>();
       for (const p of ordered) {
         if (!passes(p, filters, dim)) continue;
         const v =
-          dim === "team" ? p.memory?.team : dim === "kind" ? p.memory?.kind : p.policy_rule;
+          dim === "team"
+            ? p.memory?.team
+            : dim === "project"
+              ? projectOf(p)
+              : dim === "kind"
+                ? p.memory?.kind
+                : p.policy_rule;
         if (!v) continue;
         m.set(v, (m.get(v) ?? 0) + 1);
       }
@@ -192,6 +206,7 @@ export default function ReviewWorklist({
     };
     return {
       team: tally("team"),
+      project: tally("project"),
       kind: tally("kind"),
       rule: tally("rule"),
       stale: ordered.filter((p) => passes(p, filters, "stale") && p.age_secs > STALE_SECS).length,
@@ -218,7 +233,7 @@ export default function ReviewWorklist({
     setLimit(RAIL_WINDOW);
     setFocusId(null);
   };
-  const setDim = (k: "team" | "kind" | "rule", v: string) => {
+  const setDim = (k: "team" | "project" | "kind" | "rule", v: string) => {
     setFilters((f) => {
       const next: Filters = { ...f };
       next[k] = f[k] === v ? null : v;
@@ -370,6 +385,25 @@ export default function ReviewWorklist({
           </span>
         )}
       </div>
+      {/* Project row renders only once anything is project-stamped — a corpus
+          with one "org-shared" bucket has no distinction to filter by. */}
+      {(facets.project.length > 1 || filters.project !== null) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className={`${LABEL} mr-1`} style={{ color: FAINT }}>
+            project
+          </span>
+          {facets.project.map(([v, n]) => (
+            <FilterChip
+              key={v}
+              label={v}
+              count={n}
+              active={filters.project === v}
+              tone={ALPHA}
+              onClick={() => setDim("project", v)}
+            />
+          ))}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <span className={`${LABEL} mr-1`} style={{ color: FAINT }}>
           kind
@@ -758,6 +792,16 @@ export default function ReviewWorklist({
                     style={{ borderColor: HAIR, color: DIM }}
                   >
                     team {active.memory.team}
+                  </span>
+                )}
+                {/* Which application the claim is about — the fact a reviewer
+                    needs before deciding whether it generalizes (PR2). */}
+                {active.memory && (
+                  <span
+                    className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-xs`}
+                    style={{ borderColor: HAIR, color: DIM }}
+                  >
+                    {active.memory.project ?? "org-shared"}
                   </span>
                 )}
                 {active.memory?.confidence != null && (

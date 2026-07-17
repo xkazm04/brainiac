@@ -280,10 +280,11 @@ pub async fn compose_tick(
 
         match outcome {
             Ok(out) => {
+                let rev_id = Uuid::new_v4();
                 brainiac_store::documents::insert_revision(
                     &mut tx,
                     &brainiac_store::documents::NewRevision {
-                        id: Uuid::new_v4(),
+                        id: rev_id,
                         document_id: doc.id,
                         org_id,
                         content_md: out.content_md,
@@ -308,6 +309,32 @@ pub async fn compose_tick(
                     reason = %out.policy_reason,
                     "page recomposed"
                 );
+                // Sampled faithfulness judge (0036), on exactly the revisions
+                // a human is about to read. AFTER the commit and best-effort:
+                // the verdict is triage for the reviewer, and a crashed critic
+                // must never cost the revision it was criticizing.
+                if out.policy != brainiac_core::RevisionPolicy::AutoPublished {
+                    match crate::faithfulness::judge_and_record(
+                        store,
+                        &principal,
+                        providers.for_stage(Stage::Compose),
+                        rev_id,
+                    )
+                    .await
+                    {
+                        Ok(Some(flagged)) if flagged > 0 => tracing::warn!(
+                            document = %doc.slug,
+                            flagged,
+                            "faithfulness judge flagged paragraph(s) for the reviewer"
+                        ),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!(
+                            document = %doc.slug,
+                            error = %e,
+                            "faithfulness judge failed; revision stays pending, unjudged"
+                        ),
+                    }
+                }
             }
             Err(e) => {
                 // The page stays dirty: a failed compose must retry, never
@@ -521,7 +548,7 @@ async fn process_job(
     let principal = pipeline_principal(org_id);
     let mut tx = store.worker_tx(&principal).await?;
 
-    let (team_id, source_kind, raw_text) =
+    let (team_id, source_kind, raw_text, project_id) =
         brainiac_store::governance::get_source_text(&mut tx, source_id)
             .await?
             .context("source not found")?;
@@ -541,6 +568,7 @@ async fn process_job(
         &source_kind,
         &raw_text,
         Some(run_id),
+        project_id,
     )
     .await?;
     run.memories += extracted.memories_written;

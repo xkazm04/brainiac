@@ -169,6 +169,9 @@ pub struct FlaggedMemory {
     /// The owning team's NAME. `team_id` alone is a UUID on a maintainer's
     /// screen, which is not information.
     pub team: Option<String>,
+    /// Project display name; `None` = org-shared (PROJECT-PLAN PR2).
+    pub project: Option<String>,
+    pub project_id: Option<Uuid>,
     pub confidence: Option<f32>,
     pub valid_to: Option<DateTime<Utc>>,
     pub provenance: Option<FlaggedProvenance>,
@@ -225,6 +228,9 @@ pub struct FlaggedFilter {
     pub min_claims: Option<i64>,
     /// One of [`BANDS`].
     pub band: Option<String>,
+    /// Project id as a string, or `"none"` for org-shared (same sentinel as
+    /// the archive filter — PROJECT-PLAN PR2).
+    pub project: Option<String>,
 }
 
 impl FlaggedFilter {
@@ -265,7 +271,7 @@ pub async fn flagged(
     let sql = format!(
         "SELECT f.memory_id, m.title, m.content, m.kind, m.status::text AS status,
                 m.team_id, m.valid_to, m.confidence,
-                t.name AS team,
+                t.name AS team, m.project_id, pj.name AS project,
                 pv.actor_kind, pv.actor_id, pv.model_ref,
                 count(*) FILTER (WHERE f.verdict = 'wrong')    AS wrong,
                 count(*) FILTER (WHERE f.verdict = 'outdated') AS outdated,
@@ -287,14 +293,19 @@ pub async fn flagged(
          LEFT JOIN teams t ON t.id = m.team_id AND t.org_id = f.org_id
          LEFT JOIN users u ON u.id = f.user_id AND u.org_id = f.org_id
          LEFT JOIN team_members tm ON tm.user_id = f.user_id AND tm.team_id = m.team_id
+         LEFT JOIN projects pj ON pj.id = m.project_id
          LEFT JOIN provenance pv ON pv.id = m.provenance_id
          WHERE f.resolved_at IS NULL
            AND f.verdict IN ('wrong', 'outdated')
            AND ($3::text IS NULL OR m.kind = $3)
            AND ($4::uuid IS NULL OR m.team_id = $4)
            AND ($5::text IS NULL OR ({BAND_SQL}) = $5)
+           AND ($8::text IS NULL OR
+                 CASE WHEN $8 = 'none' THEN m.project_id IS NULL
+                      ELSE m.project_id::text = $8 END)
          GROUP BY f.memory_id, m.title, m.content, m.kind, m.status, m.team_id, m.valid_to,
-                  m.confidence, t.name, pv.actor_kind, pv.actor_id, pv.model_ref
+                  m.confidence, t.name, m.project_id, pj.name,
+                  pv.actor_kind, pv.actor_id, pv.model_ref
          HAVING ($6::bigint IS NULL OR count(*) >= $6)
             AND ($7::bigint IS NULL
                  OR min(f.created_at) <= now() - make_interval(hours => $7::int))
@@ -311,6 +322,7 @@ pub async fn flagged(
         .bind(filter.band.as_deref())
         .bind(filter.min_claims)
         .bind(filter.min_age_hours)
+        .bind(filter.project.as_deref())
         .fetch_all(conn)
         .await?;
     rows.iter()
@@ -326,6 +338,8 @@ pub async fn flagged(
                 status: r.get("status"),
                 team_id: r.get("team_id"),
                 team: r.get("team"),
+                project: r.get("project"),
+                project_id: r.get("project_id"),
                 confidence: r.get("confidence"),
                 valid_to: r.get("valid_to"),
                 // Whole-object null, never a half-populated record: a memory
@@ -363,6 +377,9 @@ pub async fn flagged_count(conn: &mut PgConnection, filter: &FlaggedFilter) -> R
               AND ($1::text IS NULL OR m.kind = $1)
               AND ($2::uuid IS NULL OR m.team_id = $2)
               AND ($3::text IS NULL OR ({BAND_SQL}) = $3)
+              AND ($6::text IS NULL OR
+                    CASE WHEN $6 = 'none' THEN m.project_id IS NULL
+                         ELSE m.project_id::text = $6 END)
             GROUP BY f.memory_id
             HAVING ($4::bigint IS NULL OR count(*) >= $4)
                AND ($5::bigint IS NULL
@@ -375,6 +392,7 @@ pub async fn flagged_count(conn: &mut PgConnection, filter: &FlaggedFilter) -> R
         .bind(filter.band.as_deref())
         .bind(filter.min_claims)
         .bind(filter.min_age_hours)
+        .bind(filter.project.as_deref())
         .fetch_one(conn)
         .await?;
     Ok(row.get("n"))
@@ -397,16 +415,19 @@ pub struct Facet {
 /// grouped passes over the same claim set the queue reads. RLS-scoped.
 pub async fn flagged_facets(
     conn: &mut PgConnection,
-) -> Result<(Vec<Facet>, Vec<Facet>, Vec<Facet>)> {
+) -> Result<(Vec<Facet>, Vec<Facet>, Vec<Facet>, Vec<Facet>)> {
     // Distinct disputed memories once, with the columns every facet groups on —
     // so a memory is counted a single time per facet no matter its claim count.
     let rows = sqlx::query(&format!(
-        "SELECT m.kind, m.team_id, t.name AS team, ({BAND_SQL}) AS band
+        "SELECT m.kind, m.team_id, t.name AS team, ({BAND_SQL}) AS band,
+                m.project_id, pj.name AS project
          FROM memory_feedback f
          JOIN memories m ON m.id = f.memory_id
          LEFT JOIN teams t ON t.id = m.team_id AND t.org_id = f.org_id
+         LEFT JOIN projects pj ON pj.id = m.project_id
          WHERE f.resolved_at IS NULL AND f.verdict IN ('wrong', 'outdated')
-         GROUP BY f.memory_id, m.kind, m.team_id, t.name, ({BAND_SQL})"
+         GROUP BY f.memory_id, m.kind, m.team_id, t.name, ({BAND_SQL}),
+                  m.project_id, pj.name"
     ))
     .fetch_all(conn)
     .await?;
@@ -414,10 +435,14 @@ pub async fn flagged_facets(
     let mut kinds: HashMap<String, i64> = HashMap::new();
     let mut teams: HashMap<(Option<Uuid>, Option<String>), i64> = HashMap::new();
     let mut bands: HashMap<String, i64> = HashMap::new();
+    let mut projects: HashMap<(Option<Uuid>, Option<String>), i64> = HashMap::new();
     for r in &rows {
         *kinds.entry(r.get("kind")).or_default() += 1;
         *teams.entry((r.get("team_id"), r.get("team"))).or_default() += 1;
         *bands.entry(r.get("band")).or_default() += 1;
+        *projects
+            .entry((r.get("project_id"), r.get("project")))
+            .or_default() += 1;
     }
 
     let mut kind_facets: Vec<Facet> = kinds
@@ -452,7 +477,19 @@ pub async fn flagged_facets(
         })
         .collect();
 
-    Ok((kind_facets, team_facets, band_facets))
+    // Projects mirror the archive facet: value `"none"` / label `org-shared`
+    // for the null bucket (PROJECT-PLAN PR2).
+    let mut project_facets: Vec<Facet> = projects
+        .into_iter()
+        .map(|((id, name), count)| Facet {
+            value: id.map(|u| u.to_string()).unwrap_or_else(|| "none".to_string()),
+            label: name.unwrap_or_else(|| "org-shared".to_string()),
+            count,
+        })
+        .collect();
+    project_facets.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
+
+    Ok((kind_facets, team_facets, band_facets, project_facets))
 }
 
 /// How many claims against this memory are still open. Callers answering a

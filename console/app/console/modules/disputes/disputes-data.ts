@@ -27,6 +27,10 @@ export interface DisputedMemory {
   team_id: string | null;
   /** The owning team's NAME. Null for org-wide memories. */
   team: string | null;
+  /** Project display name; null/absent = org-shared. Optional so the demo
+   *  fixtures predating PR2 stay valid — the server always emits it. */
+  project?: string | null;
+  project_id?: string | null;
   /** How sure the corpus was when it accepted this. */
   confidence: number | null;
   /** End of the memory's validity window (TTL), if it has one. */
@@ -55,6 +59,8 @@ export interface Facets {
   kinds: Facet[];
   teams: Facet[];
   bands: Facet[];
+  /** Value is a project id or `"none"`; label the name or `"org-shared"`. */
+  projects: Facet[];
 }
 
 /** The narrowing a maintainer applied — mirrors the server query params. */
@@ -64,6 +70,8 @@ export interface DisputeFilter {
   band?: DecayBand;
   minClaims?: number;
   minAgeHours?: number;
+  /** A project id, or `"none"` for org-shared memories (PR2). */
+  project?: string;
 }
 
 export interface DisputeData {
@@ -221,6 +229,7 @@ export function bandOf(m: DisputedMemory): DecayBand {
 export function matchesFilter(m: DisputedMemory, f: DisputeFilter): boolean {
   if (f.kind && m.kind !== f.kind) return false;
   if (f.teamId && m.team_id !== f.teamId) return false;
+  if (f.project && (m.project_id ?? "none") !== f.project) return false;
   if (f.band && bandOf(m) !== f.band) return false;
   if (f.minClaims !== undefined && claimCount(m) < f.minClaims) return false;
   if (f.minAgeHours !== undefined && m.oldest_claim_secs < f.minAgeHours * 3600)
@@ -234,6 +243,7 @@ export function computeFacets(rows: DisputedMemory[]): Facets {
   const kinds = new Map<string, number>();
   const teams = new Map<string, { label: string; count: number }>();
   const bands = new Map<DecayBand, number>();
+  const projects = new Map<string, { label: string; count: number }>();
   for (const m of rows) {
     kinds.set(m.kind, (kinds.get(m.kind) ?? 0) + 1);
     const key = m.team_id ?? "";
@@ -242,6 +252,10 @@ export function computeFacets(rows: DisputedMemory[]): Facets {
     teams.set(key, t);
     const b = bandOf(m);
     bands.set(b, (bands.get(b) ?? 0) + 1);
+    const pkey = m.project_id ?? "none";
+    const p = projects.get(pkey) ?? { label: m.project ?? "org-shared", count: 0 };
+    p.count += 1;
+    projects.set(pkey, p);
   }
   return {
     kinds: [...kinds.entries()]
@@ -255,6 +269,9 @@ export function computeFacets(rows: DisputedMemory[]): Facets {
       const count = bands.get(band);
       return count ? [{ value: band, label: band, count }] : [];
     }),
+    projects: [...projects.entries()]
+      .map(([value, { label, count }]) => ({ value, label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
   };
 }
 

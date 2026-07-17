@@ -116,6 +116,7 @@ async fn scoped_token(ctx: &Ctx, org: Uuid, user: Uuid, name: &str, scopes: &[&s
         &prefix,
         &hash,
         &scopes,
+        None,
         user,
     )
     .await
@@ -613,6 +614,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
             team_ids: vec![ctx.team_a],
         },
         scopes: None,
+        project_id: None,
     });
     let rpc = |id: i64, method: &str, params: serde_json::Value| json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
     let call = |id: i64, name: &str, args: serde_json::Value| {
@@ -1053,6 +1055,7 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
             team_ids: vec![ctx.team_a],
         },
         scopes: None,
+        project_id: None,
     });
     let r = handle_message(
         state.as_ref(),
@@ -1281,6 +1284,7 @@ async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
         embedding_version: 1,
         principal: resolved.principal,
         scopes: resolved.scopes,
+        project_id: None,
     });
     let call = |id: i64, name: &str, args: serde_json::Value| {
         json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -1335,6 +1339,7 @@ async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
         embedding_version: 1,
         principal: ro_ctx.principal,
         scopes: ro_ctx.scopes,
+        project_id: None,
     });
     let r = handle_message(
         ro_state.as_ref(),

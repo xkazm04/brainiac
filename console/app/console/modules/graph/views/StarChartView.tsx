@@ -23,12 +23,18 @@ const H = 560;
 
 export default function StarChartView({ data }: { data: CortexData }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const [hoverTeam, setHoverTeam] = useState<string | null>(null);
+  // The grouping lens (PR3): teams = WHO wrote the knowledge, projects =
+  // WHAT it is about. One legend, two readings of the same sky.
+  const [lens, setLens] = useState<"team" | "project">("team");
+  const [hoverGroup, setHoverGroup] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const { detail, loading, error } = useCanonicalDetail(selected, data);
   const { overview } = data;
 
   const teamIndex = (teamId: string) => overview.teams.findIndex((t) => t.id === teamId);
+  const groups = lens === "team" ? overview.teams : overview.projects;
+  const groupIdsOf = (s: { team_ids: string[]; project_ids: string[] }) =>
+    lens === "team" ? s.team_ids : s.project_ids;
 
   const stars = useMemo(
     () =>
@@ -57,7 +63,7 @@ export default function StarChartView({ data }: { data: CortexData }) {
   }, [stars, dense]);
 
   const dimmed = (s: (typeof stars)[number]) => {
-    if (hoverTeam && !s.team_ids.includes(hoverTeam)) return true;
+    if (hoverGroup && !groupIdsOf(s).includes(hoverGroup)) return true;
     if (match && !s.name.toLowerCase().includes(match)) return true;
     return false;
   };
@@ -150,21 +156,44 @@ export default function StarChartView({ data }: { data: CortexData }) {
           })}
         </svg>
 
-        {/* legend */}
-        <div className="absolute bottom-3 left-4 flex items-center gap-4">
-          {overview.teams.map((t, i) => (
+        {/* legend + the grouping lens */}
+        <div className="absolute bottom-3 left-4 flex flex-wrap items-center gap-4">
+          <div className="flex gap-1">
+            {(["team", "project"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => {
+                  setLens(l);
+                  setHoverGroup(null);
+                }}
+                aria-pressed={lens === l}
+                className={`${FONT_MONO} rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] transition ${
+                  lens === l
+                    ? "border-white/40 text-white"
+                    : "border-white/10 text-white/35 hover:border-white/25"
+                }`}
+              >
+                {l}s
+              </button>
+            ))}
+          </div>
+          {groups.map((t, i) => (
             <button
               key={t.id}
-              onMouseEnter={() => setHoverTeam(t.id)}
-              onMouseLeave={() => setHoverTeam(null)}
+              onMouseEnter={() => setHoverGroup(t.id)}
+              onMouseLeave={() => setHoverGroup(null)}
               className={`${LABEL} transition`}
-              style={{ color: hoverTeam === t.id ? teamColor(i, 78) : teamColor(i, 68, 0.55) }}
+              style={{ color: hoverGroup === t.id ? teamColor(i, 78) : teamColor(i, 68, 0.55) }}
             >
               ● {t.name}
             </button>
           ))}
           <span className={LABEL} style={{ color: "rgba(233,237,255,0.3)" }}>
-            hover a team to light its stars{dense && " · faint stars name themselves on hover"}
+            {lens === "project" && groups.length === 0
+              ? "no project-stamped knowledge yet — onboard a repo to light this lens"
+              : `hover a ${lens} to light its stars`}
+            {dense && " · faint stars name themselves on hover"}
             {!data.live && " · demo data"}
           </span>
         </div>

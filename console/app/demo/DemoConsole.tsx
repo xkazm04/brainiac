@@ -209,7 +209,7 @@ function Module({ id, data }: { id: DemoModuleId; data: DemoData }) {
     case "graph":
       return <CortexMap data={data.cortex} />;
     case "memories":
-      return <Archive data={data.archive} />;
+      return <Archive data={data.archive} demo />;
     case "health":
       return <KnowledgeHealthReport data={data.health} />;
     // The one module whose prototype round is still open — the switcher lives

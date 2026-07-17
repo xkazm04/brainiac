@@ -12,7 +12,7 @@ use uuid::Uuid;
 pub struct PublishTarget {
     pub id: Uuid,
     pub org_id: Uuid,
-    /// `git` | `confluence`
+    /// `git` | `okf` | `confluence`
     pub kind: String,
     pub config: serde_json::Value,
     /// The NAME of the env var holding the credential — never the credential.

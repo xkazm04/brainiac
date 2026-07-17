@@ -10,6 +10,8 @@
  * demo fallback) and /demo (visitor-facing, always demo data).
  */
 
+import { useState } from "react";
+
 import { motion } from "framer-motion";
 import Link from "next/link";
 import {
@@ -78,11 +80,18 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
     { key: "deprecated", label: "superseded", tone: "rgba(233,237,255,0.5)" },
   ];
 
-  const teams = [...new Set(data.byKind.map((k) => k.team))].sort();
-  const kinds = [...new Set(data.byKind.map((k) => k.kind))].sort();
-  const kindCount = (kind: string, team: string) =>
-    data.byKind.find((k) => k.kind === kind && k.team === team)?.count ?? 0;
-  const maxKind = Math.max(1, ...data.byKind.map((k) => k.count));
+  // The matrix axis (PR3): the same kinds, grouped by WHO wrote them (teams)
+  // or WHAT they are about (projects, org-shared as its own column).
+  const [axis, setAxis] = useState<"team" | "project">("team");
+  const cells =
+    axis === "team"
+      ? data.byKind.map((k) => ({ kind: k.kind, col: k.team, count: k.count }))
+      : data.byProject.map((k) => ({ kind: k.kind, col: k.project, count: k.count }));
+  const cols = [...new Set(cells.map((c) => c.col))].sort();
+  const kinds = [...new Set(cells.map((c) => c.kind))].sort();
+  const kindCount = (kind: string, col: string) =>
+    cells.find((c) => c.kind === kind && c.col === col)?.count ?? 0;
+  const maxKind = Math.max(1, ...cells.map((c) => c.count));
   const totalMemories = Object.values(data.totals).reduce((a, b) => a + b, 0);
   const promotionRate = data.review.reviewed + data.review.autoPromoted;
   const corpusTotal = STATUS_ROWS.reduce((s, r) => s + (data.totals[r.key] ?? 0), 0);
@@ -318,9 +327,31 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
       <div className="mt-3">
         <motion.div variants={rise} className={TILE}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>Kind × team</h2>
+            <div className="flex items-baseline gap-3">
+              <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>
+                Kind × {axis}
+              </h2>
+              <div className="flex gap-1">
+                {(["team", "project"] as const).map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => setAxis(a)}
+                    aria-pressed={axis === a}
+                    className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-[0.12em] transition ${
+                      axis === a
+                        ? "border-white/40 text-white"
+                        : "border-white/10 text-white/35 hover:border-white/25"
+                    }`}
+                  >
+                    {a}
+                  </button>
+                ))}
+              </div>
+            </div>
             <span className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
-              {teams.length} teams · where each kind of knowledge lives
+              {cols.length} {axis === "team" ? "teams" : "projects"} · where each kind of knowledge
+              lives
             </span>
           </div>
           {/* A matrix gets one more column per team the org grows, so the width
@@ -331,9 +362,9 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
             <thead>
               <tr>
                 <th className="pb-2 text-left font-normal text-white/35"></th>
-                {teams.map((t) => (
+                {cols.map((t) => (
                   <th key={t} className={`${LABEL} pb-2 text-right font-normal`} style={{ color: "rgba(233,237,255,0.4)" }} title={t}>
-                    {t.slice(0, 4)}
+                    {axis === "team" ? t.slice(0, 4) : t.slice(0, 9)}
                   </th>
                 ))}
               </tr>
@@ -342,7 +373,7 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
               {kinds.map((k) => (
                 <tr key={k} className="border-t border-white/5">
                   <td className="py-2 text-white/60">{k}</td>
-                  {teams.map((t) => {
+                  {cols.map((t) => {
                     const n = kindCount(k, t);
                     const heat = n / maxKind;
                     return (

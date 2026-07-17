@@ -27,6 +27,8 @@
 
 pub mod confluence;
 pub mod git;
+pub mod okf;
+pub mod pointer;
 pub mod render;
 
 use anyhow::{Context, Result};
@@ -44,6 +46,64 @@ pub struct PageToPublish<'a> {
     pub markdown: &'a str,
     /// The external system's handle from last time, if we have published before.
     pub external_ref: Option<&'a str>,
+    /// Structured metadata for targets that emit a machine-readable format
+    /// (the OKF target). Plain-markdown targets ignore it.
+    pub meta: &'a PageMeta,
+}
+
+/// What a machine-readable target needs to know about a page beyond its
+/// markdown. Computed once per page by [`publish_org`] — targets never query
+/// the store themselves, so every target sees the same facts.
+#[derive(Debug, Default, Clone)]
+pub struct PageMeta {
+    /// One-line summary derived from the revision body (OKF `description`).
+    pub description: Option<String>,
+    /// Canonical entity names the revision's memories anchor to (OKF `tags`).
+    pub tags: Vec<String>,
+    /// RFC 3339 time the live revision was published (OKF `timestamp`).
+    pub timestamp: Option<String>,
+    /// Console URL of the page (OKF `resource` — the URI of the governed asset
+    /// this file is a projection of).
+    pub resource: Option<String>,
+    /// The revision's provenance closure: the exact memory ids it was composed
+    /// from. Carried into extension frontmatter — no other wiki format ships
+    /// its evidence, and this is where ours travels.
+    pub cited_memories: Vec<Uuid>,
+    /// How the live revision went live: `auto_published` | `needs_review`.
+    pub policy_decision: String,
+    /// An underlying memory changed and the page has not recomposed yet.
+    pub stale: bool,
+}
+
+/// One page's entry in the bundle-level artifacts (OKF `index.md` / `log.md`).
+#[derive(Debug, Clone)]
+pub struct BundleEntry {
+    pub slug: String,
+    pub title: String,
+    pub doc_kind: String,
+    pub description: Option<String>,
+    /// Recent revision history, newest first.
+    pub log: Vec<LogEntry>,
+}
+
+/// One revision, as the bundle changelog tells it.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    /// ISO 8601 date (YYYY-MM-DD) the revision was composed.
+    pub date: String,
+    pub page_title: String,
+    /// What prompted the recompose: `memory_change` | `manual` | `schedule`.
+    pub trigger: String,
+    /// `auto_published` | `needs_review` at composition time.
+    pub policy: String,
+}
+
+/// Everything a target may need after the per-page loop: the whole publishable
+/// bundle, in one place, so `index.md` reflects pages that were UNCHANGED this
+/// run as faithfully as pages that were pushed.
+pub struct BundleToPublish<'a> {
+    pub console_url: &'a str,
+    pub entries: &'a [BundleEntry],
 }
 
 /// One outbound target. Git and Confluence are two implementations; Notion or
@@ -54,6 +114,13 @@ pub trait Publisher: Send + Sync {
     /// Push the page. Returns the external handle to remember (a Confluence page
     /// id, a git path) so the next publish updates rather than duplicates.
     async fn publish(&self, page: &PageToPublish<'_>) -> Result<Option<String>>;
+    /// Called once per run, after every page has been offered, with the whole
+    /// publishable bundle. Targets that keep bundle-level artifacts — OKF's
+    /// `index.md` and `log.md`, the agent pointer files — regenerate them here,
+    /// idempotently. Default: nothing, which is right for Confluence.
+    async fn finish(&self, _bundle: &BundleToPublish<'_>) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Build the publisher for a configured target, reading its credential from the
@@ -61,6 +128,7 @@ pub trait Publisher: Send + Sync {
 pub fn publisher_for(target: &PublishTarget) -> Result<Box<dyn Publisher>> {
     match target.kind.as_str() {
         "git" => Ok(Box::new(git::GitPublisher::from_config(&target.config)?)),
+        "okf" => Ok(Box::new(okf::OkfPublisher::from_config(&target.config)?)),
         "confluence" => {
             let secret_ref = target
                 .secret_ref
@@ -133,6 +201,7 @@ pub async fn publish_org(store: &Store, org_id: Uuid, console_url: &str) -> Resu
         return Ok(stats);
     }
 
+    let mut bundle: Vec<BundleEntry> = Vec::new();
     for doc in &docs {
         // 3. The visibility rule (KB-PLAN D5). Publishing leaves RLS behind, so
         //    only org-wide pages may go — and the compose stage already
@@ -152,6 +221,45 @@ pub async fn publish_org(store: &Store, org_id: Uuid, console_url: &str) -> Resu
             tx.commit().await?;
             continue;
         };
+
+        // Page metadata for machine-readable targets, computed once so every
+        // target sees the same facts. Two cheap queries per page; pages are few.
+        let history = brainiac_store::documents::revisions(&mut tx, doc.id, 10).await?;
+        let tags = brainiac_store::entities::canonical_names_of_memories(
+            &mut tx,
+            &revision.composed_from,
+            16,
+        )
+        .await?;
+        let meta = PageMeta {
+            description: render::derive_description(&revision.content_md),
+            tags,
+            timestamp: Some(
+                revision
+                    .published_at
+                    .unwrap_or(revision.created_at)
+                    .to_rfc3339(),
+            ),
+            resource: Some(render::page_url(console_url, &doc.slug)),
+            cited_memories: revision.composed_from.clone(),
+            policy_decision: revision.policy_decision.as_str().to_string(),
+            stale: doc.dirty_at.is_some(),
+        };
+        bundle.push(BundleEntry {
+            slug: doc.slug.clone(),
+            title: doc.title.clone(),
+            doc_kind: doc.doc_kind.as_str().to_string(),
+            description: meta.description.clone(),
+            log: history
+                .iter()
+                .map(|r| LogEntry {
+                    date: r.created_at.format("%Y-%m-%d").to_string(),
+                    page_title: doc.title.clone(),
+                    trigger: r.trigger.clone(),
+                    policy: r.policy_decision.as_str().to_string(),
+                })
+                .collect(),
+        });
 
         for target in &targets {
             let prior = publishing::publication(&mut tx, doc.id, target.id).await?;
@@ -184,6 +292,7 @@ pub async fn publish_org(store: &Store, org_id: Uuid, console_url: &str) -> Resu
                 document: doc,
                 markdown: &markdown,
                 external_ref: prior.as_ref().and_then(|p| p.external_ref.as_deref()),
+                meta: &meta,
             };
             match publisher.publish(&page).await {
                 Ok(external_ref) => {
@@ -206,6 +315,27 @@ pub async fn publish_org(store: &Store, org_id: Uuid, console_url: &str) -> Resu
             }
         }
         tx.commit().await?;
+    }
+
+    // Bundle-level artifacts, once per target, after every page was offered:
+    // OKF's index.md must list the pages that were UNCHANGED this run too, and
+    // regenerating it is idempotent. Skipped entirely when nothing is
+    // publishable — an empty index would claim a bundle that does not exist.
+    if !bundle.is_empty() {
+        let b = BundleToPublish {
+            console_url,
+            entries: &bundle,
+        };
+        for target in &targets {
+            // A misconfigured target already logged and counted in the loop.
+            let Ok(publisher) = publisher_for(target) else {
+                continue;
+            };
+            if let Err(e) = publisher.finish(&b).await {
+                tracing::error!(target = %target.kind, error = %e, "bundle artifacts failed");
+                stats.failed += 1;
+            }
+        }
     }
     Ok(stats)
 }

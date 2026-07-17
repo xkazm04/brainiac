@@ -19,7 +19,11 @@ fn fixtures_v1_load_and_validate() {
         "expanded corpus >= 80 gold memories"
     );
     assert!(fx.qa.queries.len() >= 54, "retrieval QA >= 54 queries");
-    assert_eq!(fx.leak.queries.len(), 15, "15 RLS leak tests");
+    assert_eq!(
+        fx.leak.queries.len(),
+        19,
+        "19 RLS leak tests (15 team/private + leak-016..019, the teamless observer posture)"
+    );
     // Guards the vacuous-pass regression: if pages.yaml stops loading, every
     // composition-gold check and the zero-tolerance leak gate would iterate zero
     // items and report green. Nothing else asserts this.

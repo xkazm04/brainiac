@@ -350,6 +350,11 @@ export default function KnowledgeHealthReport({ data }: { data: Health }) {
           <Signal label="liquidity" value={`${signals.liquidity_pct}%`} />
           <Signal label="open contradictions" value={signals.open_contradictions} />
           <Signal label="cross-team conflicts" value={signals.cross_team_contradictions} />
+          {/* The project axis of liquidity/consistency (PR3): does knowledge
+              cross application lines, and do two applications ever believe
+              incompatible things. Zero pre-stamping = coverage, not health. */}
+          <Signal label="cross-project entities" value={signals.cross_project_entities} />
+          <Signal label="cross-project conflicts" value={signals.cross_project_contradictions} />
           <Signal label="stale beliefs" value={signals.stale_beliefs} />
           <Signal label="review backlog" value={signals.review_backlog} />
           <Signal label="oldest review" value={age(signals.oldest_review_secs)} />

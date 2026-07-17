@@ -596,6 +596,9 @@ pub async fn run_extract(
     // provenance row so every memory (and entity) written here links back to
     // the pipeline_runs record via provenance.pipeline_run_id.
     pipeline_run_id: Option<Uuid>,
+    // PROJECT-PLAN PR0: the source row's project, stamped onto every memory
+    // extracted from it. None = org-shared.
+    project_id: Option<Uuid>,
 ) -> Result<ExtractStats> {
     let verbatim = source_kind == "manual";
     // Chunk oversized sources so a long session's tail isn't truncated. One
@@ -718,6 +721,7 @@ pub async fn run_extract(
                     superseded_by: None,
                     confidence,
                     provenance_id: Some(provenance_id),
+                    project_id,
                 },
             )
             .await?;

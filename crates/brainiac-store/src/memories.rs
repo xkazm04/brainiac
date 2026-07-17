@@ -33,6 +33,10 @@ pub struct NewMemory {
     pub superseded_by: Option<Uuid>,
     pub confidence: Option<f32>,
     pub provenance_id: Option<Uuid>,
+    /// PROJECT-PLAN PR0. The application/domain this claim is about; `None` =
+    /// org-shared (a tier, not missing data). Stamped from the writing key's
+    /// project via the source row — never defaulted.
+    pub project_id: Option<Uuid>,
 }
 
 /// Plain INSERT — deliberately NO `ON CONFLICT`: under RLS, an ON CONFLICT
@@ -46,8 +50,8 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
         "INSERT INTO memories
             (id, org_id, team_id, owner_user_id, visibility, status, kind,
              content, title, lifecycle, detail_md, language, valid_from, valid_to,
-             superseded_by, confidence, provenance_id)
-         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
+             superseded_by, confidence, provenance_id, project_id)
+         VALUES ($1,$2,$3,$4,$5::visibility,$6::memory_status,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
     )
     .bind(m.id)
     .bind(m.org_id)
@@ -66,6 +70,7 @@ pub async fn insert(conn: &mut PgConnection, m: &NewMemory) -> Result<()> {
     .bind(m.superseded_by)
     .bind(m.confidence)
     .bind(m.provenance_id)
+    .bind(m.project_id)
     .execute(conn)
     .await?;
     Ok(())
@@ -311,6 +316,7 @@ pub async fn search_vector(
            AND ($5::text[] IS NULL OR m.status::text = ANY($5))
            AND ($6::uuid IS NULL OR m.team_id = $6)
            AND ($7::real IS NULL OR m.confidence >= $7)
+           AND ($8::uuid IS NULL OR m.project_id = $8 OR m.project_id IS NULL)
          ORDER BY e.embedding::vector({dim}) <=> $1::vector({dim})
          LIMIT $3"
     ))
@@ -321,6 +327,7 @@ pub async fn search_vector(
     .bind(filters.allowed_statuses())
     .bind(filters.team_id)
     .bind(filters.min_confidence)
+    .bind(filters.project_id)
     .fetch_all(conn)
     .await?;
     let mut hits: Vec<(Uuid, f32)> = rows
@@ -372,6 +379,7 @@ pub async fn search_fts(
            AND ($4::text[] IS NULL OR m.status::text = ANY($4))
            AND ($5::uuid IS NULL OR m.team_id = $5)
            AND ($6::real IS NULL OR m.confidence >= $6)
+           AND ($7::uuid IS NULL OR m.project_id = $7 OR m.project_id IS NULL)
          ORDER BY score DESC
          LIMIT $2",
     )
@@ -381,6 +389,7 @@ pub async fn search_fts(
     .bind(filters.allowed_statuses())
     .bind(filters.team_id)
     .bind(filters.min_confidence)
+    .bind(filters.project_id)
     .fetch_all(conn)
     .await?;
     let mut hits: Vec<(Uuid, f32)> = rows
@@ -426,13 +435,14 @@ fn row_to_memory(r: &sqlx::postgres::PgRow) -> Memory {
         superseded_by: r.get("superseded_by"),
         confidence: r.get("confidence"),
         provenance_id: r.get("provenance_id"),
+        project_id: r.get("project_id"),
         created_at: r.get("created_at"),
     }
 }
 
 const MEMORY_COLUMNS: &str = "id, org_id, team_id, owner_user_id, visibility::text AS visibility,
      status::text AS status, kind, content, lifecycle, detail_md, valid_from, valid_to,
-     superseded_by, confidence, provenance_id, created_at";
+     superseded_by, confidence, provenance_id, project_id, created_at";
 
 /// Fetch memories by id (RLS filters silently — absent ids were not visible).
 pub async fn get_by_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Memory>> {

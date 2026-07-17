@@ -119,6 +119,7 @@ async fn seed(ctx: &Ctx) {
             superseded_by: None,
             confidence: None,
             provenance_id: None,
+            project_id: None,
         }
     };
 
@@ -295,6 +296,7 @@ async fn identifier_query_ranks_exact_match_first() {
         superseded_by: None,
         confidence: None,
         provenance_id: None,
+        project_id: None,
     };
     memories::insert(c, &mk(160, exact)).await.expect("m160");
     memories::insert(c, &mk(161, distractor))
@@ -381,6 +383,7 @@ async fn stage5_reranker_reorders_survivors() {
         superseded_by: None,
         confidence: None,
         provenance_id: None,
+        project_id: None,
     };
     memories::insert(c, &mk(170, a)).await.expect("m170");
     memories::insert(c, &mk(171, b)).await.expect("m171");
@@ -497,6 +500,7 @@ async fn ensure_version_auto_creates_hnsw_index_for_new_dim() {
             superseded_by: None,
             confidence: None,
             provenance_id: None,
+            project_id: None,
         },
     )
     .await
@@ -576,6 +580,7 @@ async fn czech_fts_honors_language_config() {
         superseded_by: None,
         confidence: None,
         provenance_id: None,
+        project_id: None,
     };
     memories::insert(&mut tx, &cs).await.expect("insert cs");
     tx.commit().await.expect("commit");
@@ -753,6 +758,7 @@ async fn graph_surfaced_hit_scores_and_carries_anchors() {
         superseded_by: None,
         confidence: None,
         provenance_id: None,
+        project_id: None,
     };
     // Direct hit (payments): matches the query, anchored to Kafka, embedded so
     // it leads the candidate lists and seeds graph expansion from entity 31.
@@ -1196,6 +1202,7 @@ async fn fresh_memory_outranks_stale_near_duplicate() {
         superseded_by: None,
         confidence: None,
         provenance_id: None,
+        project_id: None,
     };
     // STALE wins FTS: repeats every query term (higher term frequency).
     let stale_content = "zephyr reconciliation cadence zephyr reconciliation cadence";
@@ -1562,7 +1569,12 @@ async fn feedback_queue_filters_paging_and_facets() {
     );
 
     // Facets: counts over the FULL backlog, one per disputed memory.
-    let (kinds, teams, bands) = feedback::flagged_facets(&mut tx).await.expect("facets");
+    let (kinds, teams, bands, projects) = feedback::flagged_facets(&mut tx).await.expect("facets");
+    // Nothing here is project-stamped, so the whole backlog sits in the
+    // org-shared bucket — present, labeled, and counted (PR2).
+    assert_eq!(projects.len(), 1, "one project facet bucket");
+    assert_eq!(projects[0].value, "none");
+    assert_eq!(projects[0].label, "org-shared");
     let kind_count = |v: &str| kinds.iter().find(|f| f.value == v).map(|f| f.count);
     assert_eq!(kind_count("fact"), Some(2));
     assert_eq!(kind_count("decision"), Some(1));
@@ -1616,6 +1628,7 @@ async fn raw_ttl_sweep_expires_only_neglected_raw_and_leaves_an_audit_trail() {
         superseded_by: None,
         confidence: Some(0.9),
         provenance_id: None,
+        project_id: None,
     };
     memories::insert(
         c,
@@ -1694,6 +1707,99 @@ async fn raw_ttl_sweep_expires_only_neglected_raw_and_leaves_an_audit_trail() {
         again, 0,
         "a second pass finds nothing — rejected is terminal here"
     );
+}
+
+/// PROJECT-PLAN PR1: the project lens is INCLUSIVE of org-shared rows — it
+/// keeps the project's own memories plus `project_id IS NULL` (the org's
+/// conventions), and drops only OTHER projects' rows. "My project + the org",
+/// never "my project only".
+#[tokio::test]
+async fn project_lens_keeps_project_rows_plus_org_shared() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    let payments = uuid(61);
+    let billing = uuid(62);
+    brainiac_store::projects::create(&ctx.admin, payments, org(), "payments-api")
+        .await
+        .expect("payments project");
+    brainiac_store::projects::create(&ctx.admin, billing, org(), "billing")
+        .await
+        .expect("billing project");
+
+    let p = pay_dev();
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let mk = |id: u8, project: Option<Uuid>, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Fact,
+        title: None,
+        lifecycle: Default::default(),
+        detail_md: None,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+        project_id: project,
+    };
+    memories::insert(c, &mk(240, Some(payments), "zorbit retries use exponential backoff"))
+        .await
+        .expect("m240");
+    memories::insert(c, &mk(241, Some(billing), "zorbit invoices settle nightly"))
+        .await
+        .expect("m241");
+    memories::insert(c, &mk(242, None, "zorbit decisions are recorded as RFCs"))
+        .await
+        .expect("m242");
+    tx.commit().await.expect("commit");
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let ids = |hits: &[(Uuid, f32)]| {
+        let mut v: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
+        v.sort();
+        v
+    };
+
+    // No lens: all three surface.
+    let all = memories::search_fts(&mut tx, "zorbit", 10, &Default::default())
+        .await
+        .expect("unfiltered");
+    assert_eq!(ids(&all), vec![uuid(240), uuid(241), uuid(242)]);
+
+    // Payments lens: payments' row + the org-shared row; billing's drops.
+    let lens = brainiac_store::retrieval::RetrievalFilters {
+        project_id: Some(payments),
+        ..Default::default()
+    };
+    let focused = memories::search_fts(&mut tx, "zorbit", 10, &lens)
+        .await
+        .expect("lensed");
+    assert_eq!(
+        ids(&focused),
+        vec![uuid(240), uuid(242)],
+        "project lens = project rows + org-shared, never another project's"
+    );
+
+    // An id that is no project (or another org's) matches only org-shared —
+    // the lens degrades to the org's conventions rather than leaking.
+    let bogus = brainiac_store::retrieval::RetrievalFilters {
+        project_id: Some(uuid(63)),
+        ..Default::default()
+    };
+    let shared_only = memories::search_fts(&mut tx, "zorbit", 10, &bogus)
+        .await
+        .expect("bogus lens");
+    assert_eq!(ids(&shared_only), vec![uuid(242)]);
 }
 
 // ── LB0: the Library substrate (migration 0028) ─────────────────────────────

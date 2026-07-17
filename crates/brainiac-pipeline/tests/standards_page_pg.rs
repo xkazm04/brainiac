@@ -41,6 +41,7 @@ fn mem(id: Uuid, org: Uuid, content: &str) -> memories::NewMemory {
         superseded_by: None,
         confidence: Some(0.9),
         provenance_id: None,
+        project_id: None,
     }
 }
 

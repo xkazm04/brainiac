@@ -38,6 +38,28 @@ Only return divergence:true when teams genuinely do the SAME thing in INCOMPATIB
 values, competing procedures). If they agree, or each covers a different aspect, return
 divergence:false with empty fields. Be conservative — a false divergence wastes a platform team's time.";
 
+/// The project-axis twin (PROJECT-PLAN PR3): the same adjudication with the
+/// grouping unit swapped from teams to applications/domains. Kept as its own
+/// prompt rather than a parameterized one because the not-a-divergence
+/// framing differs: two APPLICATIONS legitimately differ more often than two
+/// teams do (different constraints), so the conservatism bar is stated higher.
+pub const DIVERGENCE_PROJECT_PROMPT_V1: &str = "\
+Several applications (projects) in ONE organization each have recorded practice for the SAME
+system or concept. Decide whether they solve the SAME practice in DIFFERENT, inconsistent ways
+(a divergence worth standardizing across applications) — or whether the difference is a
+legitimate consequence of each application's own constraints.
+
+Respond with ONLY a JSON object:
+{\"divergence\":true|false,
+ \"practice\":\"short name of the practice, e.g. 'service retry policy'\",
+ \"summary\":\"one sentence: what actually differs between the applications\",
+ \"approaches\":[{\"project\":\"application name\",\"approach\":\"one line: this application's way\"}],
+ \"recommended_standard\":\"one sentence: the single standard the org should adopt\",
+ \"impact\":\"high|medium|low\"}
+
+Only return divergence:true for genuinely INCOMPATIBLE ways of doing the same thing. Applications
+differing because their domains demand it is NOT a divergence. Be conservative.";
+
 const MAX_POSITIONS_PER_CLUSTER: usize = 8;
 const MAX_DIVERGENCE_TOKENS: u32 = 1200;
 
@@ -57,16 +79,23 @@ struct Verdict {
     impact: String,
 }
 
+/// One group's way. `team` is set on team-axis rows, `project` on
+/// project-axis rows; the other side is omitted from the JSON entirely
+/// (skip_serializing_if) so old readers of `positions` are undisturbed.
 #[derive(Debug, Deserialize, serde::Serialize)]
 struct Approach {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     team: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project: Option<String>,
     #[serde(default)]
     approach: String,
 }
 
 struct Position {
     team: String,
+    /// Project display name; `None` = org-shared (PR0 stamping).
+    project: Option<String>,
     kind: String,
     content: String,
 }
@@ -88,15 +117,18 @@ pub async fn scan_org(
     org_id: Uuid,
 ) -> Result<DivergenceStats> {
     // Gather every cross-team-anchorable memory, grouped by canonical entity.
+    // The project name rides along (PR3) so the same clusters can be judged
+    // on the project axis too.
     let rows = sqlx::query(
         "SELECT ce.id AS canonical_id, ce.name AS canonical_name,
-                t.name AS team, m.kind::text AS kind, m.content
+                t.name AS team, pj.name AS project, m.kind::text AS kind, m.content
          FROM canonical_entities ce
          JOIN entity_links el ON el.canonical_id = ce.id
          JOIN entities e ON e.id = el.entity_id
          JOIN memory_entities me ON me.entity_id = e.id
          JOIN memories m ON m.id = me.memory_id
          JOIN teams t ON t.id = m.team_id
+         LEFT JOIN projects pj ON pj.id = m.project_id
          WHERE ce.org_id = $1 AND m.status <> 'rejected'
            AND m.kind IN ('decision','howto','pattern','fact')
          ORDER BY ce.id",
@@ -113,53 +145,95 @@ pub async fn scan_org(
         let key = (r.get::<Uuid, _>("canonical_id"), r.get("canonical_name"));
         clusters.entry(key).or_default().push(Position {
             team: r.get("team"),
+            project: r.get("project"),
             kind: r.get("kind"),
             content: r.get("content"),
         });
     }
 
     let mut stats = DivergenceStats::default();
-    let mut confirmed: Vec<(Uuid, String, Verdict, String)> = Vec::new();
+    let mut confirmed: Vec<(Uuid, String, Verdict, String, &'static str)> = Vec::new();
 
+    // One adjudication per (cluster, axis). A cluster spanning both ≥2 teams
+    // and ≥2 projects is judged TWICE, deliberately: the groupings partition
+    // the same statements differently, and "payments vs platform disagree" is
+    // a different finding — with a different audience — from "payments-api vs
+    // checkout-web diverge" (PROJECT-PLAN PR3, open decision 1: cross-project
+    // is an ADDED class, never a replacement).
     for ((canonical_id, canonical_name), positions) in &clusters {
-        // A cluster is only a candidate if it spans ≥2 teams.
         let teams: std::collections::HashSet<&str> =
             positions.iter().map(|p| p.team.as_str()).collect();
-        if teams.len() < 2 {
-            continue;
-        }
-        stats.clusters += 1;
-
-        let listed = positions
+        // Only project-STAMPED rows count toward the project axis: org-shared
+        // memories belong to every application and cannot diverge between two.
+        let projects: std::collections::HashSet<&str> = positions
             .iter()
-            .take(MAX_POSITIONS_PER_CLUSTER)
-            .map(|p| format!("- [{}] ({}) {}", p.team, p.kind, p.content))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let user = format!(
-            "System / concept: {canonical_name}\n\nWhat each team has recorded about it:\n{listed}"
-        );
-        let resp = provider
-            .complete(&ChatRequest {
-                system: DIVERGENCE_SYSTEM_PROMPT_V1.to_string(),
-                user,
-                json_mode: true,
-                max_tokens: MAX_DIVERGENCE_TOKENS,
-                temperature: 0.0,
-            })
-            .await
-            .context("divergence adjudication call")?;
+            .filter_map(|p| p.project.as_deref())
+            .collect();
 
-        // Reuse the extractor's tolerant JSON recovery for real-provider output.
-        let Some(json) = crate::extract::extract_json_object(&resp.text) else {
-            continue;
-        };
-        let Ok(v) = serde_json::from_str::<Verdict>(json) else {
-            continue;
-        };
-        if v.divergence && !v.practice.trim().is_empty() {
-            stats.divergences += 1;
-            confirmed.push((*canonical_id, canonical_name.clone(), v, resp.model_ref));
+        let mut axes: Vec<&'static str> = Vec::new();
+        if teams.len() >= 2 {
+            axes.push("team");
+        }
+        if projects.len() >= 2 {
+            axes.push("project");
+        }
+
+        for axis in axes {
+            stats.clusters += 1;
+            let (system, listed): (&str, String) = match axis {
+                "project" => (
+                    DIVERGENCE_PROJECT_PROMPT_V1,
+                    positions
+                        .iter()
+                        .filter(|p| p.project.is_some())
+                        .take(MAX_POSITIONS_PER_CLUSTER)
+                        .map(|p| {
+                            format!(
+                                "- [{}] ({}) {}",
+                                p.project.as_deref().unwrap_or_default(),
+                                p.kind,
+                                p.content
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                _ => (
+                    DIVERGENCE_SYSTEM_PROMPT_V1,
+                    positions
+                        .iter()
+                        .take(MAX_POSITIONS_PER_CLUSTER)
+                        .map(|p| format!("- [{}] ({}) {}", p.team, p.kind, p.content))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+            };
+            let noun = if axis == "project" { "application" } else { "team" };
+            let user = format!(
+                "System / concept: {canonical_name}\n\nWhat each {noun} has recorded about it:\n{listed}"
+            );
+            let resp = provider
+                .complete(&ChatRequest {
+                    system: system.to_string(),
+                    user,
+                    json_mode: true,
+                    max_tokens: MAX_DIVERGENCE_TOKENS,
+                    temperature: 0.0,
+                })
+                .await
+                .context("divergence adjudication call")?;
+
+            // Reuse the extractor's tolerant JSON recovery for real-provider output.
+            let Some(json) = crate::extract::extract_json_object(&resp.text) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<Verdict>(json) else {
+                continue;
+            };
+            if v.divergence && !v.practice.trim().is_empty() {
+                stats.divergences += 1;
+                confirmed.push((*canonical_id, canonical_name.clone(), v, resp.model_ref, axis));
+            }
         }
     }
 
@@ -169,7 +243,7 @@ pub async fn scan_org(
         .bind(org_id)
         .execute(&mut *tx)
         .await?;
-    for (canonical_id, _name, v, model_ref) in &confirmed {
+    for (canonical_id, _name, v, model_ref, axis) in &confirmed {
         let impact = match v.impact.trim().to_lowercase().as_str() {
             "high" => "high",
             "low" => "low",
@@ -177,8 +251,8 @@ pub async fn scan_org(
         };
         sqlx::query(
             "INSERT INTO practice_divergences
-               (org_id, canonical_id, practice, summary, recommended_standard, impact, positions, model_ref)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+               (org_id, canonical_id, practice, summary, recommended_standard, impact, positions, model_ref, axis)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         )
         .bind(org_id)
         .bind(canonical_id)
@@ -188,6 +262,7 @@ pub async fn scan_org(
         .bind(impact)
         .bind(serde_json::to_value(&v.approaches).unwrap_or(serde_json::json!([])))
         .bind(model_ref)
+        .bind(axis)
         .execute(&mut *tx)
         .await?;
     }

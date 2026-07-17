@@ -38,6 +38,7 @@ fn mem(id: Uuid, org: Uuid, kind: MemoryKind, content: &str) -> memories::NewMem
         superseded_by: None,
         confidence: Some(0.9),
         provenance_id: None,
+        project_id: None,
     }
 }
 

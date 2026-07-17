@@ -381,6 +381,7 @@ pub async fn run(
                 title: d.title.clone(),
                 visibility: Visibility::parse(&d.visibility).unwrap_or(Visibility::Org),
                 doc_kind: DocKind::parse(&d.doc_kind).unwrap_or_default(),
+                project_id: None,
             },
         )
         .await?;

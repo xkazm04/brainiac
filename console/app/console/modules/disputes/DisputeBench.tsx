@@ -130,6 +130,7 @@ export default function DisputeBench({
   const activeFilterCount =
     Number(!!filter.kind) +
     Number(!!filter.teamId) +
+    Number(!!filter.project) +
     Number(!!filter.band) +
     Number(filter.minClaims !== undefined) +
     Number(filter.minAgeHours !== undefined);
@@ -240,6 +241,16 @@ export default function DisputeBench({
               onToggle={(v) => toggle("team", v)}
             />
           )}
+          {/* Only once anything is project-stamped: one org-shared bucket has
+              no distinction worth a filter row (PR2). */}
+          {facets.projects.length > 1 && (
+            <FacetRow
+              label="project"
+              options={facets.projects}
+              active={filter.project}
+              onToggle={(v) => toggle("project", v)}
+            />
+          )}
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={`${LABEL} w-12 shrink-0`} style={{ color: "rgba(233,237,255,0.3)" }}>
               claims
@@ -268,7 +279,7 @@ export default function DisputeBench({
                 type="button"
                 onClick={() =>
                   setParams((p) => {
-                    ["kind", "team", "band", "minClaims", "minAge"].forEach((k) => p.delete(k));
+                    ["kind", "team", "project", "band", "minClaims", "minAge"].forEach((k) => p.delete(k));
                   })
                 }
                 className={`${FONT_MONO} ml-auto rounded-full border border-white/15 px-2.5 py-0.5 text-[11px] text-[#e9edff]/50 transition hover:bg-white/5`}

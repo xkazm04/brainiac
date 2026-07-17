@@ -138,6 +138,7 @@ fn memory(
         superseded_by: None,
         confidence: Some(0.9),
         provenance_id: None,
+        project_id: None,
     }
 }
 
@@ -156,6 +157,7 @@ async fn org_page(ctx: &Ctx, slug: &str, query: &str) -> Uuid {
             title: "Retry policy".into(),
             visibility: Visibility::Org,
             doc_kind: DocKind::TopicPage,
+            project_id: None,
         },
     )
     .await
