@@ -1,0 +1,286 @@
+{
+  "generated_at": "2026-07-16T10:22:19.690Z",
+  "totals": {
+    "calls": 106,
+    "activity_notes": 31,
+    "agents": 4
+  },
+  "reach": {
+    "dev-a": {
+      "memory-add": 3,
+      "memory-feedback": 6,
+      "memory-search": 4,
+      "standard-propose": 1,
+      "standards-for": 1,
+      "total": 15
+    },
+    "dev-b": {
+      "memory-add": 0,
+      "memory-feedback": 1,
+      "memory-search": 4,
+      "standard-propose": 2,
+      "standards-for": 3,
+      "total": 10
+    },
+    "dev-c": {
+      "memory-add": 1,
+      "memory-feedback": 3,
+      "memory-search": 5,
+      "standard-propose": 1,
+      "standards-for": 1,
+      "total": 11
+    },
+    "scan": {
+      "memory-add": 35,
+      "memory-feedback": 0,
+      "memory-search": 7,
+      "standard-propose": 22,
+      "standards-for": 6,
+      "total": 70
+    }
+  },
+  "module_coverage": {
+    "memory": 69,
+    "knowledge_base": 0,
+    "library": 37
+  },
+  "read_write": {
+    "reads": 31,
+    "writes": 75,
+    "read_pct": 29
+  },
+  "outcomes": {
+    "empty": 23,
+    "ok": 77,
+    "error": 6
+  },
+  "empties_pct": 22,
+  "error_pct": 6,
+  "latency_ms": {
+    "memory-add": {
+      "n": 39,
+      "p50": 187,
+      "max": 385
+    },
+    "memory-feedback": {
+      "n": 10,
+      "p50": 128,
+      "max": 185
+    },
+    "memory-search": {
+      "n": 20,
+      "p50": 129,
+      "max": 311
+    },
+    "standard-propose": {
+      "n": 26,
+      "p50": 145,
+      "max": 2757
+    },
+    "standards-for": {
+      "n": 11,
+      "p50": 110,
+      "max": 162
+    }
+  },
+  "errors": [
+    {
+      "agent": "scan",
+      "cmd": "standard-propose",
+      "status": 404,
+      "detail": "cited evidence memory not found"
+    },
+    {
+      "agent": "scan",
+      "cmd": "standard-propose",
+      "status": 404,
+      "detail": "cited evidence memory not found"
+    },
+    {
+      "agent": "scan",
+      "cmd": "standard-propose",
+      "status": 404,
+      "detail": "cited evidence memory not found"
+    },
+    {
+      "agent": "scan",
+      "cmd": "standard-propose",
+      "status": 404,
+      "detail": "cited evidence memory not found"
+    },
+    {
+      "agent": "dev-c",
+      "cmd": "memory-feedback",
+      "status": 422,
+      "detail": "Failed to deserialize the JSON body into the target type: missing field `verdict` at line 1 column 134"
+    },
+    {
+      "agent": "dev-b",
+      "cmd": "standard-propose",
+      "status": 400,
+      "detail": "statement exceeds 500 chars"
+    }
+  ],
+  "empties": [
+    {
+      "agent": "scan",
+      "cmd": "standards-for",
+      "args": {
+        "stack": "typescript"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "standards-for",
+      "args": {
+        "stack": "typescript"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "memory-search",
+      "args": {
+        "query": "chainsonar rpc window"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "standards-for",
+      "args": {
+        "stack": "typescript"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "memory-search",
+      "args": {
+        "query": "external provider fallback"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "standards-for",
+      "args": {
+        "stack": "typescript"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "memory-search",
+      "args": {
+        "query": "unknown neutral honesty"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "standards-for",
+      "args": {}
+    },
+    {
+      "agent": "scan",
+      "cmd": "memory-search",
+      "args": {
+        "query": "read only paper only"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "memory-search",
+      "args": {
+        "query": "insider wallet pump definition early buyer",
+        "k": "5"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "standards-for",
+      "args": {
+        "stack": "typescript"
+      }
+    },
+    {
+      "agent": "scan",
+      "cmd": "memory-search",
+      "args": {
+        "query": "unknown neutral honesty"
+      }
+    },
+    {
+      "agent": "dev-a",
+      "cmd": "memory-search",
+      "args": {
+        "query": "provider rate limit swap window 100 blocks public RPC"
+      }
+    },
+    {
+      "agent": "dev-a",
+      "cmd": "memory-search",
+      "args": {
+        "query": "ChainSonar provider split Dune GeckoTerminal The Graph"
+      }
+    },
+    {
+      "agent": "dev-b",
+      "cmd": "memory-search",
+      "args": {
+        "query": "module boundaries file split refactor"
+      }
+    },
+    {
+      "agent": "dev-c",
+      "cmd": "memory-search",
+      "args": {
+        "query": "fetch batching rate limit backpressure RPC window bounded"
+      }
+    },
+    {
+      "agent": "dev-b",
+      "cmd": "memory-search",
+      "args": {
+        "query": "200 LOC file too large split component"
+      }
+    },
+    {
+      "agent": "dev-b",
+      "cmd": "memory-search",
+      "args": {
+        "query": "barrel export hooks extraction pattern"
+      }
+    },
+    {
+      "agent": "dev-b",
+      "cmd": "standards-for",
+      "args": {
+        "stack": "all"
+      }
+    },
+    {
+      "agent": "dev-c",
+      "cmd": "memory-search",
+      "args": {
+        "query": "ChainSonar data layer fetch a few rows at a time"
+      }
+    },
+    {
+      "agent": "dev-a",
+      "cmd": "memory-search",
+      "args": {
+        "query": "read-only invariant no signing paper trading"
+      }
+    },
+    {
+      "agent": "dev-c",
+      "cmd": "memory-search",
+      "args": {
+        "query": "table virtualization pagination UI scaling hundreds of items"
+      }
+    },
+    {
+      "agent": "dev-c",
+      "cmd": "memory-search",
+      "args": {
+        "query": "honesty unknown neutral low confidence labelled"
+      }
+    }
+  ]
+}

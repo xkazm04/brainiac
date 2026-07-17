@@ -1,0 +1,4 @@
+.keys.json
+logs/
+worktrees/
+.run-env.json
