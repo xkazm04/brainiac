@@ -200,6 +200,14 @@ pub struct McpState {
     /// onboarded device key carries the repo's project). Stamped onto every
     /// source this session writes; `None` = org-wide key ⇒ org-shared writes.
     pub project_id: Option<Uuid>,
+    /// PROJECT-PLAN PR2: the git remote of the checkout the MCP agent is
+    /// running in (from `BRAINIAC_REPO_REMOTE`, set at `claude mcp add -e …`
+    /// registration time). `None` when unset. Used by `memory_add` to
+    /// auto-attribute an org-wide key's writes to a whitelisted project by
+    /// resolving this remote — coverage climbs with no workflow change. A
+    /// project-scoped key (`project_id: Some(_)`) already knows its project
+    /// and ignores this field.
+    pub session_remote: Option<String>,
 }
 
 /// The scope a tool requires — the MCP mirror of the `auth_of(&state, scope)`
@@ -245,6 +253,14 @@ impl McpState {
         let principal = ctx.principal;
         let scopes = ctx.scopes;
         let project_id = ctx.project_id;
+        // PROJECT-PLAN PR2: the checkout's git remote, if the registration
+        // (`claude mcp add -e BRAINIAC_REPO_REMOTE=…`) set one. Absent/empty
+        // is treated as "no remote" — never an error — so a session with no
+        // remote configured behaves exactly as before (org-shared writes).
+        let session_remote = std::env::var("BRAINIAC_REPO_REMOTE")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let embedding_version = {
             let mut tx = store.scoped_tx(&principal).await?;
             // Serve path: refuse to start on a version whose reembed backfill did
@@ -266,6 +282,7 @@ impl McpState {
             principal,
             scopes,
             project_id,
+            session_remote,
         })
     }
 
@@ -962,7 +979,10 @@ async fn memory_list(state: &McpState, args: &Value) -> Result<Value, ToolError>
     let kind = match args.get("kind") {
         None | Some(Value::Null) => None,
         Some(v) => {
-            let s = v.as_str().ok_or_else(|| invalid("`kind` must be a string"))?.trim();
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("`kind` must be a string"))?
+                .trim();
             Some(
                 MemoryKind::parse(s)
                     .ok_or_else(|| invalid(format!("unknown kind `{s}`")))?
@@ -974,7 +994,10 @@ async fn memory_list(state: &McpState, args: &Value) -> Result<Value, ToolError>
     let status = match args.get("status") {
         None | Some(Value::Null) => None,
         Some(v) => {
-            let s = v.as_str().ok_or_else(|| invalid("`status` must be a string"))?.trim();
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("`status` must be a string"))?
+                .trim();
             Some(
                 MemoryStatus::parse(s)
                     .ok_or_else(|| invalid(format!("unknown status `{s}`")))?
@@ -987,8 +1010,16 @@ async fn memory_list(state: &McpState, args: &Value) -> Result<Value, ToolError>
     let scoped = parse_filters(state, args)?;
     let as_of = parse_as_of(args)?;
 
-    let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).clamp(1, 200);
-    let offset = args.get("offset").and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let offset = args
+        .get("offset")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        .max(0);
 
     let filter = brainiac_store::archive::MemoryFilter {
         q,
@@ -1214,6 +1245,34 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
 
     let team_id = state.principal.team_ids.first().copied();
     let source_id = Uuid::new_v4();
+    // PROJECT-PLAN PR2: the project to stamp this source with.
+    //   1. A project-scoped key already knows its project — that wins,
+    //      unchanged, over anything the checkout's remote might resolve to.
+    //   2. Else, if this session carries a checkout remote (BRAINIAC_REPO_REMOTE),
+    //      normalize it and look it up in THIS session's org (never cross-org)
+    //      against the repo whitelist. A resolved project auto-stamps an
+    //      otherwise org-wide key's write — coverage climbs with no workflow
+    //      change. Unresolvable/unknown remotes fall through to org-shared,
+    //      never an error.
+    //   3. Else org-shared, exactly as before.
+    let effective_project_id = match state.project_id {
+        Some(p) => Some(p),
+        None => match state
+            .session_remote
+            .as_deref()
+            .and_then(crate::projects::normalize_remote)
+        {
+            Some(normalized) => brainiac_store::projects::find_by_remote(
+                state.store.pool(),
+                state.principal.org_id,
+                &normalized,
+                "",
+            )
+            .await?
+            .map(|(project_id, _name)| project_id),
+            None => None,
+        },
+    };
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     brainiac_store::governance::insert_source(
         &mut tx,
@@ -1223,9 +1282,10 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         "manual",
         &raw_text,
         Some(state.principal.user_id),
-        // The session key's project scope — an onboarded repo's writes are
-        // attributed to its project without the agent saying anything.
-        state.project_id,
+        // The session key's project scope, or the remote-resolved project —
+        // an onboarded repo's writes are attributed to its project without
+        // the agent saying anything.
+        effective_project_id,
     )
     .await?;
     tx.commit().await?;
@@ -1515,7 +1575,8 @@ async fn doc_search(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         None | Some(Value::Null) => None,
         Some(v) => Some(
             within_cap(
-                v.as_str().ok_or_else(|| invalid("`tag` must be a string"))?,
+                v.as_str()
+                    .ok_or_else(|| invalid("`tag` must be a string"))?,
                 MAX_NAME_CHARS,
                 "tag",
             )?

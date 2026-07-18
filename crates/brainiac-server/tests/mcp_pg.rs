@@ -61,6 +61,7 @@ async fn mcp_handshake_and_tools() {
         },
         scopes: None,
         project_id: None,
+        session_remote: None,
     });
 
     // initialize
@@ -92,6 +93,7 @@ async fn mcp_handshake_and_tools() {
         names,
         vec![
             "memory_search",
+            "memory_list",
             "memory_context",
             "memory_add",
             // F-1/F-2: close the async-ingest loop — poll a source for the
@@ -1380,4 +1382,320 @@ async fn mcp_handshake_and_tools() {
     let dup = tool_payload(&r);
     assert_eq!(dup["outcome"], "duplicate", "{dup}");
     assert_eq!(dup["maturity"], "draft");
+}
+
+// ── PROJECT-PLAN PR2: repo-fingerprint auto-attribution ────────────────────
+//
+// An org-wide key (`project_id: None`) that carries a `session_remote` (the
+// checkout's git remote, from `BRAINIAC_REPO_REMOTE`) should have its
+// `memory_add` writes auto-stamped with whatever project the org's repo
+// whitelist resolves that remote to — without the agent ever passing a
+// project explicitly. These tests set up a minimal org + project + whitelisted
+// repo directly (no fixture loader needed — `memory_add` never touches
+// retrieval/embeddings) and assert on the `sources.project_id` column the
+// write actually landed in.
+
+/// Fresh org/team/user for one attribution test, isolated by the caller's
+/// TRUNCATE. Returns (org_id, user_id, team_id).
+async fn seed_attr_org(store: &Store) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+    let org_id = uuid::Uuid::new_v4();
+    let user_id = uuid::Uuid::new_v4();
+    let team_id = uuid::Uuid::new_v4();
+    let principal = Principal {
+        org_id,
+        user_id,
+        team_ids: vec![team_id],
+    };
+    let mut tx = store.scoped_tx(&principal).await.expect("tx");
+    {
+        let c = &mut *tx;
+        brainiac_store::orgs::upsert_org(c, org_id, "attr-org")
+            .await
+            .expect("org");
+        brainiac_store::orgs::upsert_team(c, team_id, org_id, "attr-team")
+            .await
+            .expect("team");
+        brainiac_store::orgs::upsert_user(c, user_id, org_id, "attr@x")
+            .await
+            .expect("user");
+        brainiac_store::orgs::upsert_member(c, team_id, user_id, "member")
+            .await
+            .expect("member");
+    }
+    tx.commit().await.expect("commit");
+    (org_id, user_id, team_id)
+}
+
+/// Connect + migrate + truncate, the same boilerplate every pg test in this
+/// file starts with. Returns `None` (with a SKIP note) when DATABASE_URL is
+/// unset.
+async fn attr_setup() -> Option<(Store, sqlx::PgPool, tokio::sync::MutexGuard<'static, ()>)> {
+    let url = match std::env::var("DATABASE_URL") {
+        Ok(u) => u,
+        Err(_) => {
+            eprintln!("SKIP: DATABASE_URL not set");
+            return None;
+        }
+    };
+    let guard = brainiac_store::test_support::serial_guard(&url).await;
+    brainiac_store::migrate(&url).await.expect("migrate");
+    let admin = sqlx::PgPool::connect(&url).await.expect("admin");
+    sqlx::query(
+        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+                  promotions, memories, canonical_entities, entities, provenance, sources,
+                  team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive,
+                  project_repos, projects
+         CASCADE",
+    )
+    .execute(&admin)
+    .await
+    .expect("truncate");
+    let store = Store::connect(&url).await.expect("connect");
+    Some((store, admin, guard))
+}
+
+async fn source_project_id(admin: &sqlx::PgPool, source_id: uuid::Uuid) -> Option<uuid::Uuid> {
+    use sqlx::Row;
+    let row = sqlx::query("SELECT project_id FROM sources WHERE id = $1")
+        .bind(source_id)
+        .fetch_one(admin)
+        .await
+        .expect("source row");
+    row.get("project_id")
+}
+
+/// resolve-hit: an org-wide key whose session_remote matches a whitelisted
+/// repo gets its write auto-stamped with the resolved project.
+///
+/// Proof that this exercises the NEW path (not some other route to the same
+/// project id): `state.project_id` is `None` here — the ONLY way
+/// `effective_project_id` can come out `Some` is via the
+/// `session_remote` → `normalize_remote` → `find_by_remote` branch added in
+/// this change. On the prior code (which had no `session_remote` field and
+/// always passed `state.project_id` straight through), this exact state would
+/// have stamped `NULL` — i.e. this assertion is red on the old code and green
+/// only with the new resolution logic wired in.
+#[tokio::test]
+async fn memory_add_auto_attributes_via_resolved_session_remote() {
+    let Some((store, admin, _guard)) = attr_setup().await else {
+        return;
+    };
+    let (org_id, user_id, team_id) = seed_attr_org(&store).await;
+
+    let project_id = uuid::Uuid::new_v4();
+    brainiac_store::projects::create(store.pool(), project_id, org_id, "attr-project")
+        .await
+        .expect("create project");
+    let remote = "github.com/acme/attribution-target";
+    brainiac_store::projects::add_repo(
+        store.pool(),
+        uuid::Uuid::new_v4(),
+        org_id,
+        project_id,
+        remote,
+        "",
+    )
+    .await
+    .expect("add repo");
+
+    let state = Arc::new(McpState {
+        store,
+        embedder: Arc::new(DeterministicEmbedder::default()),
+        embedding_version: 1,
+        principal: Principal {
+            org_id,
+            user_id,
+            team_ids: vec![team_id],
+        },
+        scopes: None,
+        project_id: None,
+        // Un-normalized form of the whitelisted remote — normalize_remote
+        // must fold it to exactly `remote` for find_by_remote to hit.
+        session_remote: Some(format!("https://{remote}.git")),
+    });
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            1,
+            "tools/call",
+            json!({
+                "name": "memory_add",
+                "arguments": { "content": "resolve-hit: an org-wide key with a resolvable checkout remote" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["accepted"], true, "{payload}");
+    let source_id: uuid::Uuid = payload["source_id"]
+        .as_str()
+        .expect("source_id")
+        .parse()
+        .expect("uuid");
+
+    let stamped = source_project_id(&admin, source_id).await;
+    assert_eq!(
+        stamped,
+        Some(project_id),
+        "org-wide key + resolvable session_remote must auto-stamp the resolved project"
+    );
+}
+
+/// resolve-miss: session_remote is set but does not match any whitelisted
+/// repo in this org → the write stays org-shared (NULL project_id) and the
+/// call still succeeds — an unresolved remote is never an error.
+#[tokio::test]
+async fn memory_add_unresolvable_session_remote_stays_org_shared() {
+    let Some((store, admin, _guard)) = attr_setup().await else {
+        return;
+    };
+    let (org_id, user_id, team_id) = seed_attr_org(&store).await;
+
+    // No project/repo whitelist entries at all in this org — every remote is
+    // unresolvable by construction.
+    let state = Arc::new(McpState {
+        store,
+        embedder: Arc::new(DeterministicEmbedder::default()),
+        embedding_version: 1,
+        principal: Principal {
+            org_id,
+            user_id,
+            team_ids: vec![team_id],
+        },
+        scopes: None,
+        project_id: None,
+        session_remote: Some("github.com/nobody/unknown".to_string()),
+    });
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            1,
+            "tools/call",
+            json!({
+                "name": "memory_add",
+                "arguments": { "content": "resolve-miss: an unwhitelisted checkout remote" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(
+        payload["accepted"], true,
+        "unresolved remote must not error: {payload}"
+    );
+    let source_id: uuid::Uuid = payload["source_id"]
+        .as_str()
+        .expect("source_id")
+        .parse()
+        .expect("uuid");
+
+    let stamped = source_project_id(&admin, source_id).await;
+    assert_eq!(
+        stamped, None,
+        "an unresolvable remote must fall back to org-shared (NULL project_id), not error"
+    );
+
+    // A garbage/unparseable remote (fails normalize_remote itself) must be
+    // equally harmless — never a memory_add error.
+    let r = handle_message(
+        &state,
+        &rpc(
+            2,
+            "tools/call",
+            json!({
+                "name": "memory_add",
+                "arguments": { "content": "resolve-miss: a session_remote that is not even a valid remote" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(
+        payload["accepted"], true,
+        "a garbage BRAINIAC_REPO_REMOTE must never break memory_add: {payload}"
+    );
+}
+
+/// explicit-scope-wins: a project-scoped key's own project always wins over
+/// whatever its session_remote would otherwise resolve to.
+#[tokio::test]
+async fn memory_add_project_scoped_key_ignores_session_remote() {
+    let Some((store, admin, _guard)) = attr_setup().await else {
+        return;
+    };
+    let (org_id, user_id, team_id) = seed_attr_org(&store).await;
+
+    let own_project = uuid::Uuid::new_v4();
+    let remote_resolved_project = uuid::Uuid::new_v4();
+    brainiac_store::projects::create(store.pool(), own_project, org_id, "own-project")
+        .await
+        .expect("create own project");
+    brainiac_store::projects::create(
+        store.pool(),
+        remote_resolved_project,
+        org_id,
+        "remote-resolved-project",
+    )
+    .await
+    .expect("create other project");
+    let remote = "github.com/acme/other-repo";
+    brainiac_store::projects::add_repo(
+        store.pool(),
+        uuid::Uuid::new_v4(),
+        org_id,
+        remote_resolved_project,
+        remote,
+        "",
+    )
+    .await
+    .expect("add repo");
+
+    let state = Arc::new(McpState {
+        store,
+        embedder: Arc::new(DeterministicEmbedder::default()),
+        embedding_version: 1,
+        principal: Principal {
+            org_id,
+            user_id,
+            team_ids: vec![team_id],
+        },
+        scopes: None,
+        // A project-scoped key — this must win.
+        project_id: Some(own_project),
+        // ...even though this remote resolves to a DIFFERENT project.
+        session_remote: Some(remote.to_string()),
+    });
+
+    let r = handle_message(
+        &state,
+        &rpc(
+            1,
+            "tools/call",
+            json!({
+                "name": "memory_add",
+                "arguments": { "content": "explicit-scope-wins: a project-scoped key with an unrelated session_remote" }
+            }),
+        ),
+    )
+    .await
+    .expect("response");
+    let payload = tool_payload(&r);
+    assert_eq!(payload["accepted"], true, "{payload}");
+    let source_id: uuid::Uuid = payload["source_id"]
+        .as_str()
+        .expect("source_id")
+        .parse()
+        .expect("uuid");
+
+    let stamped = source_project_id(&admin, source_id).await;
+    assert_eq!(
+        stamped,
+        Some(own_project),
+        "the key's own project_id must win over whatever session_remote resolves to"
+    );
 }

@@ -615,6 +615,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
         },
         scopes: None,
         project_id: None,
+        session_remote: None,
     });
     let rpc = |id: i64, method: &str, params: serde_json::Value| json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
     let call = |id: i64, name: &str, args: serde_json::Value| {
@@ -1056,6 +1057,7 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
         },
         scopes: None,
         project_id: None,
+        session_remote: None,
     });
     let r = handle_message(
         state.as_ref(),
@@ -1285,6 +1287,7 @@ async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
         principal: resolved.principal,
         scopes: resolved.scopes,
         project_id: None,
+        session_remote: None,
     });
     let call = |id: i64, name: &str, args: serde_json::Value| {
         json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -1340,6 +1343,7 @@ async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
         principal: ro_ctx.principal,
         scopes: ro_ctx.scopes,
         project_id: None,
+        session_remote: None,
     });
     let r = handle_message(
         ro_state.as_ref(),
