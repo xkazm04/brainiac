@@ -1313,12 +1313,19 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AddRepoBody: {
+            /**
+             * @description Repo-relative subdirectory this row claims (e.g. `apps/web`), for
+             *     splitting a monorepo across projects. Omit (or `""`) to claim the
+             *     whole repo — the default, back-compat with every pre-monorepo caller.
+             */
+            path_prefix?: string | null;
             /** @description Any spelling of the remote (https, ssh, scp, bare); stored normalized. */
             remote: string;
         };
         AddedRepoResponse: {
             /** Format: uuid */
             id: string;
+            path_prefix: string;
             /** Format: uuid */
             project_id: string;
             /** @description The normalized form that was stored — what onboarding will match on. */
@@ -2502,6 +2509,13 @@ export interface components {
         OnboardStartBody: {
             /** @description Who is asking — hostname/username, shown to the approver. */
             label?: string | null;
+            /**
+             * @description The checkout subdir relative to the repo root (e.g. `apps/web`), for
+             *     monorepos split across projects by path_prefix. Omit (or `""`) for a
+             *     whole-repo checkout — the default, back-compat with every
+             *     pre-monorepo caller.
+             */
+            path?: string | null;
             /** @description The checkout's `git remote get-url origin`, any spelling. */
             remote: string;
         };
@@ -2666,6 +2680,11 @@ export interface components {
             created_at: string;
             /** Format: uuid */
             id: string;
+            /**
+             * @description Repo-relative subdirectory this row claims ('' = the whole repo —
+             *     see migrations/0039_project_path_prefix.sql).
+             */
+            path_prefix: string;
             /** @description Normalized remote, e.g. `github.com/acme/payments`. */
             remote: string;
         };

@@ -133,6 +133,7 @@
             "migrations/0035_project_stamping.sql",
             "migrations/0037_divergence_axis.sql",
             "migrations/0038_document_project.sql",
+            "migrations/0039_project_path_prefix.sql",
             "docs/PROJECT-PLAN.md",
             "docs/skills/brainiac-onboard/SKILL.md"
           ],

@@ -71,23 +71,27 @@ export const DEMO_PROJECTS: ProjectsData = {
       name: "payments-api",
       created_at: new Date(Date.now() - 40 * DAY).toISOString(),
       repos: [
-        { id: "dr-1", remote: "github.com/meridian/payments-api", created_at: new Date(Date.now() - 40 * DAY).toISOString() },
-        { id: "dr-2", remote: "github.com/meridian/payments-ledger", created_at: new Date(Date.now() - 12 * DAY).toISOString() },
+        { id: "dr-1", remote: "github.com/meridian/payments-api", path_prefix: "", created_at: new Date(Date.now() - 40 * DAY).toISOString() },
+        { id: "dr-2", remote: "github.com/meridian/payments-ledger", path_prefix: "", created_at: new Date(Date.now() - 12 * DAY).toISOString() },
       ],
     },
     {
       id: "dp-2",
       name: "checkout-web",
       created_at: new Date(Date.now() - 33 * DAY).toISOString(),
+      // A monorepo split (migration 0039): checkout-web and feature-store share
+      // one remote, each claiming its own subtree by path_prefix.
       repos: [
-        { id: "dr-3", remote: "github.com/meridian/checkout-web", created_at: new Date(Date.now() - 33 * DAY).toISOString() },
+        { id: "dr-3", remote: "github.com/meridian/platform-monorepo", path_prefix: "apps/checkout", created_at: new Date(Date.now() - 33 * DAY).toISOString() },
       ],
     },
     {
       id: "dp-3",
       name: "feature-store",
       created_at: new Date(Date.now() - 9 * DAY).toISOString(),
-      repos: [],
+      repos: [
+        { id: "dr-4", remote: "github.com/meridian/platform-monorepo", path_prefix: "apps/features", created_at: new Date(Date.now() - 9 * DAY).toISOString() },
+      ],
     },
   ],
   requests: [
