@@ -936,6 +936,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{id}/isolation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /v1/projects/{id}/isolation — toggle opt-in RLS isolation for a
+         *     project. Admin-scoped: deciding whether a project's knowledge is walled off
+         *     from the rest of the org IS access control, same class as token minting.
+         * @description Toggle opt-in per-project RLS isolation (admin). When enabled, the project's memories and sources become invisible to org-wide and other-project principals — enforced by RLS (migration 0040), not by an advisory filter. Default (disabled) is byte-identical to prior behavior.
+         */
+        post: operations["project_set_isolation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{id}/repos": {
         parameters: {
             query?: never;
@@ -3006,6 +3028,20 @@ export interface components {
         SearchResponse: {
             hits: components["schemas"]["SearchHit"][];
         };
+        SetIsolationBody: {
+            /**
+             * @description Turn per-project RLS isolation on (true) or off (false). When on, the
+             *     project's memories + sources become invisible to org-wide and
+             *     other-project principals (migration 0040); when off, behavior is
+             *     byte-identical to today's advisory scoping.
+             */
+            isolated: boolean;
+        };
+        SetIsolationResponse: {
+            /** Format: uuid */
+            id: string;
+            isolated: boolean;
+        };
         SkillBundleResponse: {
             content_md: string;
             /**
@@ -5025,6 +5061,54 @@ export interface operations {
             };
             /** @description A project with this name already exists */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    project_set_isolation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetIsolationBody"];
+            };
+        };
+        responses: {
+            /** @description Isolation flag updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetIsolationResponse"];
+                };
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `admin` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project not found in this org */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
