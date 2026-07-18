@@ -30,5 +30,6 @@ pub fn pipeline_principal(org_id: uuid::Uuid) -> Principal {
         org_id,
         user_id: uuid::Uuid::from_bytes(*b"brainiac-worker!"),
         team_ids: vec![],
+        project_id: None,
     }
 }

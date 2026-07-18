@@ -749,6 +749,7 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
             org_id: stable_uuid(&fx.org.org),
             user_id: stable_uuid(&user.id),
             team_ids: user.teams.iter().map(|t| stable_uuid(t)).collect(),
+            project_id: None,
         })
     };
     let memory_scope = |m: &MemoryFx| {

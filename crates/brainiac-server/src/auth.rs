@@ -53,6 +53,8 @@ impl TokenMap {
                             org_id: e.org,
                             user_id: e.user,
                             team_ids: e.teams,
+                            // Env bootstrap tokens are org-wide: no project scope.
+                            project_id: None,
                         },
                     )
                 })
@@ -176,6 +178,9 @@ pub async fn resolve_bearer(
             org_id: resolved.org_id,
             user_id: resolved.user_id,
             team_ids,
+            // A managed key carries its project scope into the RLS GUC, so an
+            // isolated project's rows gate on it (migration 0040).
+            project_id: resolved.project_id,
         },
         scopes: Some(resolved.scopes),
         project_id: resolved.project_id,
@@ -192,6 +197,7 @@ mod tests {
             org_id: Uuid::nil(),
             user_id: Uuid::nil(),
             team_ids: vec![],
+            project_id: None,
         };
         let env = AuthContext {
             principal: p.clone(),

@@ -12,7 +12,7 @@ use brainiac_core::{
     Enforcement, LibraryArtifactKind, LibraryUsageEvent, MemoryKind, MemoryStatus, Principal,
     StandardLifecycle, StandardProvenanceKind, Visibility,
 };
-use brainiac_store::{entities, feedback, library, memories, orgs, queue, retrieval, Store};
+use brainiac_store::{entities, feedback, library, memories, orgs, projects, queue, retrieval, Store};
 use uuid::Uuid;
 
 fn database_url() -> Option<String> {
@@ -62,6 +62,7 @@ fn pay_dev() -> Principal {
         org_id: org(),
         user_id: uuid(11),
         team_ids: vec![uuid(21)],
+        project_id: None,
     }
 }
 
@@ -70,6 +71,7 @@ fn data_analyst() -> Principal {
         org_id: org(),
         user_id: uuid(12),
         team_ids: vec![uuid(22)],
+        project_id: None,
     }
 }
 
@@ -251,6 +253,7 @@ async fn rls_visibility_matrix_and_search_leaks() {
         org_id: org(),
         user_id: uuid(13),
         team_ids: vec![uuid(21)],
+        project_id: None,
     };
     let mut tx = ctx.store.scoped_tx(&teammate).await.expect("tx");
     let visible = memories::get_by_ids(&mut tx, &[uuid(103)])
@@ -1811,6 +1814,7 @@ fn intruder() -> Principal {
         org_id: uuid(2),
         user_id: uuid(13),
         team_ids: vec![],
+        project_id: None,
     }
 }
 
@@ -2251,4 +2255,211 @@ async fn proposing_a_skill_drafts_it_then_dedupes_and_rate_limits() {
         // Nothing new was written.
         assert_eq!(library::list_skills(c).await.expect("skills").len(), 1);
     }
+}
+
+// ── project isolation (migration 0040) ──────────────────────────────────
+//
+// Opt-in per-project RLS isolation. project_id is advisory by default (a
+// project-scoped key still reads the whole org corpus); an isolated project's
+// memories become invisible to org-wide and other-project principals, enforced
+// by the RESTRICTIVE `memories_project_isolation` policy — not by a filter a
+// caller could forget. These tests prove the security assertion is REAL (same
+// principal, same query, the ONLY difference is the `isolated` flag) and that
+// the default (non-isolated) path is byte-identically unchanged.
+
+const ISO_PROJECT_A: u8 = 51;
+const ISO_PROJECT_B: u8 = 52;
+const ISO_MEMORY: u8 = 150;
+
+/// org-wide principal — no project scope (the whole-org key).
+fn iso_org_wide() -> Principal {
+    Principal {
+        org_id: org(),
+        user_id: uuid(11),
+        team_ids: vec![],
+        project_id: None,
+    }
+}
+
+/// a key scoped to project A (the isolated project's OWN principal).
+fn iso_proj_a() -> Principal {
+    Principal {
+        org_id: org(),
+        user_id: uuid(11),
+        team_ids: vec![],
+        project_id: Some(uuid(ISO_PROJECT_A)),
+    }
+}
+
+/// a key scoped to project B (a DIFFERENT project in the same org).
+fn iso_proj_b() -> Principal {
+    Principal {
+        org_id: org(),
+        user_id: uuid(11),
+        team_ids: vec![],
+        project_id: Some(uuid(ISO_PROJECT_B)),
+    }
+}
+
+/// Seed one org, two projects (A, B), one user, and an ORG-visible memory
+/// stamped to project A. Projects carry no RLS (they produce principals), so
+/// they're created through the admin pool.
+async fn seed_isolation(ctx: &Ctx) {
+    let writer = iso_org_wide();
+    let mut tx = ctx.store.scoped_tx(&writer).await.expect("tx");
+    let c = &mut *tx;
+    orgs::upsert_org(c, org(), "agency-test")
+        .await
+        .expect("org");
+    orgs::upsert_user(c, uuid(11), org(), "agency@x")
+        .await
+        .expect("user");
+    tx.commit().await.expect("commit org");
+
+    projects::create(&ctx.admin, uuid(ISO_PROJECT_A), org(), "client-alpha")
+        .await
+        .expect("project A");
+    projects::create(&ctx.admin, uuid(ISO_PROJECT_B), org(), "client-beta")
+        .await
+        .expect("project B");
+
+    let mut tx = ctx.store.scoped_tx(&writer).await.expect("tx");
+    memories::insert(
+        &mut tx,
+        &memories::NewMemory {
+            id: uuid(ISO_MEMORY),
+            org_id: org(),
+            team_id: None,
+            owner_user_id: None,
+            visibility: Visibility::Org,
+            status: MemoryStatus::Canonical,
+            kind: MemoryKind::Fact,
+            title: None,
+            lifecycle: Default::default(),
+            detail_md: None,
+            content: "client-alpha billing webhook isolation runbook".to_string(),
+            language: "en".into(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
+            confidence: None,
+            provenance_id: None,
+            project_id: Some(uuid(ISO_PROJECT_A)),
+        },
+    )
+    .await
+    .expect("memory");
+    tx.commit().await.expect("commit memory");
+}
+
+/// Does `principal` see project A's memory via the RLS-scoped list path?
+async fn iso_sees(ctx: &Ctx, principal: &Principal) -> bool {
+    let mut tx = ctx.store.scoped_tx(principal).await.expect("tx");
+    let got = memories::get_by_ids(&mut tx, &[uuid(ISO_MEMORY)])
+        .await
+        .expect("get");
+    got.iter().any(|m| m.id == uuid(ISO_MEMORY))
+}
+
+/// The byte-identical-default proof: with isolated=false (the default), the
+/// project stamp is purely advisory — ALL three principals see the memory
+/// exactly as they do today.
+#[tokio::test]
+async fn project_isolation_default_is_unchanged() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed_isolation(&ctx).await;
+
+    assert!(
+        iso_sees(&ctx, &iso_org_wide()).await,
+        "org-wide sees a non-isolated project's memory (default)"
+    );
+    assert!(
+        iso_sees(&ctx, &iso_proj_b()).await,
+        "another project sees a non-isolated project's memory (default)"
+    );
+    assert!(
+        iso_sees(&ctx, &iso_proj_a()).await,
+        "the owning project sees its own memory (default)"
+    );
+}
+
+/// The security assertion, proven by a flip: SAME principal, SAME query, the
+/// only difference is `isolated`. Non-isolated → visible; isolated → hidden
+/// from org-wide and other-project principals, still visible to its own
+/// principal and to the pipeline worker.
+#[tokio::test]
+async fn project_isolation_hides_only_when_flipped_on() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed_isolation(&ctx).await;
+
+    // Baseline: isolated=false — org-wide sees it.
+    assert!(
+        iso_sees(&ctx, &iso_org_wide()).await,
+        "baseline: org-wide sees the memory while the project is NOT isolated"
+    );
+
+    // Flip project A to isolated.
+    let flipped = projects::set_isolated(&ctx.admin, org(), uuid(ISO_PROJECT_A), true)
+        .await
+        .expect("set_isolated");
+    assert!(flipped, "set_isolated updated exactly the org's project A");
+
+    // hidden-from-org-wide: the security assertion. Same principal, same query.
+    assert!(
+        !iso_sees(&ctx, &iso_org_wide()).await,
+        "isolated project's memory MUST be hidden from an org-wide principal"
+    );
+    // hidden-from-other-project: project B is a different scope.
+    assert!(
+        !iso_sees(&ctx, &iso_proj_b()).await,
+        "isolated project's memory MUST be hidden from another project's principal"
+    );
+    // visible-to-own: project A's own principal still sees it.
+    assert!(
+        iso_sees(&ctx, &iso_proj_a()).await,
+        "isolated project's own principal MUST still see it"
+    );
+
+    // FTS respects the policy too — retrieval, not just id-lookup, is blinded.
+    let mut tx = ctx.store.scoped_tx(&iso_org_wide()).await.expect("tx");
+    let hits = memories::search_fts(
+        &mut tx,
+        "billing webhook isolation",
+        10,
+        &Default::default(),
+    )
+    .await
+    .expect("fts");
+    assert!(
+        hits.iter().all(|(id, _)| *id != uuid(ISO_MEMORY)),
+        "FTS leaked an isolated project's memory to an org-wide principal"
+    );
+    drop(tx);
+
+    // worker-sees-it: the pipeline (app.worker='on') must NOT be blinded, or
+    // extraction/embedding breaks on isolated rows.
+    let mut tx = ctx.store.worker_tx(&iso_org_wide()).await.expect("tx");
+    let got = memories::get_by_ids(&mut tx, &[uuid(ISO_MEMORY)])
+        .await
+        .expect("worker get");
+    assert!(
+        got.iter().any(|m| m.id == uuid(ISO_MEMORY)),
+        "the pipeline worker MUST still see an isolated project's memory"
+    );
+    drop(tx);
+
+    // Flip back OFF — the org-wide principal sees it again (reversible, and
+    // proof the flag is the ONLY variable).
+    let unflipped = projects::set_isolated(&ctx.admin, org(), uuid(ISO_PROJECT_A), false)
+        .await
+        .expect("unset_isolated");
+    assert!(unflipped);
+    assert!(
+        iso_sees(&ctx, &iso_org_wide()).await,
+        "flipping isolation back OFF restores org-wide visibility"
+    );
 }

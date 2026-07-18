@@ -278,6 +278,7 @@ async fn rest_scopes_gate_the_library_and_usage_counts_teams() {
             org_id: ctx.org_a,
             user_id: ctx.user_maint,
             team_ids: vec![ctx.team_a],
+            project_id: None,
         };
         let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
         library::insert_standard(
@@ -329,6 +330,7 @@ async fn rest_scopes_gate_the_library_and_usage_counts_teams() {
             org_id: ctx.org_a,
             user_id: ctx.user_maint,
             team_ids: vec![ctx.team_a],
+            project_id: None,
         };
         let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
         library::insert_standard(
@@ -412,6 +414,7 @@ async fn rest_scopes_gate_the_library_and_usage_counts_teams() {
             org_id: ctx.org_a,
             user_id: ctx.user_maint,
             team_ids: vec![ctx.team_a],
+            project_id: None,
         };
         let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
         library::insert_skill(
@@ -463,6 +466,7 @@ async fn rest_scopes_gate_the_library_and_usage_counts_teams() {
             org_id: ctx.org_a,
             user_id: ctx.user_maint,
             team_ids: vec![ctx.team_a],
+            project_id: None,
         };
         let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
         assert!(
@@ -537,6 +541,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
         org_id: ctx.org_a,
         user_id: ctx.user_maint,
         team_ids: vec![ctx.team_a],
+        project_id: None,
     };
 
     // One adopted rule, one proposal, one draft-only skill.
@@ -612,6 +617,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
             org_id: ctx.org_a,
             user_id: ctx.user_reader,
             team_ids: vec![ctx.team_a],
+            project_id: None,
         },
         scopes: None,
         project_id: None,
@@ -760,6 +766,7 @@ async fn dead_rules_surface_themselves_on_the_leadership_report() {
         org_id: ctx.org_a,
         user_id: ctx.user_maint,
         team_ids: vec![ctx.team_a],
+        project_id: None,
     };
     let mk = |id: Uuid, slug: &str| library::NewStandard {
         id,
@@ -991,6 +998,7 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
             org_id: ctx.org_a,
             user_id: ctx.user_maint,
             team_ids: vec![ctx.team_a],
+            project_id: None,
         };
         let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
         assert!(
@@ -1054,6 +1062,7 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
             org_id: ctx.org_a,
             user_id: ctx.user_maint, // a different identity — fresh budget
             team_ids: vec![ctx.team_a],
+            project_id: None,
         },
         scopes: None,
         project_id: None,

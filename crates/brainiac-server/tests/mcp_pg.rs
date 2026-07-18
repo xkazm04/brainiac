@@ -58,6 +58,7 @@ async fn mcp_handshake_and_tools() {
             org_id: stable_uuid(&fx.org.org),
             user_id: stable_uuid("user-data-analyst1"),
             team_ids: vec![stable_uuid("team-data")],
+            project_id: None,
         },
         scopes: None,
         project_id: None,
@@ -1405,6 +1406,7 @@ async fn seed_attr_org(store: &Store) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
         org_id,
         user_id,
         team_ids: vec![team_id],
+        project_id: None,
     };
     let mut tx = store.scoped_tx(&principal).await.expect("tx");
     {
@@ -1506,6 +1508,7 @@ async fn memory_add_auto_attributes_via_resolved_session_remote() {
             org_id,
             user_id,
             team_ids: vec![team_id],
+            project_id: None,
         },
         scopes: None,
         project_id: None,
@@ -1563,6 +1566,7 @@ async fn memory_add_unresolvable_session_remote_stays_org_shared() {
             org_id,
             user_id,
             team_ids: vec![team_id],
+            project_id: None,
         },
         scopes: None,
         project_id: None,
@@ -1663,6 +1667,7 @@ async fn memory_add_project_scoped_key_ignores_session_remote() {
             org_id,
             user_id,
             team_ids: vec![team_id],
+            project_id: None,
         },
         scopes: None,
         // A project-scoped key — this must win.

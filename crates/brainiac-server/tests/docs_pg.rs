@@ -89,6 +89,7 @@ fn principal(org: Uuid, user: Uuid) -> brainiac_core::Principal {
         org_id: org,
         user_id: user,
         team_ids: vec![],
+        project_id: None,
     }
 }
 

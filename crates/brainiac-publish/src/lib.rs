@@ -169,6 +169,7 @@ pub async fn publish_org(store: &Store, org_id: Uuid, console_url: &str) -> Resu
         org_id,
         user_id: Uuid::from_bytes(*b"brainiac-publish"),
         team_ids: vec![],
+        project_id: None,
     };
 
     // 1. Did this org ask for any of this? (KB-PLAN D6 — optional, off by default.)

@@ -33,6 +33,7 @@ fn pay() -> Principal {
         org_id: org(),
         user_id: uuid(11),
         team_ids: vec![uuid(21)],
+        project_id: None,
     }
 }
 fn data() -> Principal {
@@ -40,6 +41,7 @@ fn data() -> Principal {
         org_id: org(),
         user_id: uuid(12),
         team_ids: vec![uuid(22)],
+        project_id: None,
     }
 }
 

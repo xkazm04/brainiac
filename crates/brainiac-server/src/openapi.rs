@@ -138,6 +138,7 @@ impl Modify for BearerAuth {
         crate::projects::project_create,
         crate::projects::repo_add,
         crate::projects::repo_remove,
+        crate::projects::project_set_isolation,
         // developer onboarding pairing
         crate::onboard::onboard_start,
         crate::onboard::onboard_poll,
@@ -317,6 +318,8 @@ impl Modify for BearerAuth {
         crate::projects::AddRepoBody,
         crate::projects::AddedRepoResponse,
         crate::projects::RemovedRepoResponse,
+        crate::projects::SetIsolationBody,
+        crate::projects::SetIsolationResponse,
         crate::onboard::OnboardStartBody,
         crate::onboard::OnboardStartResponse,
         crate::onboard::OnboardPollBody,

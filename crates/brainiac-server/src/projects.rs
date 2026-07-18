@@ -26,6 +26,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/projects", get(projects_list).post(project_create))
         .route("/v1/projects/{id}/repos", axum::routing::post(repo_add))
         .route("/v1/projects/{id}/repos/{repo_id}", delete(repo_remove))
+        .route(
+            "/v1/projects/{id}/isolation",
+            axum::routing::post(project_set_isolation),
+        )
 }
 
 /// Cap on user-supplied names/remotes — identifiers, not prose.
@@ -176,6 +180,21 @@ pub(crate) struct AddedRepoResponse {
 pub(crate) struct RemovedRepoResponse {
     pub id: Uuid,
     pub removed: bool,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetIsolationBody {
+    /// Turn per-project RLS isolation on (true) or off (false). When on, the
+    /// project's memories + sources become invisible to org-wide and
+    /// other-project principals (migration 0040); when off, behavior is
+    /// byte-identical to today's advisory scoping.
+    pub isolated: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SetIsolationResponse {
+    pub id: Uuid,
+    pub isolated: bool,
 }
 
 // ── handlers ────────────────────────────────────────────────────────────
@@ -388,6 +407,51 @@ pub(crate) async fn repo_remove(
     Ok(Json(RemovedRepoResponse {
         id: repo_id,
         removed: true,
+    }))
+}
+
+/// POST /v1/projects/{id}/isolation — toggle opt-in RLS isolation for a
+/// project. Admin-scoped: deciding whether a project's knowledge is walled off
+/// from the rest of the org IS access control, same class as token minting.
+#[utoipa::path(
+    post,
+    path = "/v1/projects/{id}/isolation",
+    tag = "projects",
+    description = "Toggle opt-in per-project RLS isolation (admin). When enabled, the \
+                   project's memories and sources become invisible to org-wide and \
+                   other-project principals — enforced by RLS (migration 0040), not by \
+                   an advisory filter. Default (disabled) is byte-identical to prior \
+                   behavior.",
+    params(("id" = Uuid, Path, description = "Project id")),
+    request_body = SetIsolationBody,
+    responses(
+        (status = 200, description = "Isolation flag updated", body = SetIsolationResponse),
+        (status = 401, description = "Missing or unknown bearer token"),
+        (status = 403, description = "Token lacks the `admin` scope"),
+        (status = 404, description = "Project not found in this org"),
+    )
+)]
+pub(crate) async fn project_set_isolation(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SetIsolationBody>,
+) -> Result<Json<SetIsolationResponse>, HttpError> {
+    let ctx = auth_of(&state, &headers, "admin").await?;
+    let updated = brainiac_store::projects::set_isolated(
+        state.store.pool(),
+        ctx.principal.org_id,
+        project_id,
+        body.isolated,
+    )
+    .await
+    .map_err(internal)?;
+    if !updated {
+        return Err((StatusCode::NOT_FOUND, "project not found".to_string()).into());
+    }
+    Ok(Json(SetIsolationResponse {
+        id: project_id,
+        isolated: body.isolated,
     }))
 }
 

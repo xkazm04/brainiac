@@ -1971,6 +1971,59 @@
         }
       }
     },
+    "/v1/projects/{id}/isolation": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "POST /v1/projects/{id}/isolation — toggle opt-in RLS isolation for a\nproject. Admin-scoped: deciding whether a project's knowledge is walled off\nfrom the rest of the org IS access control, same class as token minting.",
+        "description": "Toggle opt-in per-project RLS isolation (admin). When enabled, the project's memories and sources become invisible to org-wide and other-project principals — enforced by RLS (migration 0040), not by an advisory filter. Default (disabled) is byte-identical to prior behavior.",
+        "operationId": "project_set_isolation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Project id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetIsolationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Isolation flag updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetIsolationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `admin` scope"
+          },
+          "404": {
+            "description": "Project not found in this org"
+          }
+        }
+      }
+    },
     "/v1/projects/{id}/repos": {
       "post": {
         "tags": [
@@ -7159,6 +7212,34 @@
             "items": {
               "$ref": "#/components/schemas/SearchHit"
             }
+          }
+        }
+      },
+      "SetIsolationBody": {
+        "type": "object",
+        "required": [
+          "isolated"
+        ],
+        "properties": {
+          "isolated": {
+            "type": "boolean",
+            "description": "Turn per-project RLS isolation on (true) or off (false). When on, the\nproject's memories + sources become invisible to org-wide and\nother-project principals (migration 0040); when off, behavior is\nbyte-identical to today's advisory scoping."
+          }
+        }
+      },
+      "SetIsolationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "isolated"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "isolated": {
+            "type": "boolean"
           }
         }
       },

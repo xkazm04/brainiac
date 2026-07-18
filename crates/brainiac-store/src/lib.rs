@@ -101,11 +101,22 @@ impl Store {
     /// transaction-local, so scopes can never bleed across pooled sessions.
     pub async fn scoped_tx(&self, principal: &Principal) -> Result<Tx<'static>> {
         let mut tx = self.pool.begin().await?;
+        // `app.project_id` gates the project-isolation policy (migration 0040).
+        // None → '' (empty string), which the policy's `nullif(...,'')` reads
+        // back as NULL: "no project scope". Transaction-local like the others.
         sqlx::query(
-            "SELECT set_config('app.org_id', $1, true), set_config('app.user_id', $2, true)",
+            "SELECT set_config('app.org_id', $1, true),
+                    set_config('app.user_id', $2, true),
+                    set_config('app.project_id', $3, true)",
         )
         .bind(principal.org_id.to_string())
         .bind(principal.user_id.to_string())
+        .bind(
+            principal
+                .project_id
+                .map(|u| u.to_string())
+                .unwrap_or_default(),
+        )
         .execute(&mut *tx)
         .await?;
         Ok(tx)

@@ -23,6 +23,7 @@ pub fn seeding_principal(fx: &Fixtures) -> Principal {
         org_id: stable_uuid(&fx.org.org),
         user_id: stable_uuid("seed-worker"),
         team_ids: vec![],
+        project_id: None,
     }
 }
 
@@ -33,6 +34,7 @@ pub fn principal_for_user(fx: &Fixtures, user_id: &str) -> Option<Principal> {
         org_id: stable_uuid(&fx.org.org),
         user_id: stable_uuid(&user.id),
         team_ids: user.teams.iter().map(|t| stable_uuid(t)).collect(),
+        project_id: None,
     })
 }
 

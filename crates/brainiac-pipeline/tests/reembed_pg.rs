@@ -25,6 +25,7 @@ async fn seed_org(
         org_id,
         user_id: Uuid::from_bytes([200u8; 16]),
         team_ids: vec![team_id],
+        project_id: None,
     };
     let mut tx = store.scoped_tx(&principal).await.expect("tx");
     orgs::upsert_org(&mut tx, org_id, "org").await.expect("org");
@@ -216,6 +217,7 @@ async fn reembed_backfills_all_orgs_to_new_version() {
         org_id: org1,
         user_id: Uuid::from_bytes([200u8; 16]),
         team_ids: vec![team1],
+        project_id: None,
     };
     let mut tx = store.scoped_tx(&p1).await.expect("tx");
     let hits = retrieval::search(

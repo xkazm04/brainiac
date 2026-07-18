@@ -564,6 +564,7 @@ async fn supersession_serves_only_the_winner() {
         org_id,
         user_id: user,
         team_ids: vec![team],
+        project_id: None,
     };
     let winner = Uuid::from_bytes([1u8; 16]);
     let loser = Uuid::from_bytes([2u8; 16]);

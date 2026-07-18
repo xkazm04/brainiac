@@ -91,6 +91,25 @@ pub async fn belongs(pool: &PgPool, org_id: Uuid, project_id: Uuid) -> Result<bo
     Ok(row.is_some())
 }
 
+/// Flip a project's opt-in RLS isolation (migration 0040). Scoped to the org
+/// so one tenant can never toggle another's project. Returns false when no
+/// project by that id exists in the org (surfaced as a 404 by the handler),
+/// same shape as [`create`] / [`add_repo`].
+pub async fn set_isolated(
+    pool: &PgPool,
+    org_id: Uuid,
+    project_id: Uuid,
+    isolated: bool,
+) -> Result<bool> {
+    let res = sqlx::query("UPDATE projects SET isolated = $3 WHERE id = $1 AND org_id = $2")
+        .bind(project_id)
+        .bind(org_id)
+        .bind(isolated)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
 /// Whitelist a (normalized) remote — optionally scoped to a repo-relative
 /// `path_prefix` ('' = the whole repo) — under a project. The guarded
 /// INSERT…SELECT refuses to attach a repo to another org's project;

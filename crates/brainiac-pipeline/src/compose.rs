@@ -911,6 +911,7 @@ pub fn compose_principal(org_id: Uuid) -> brainiac_core::Principal {
         org_id,
         user_id: Uuid::from_bytes(*b"brainiac-compose"),
         team_ids: vec![],
+        project_id: None,
     }
 }
 

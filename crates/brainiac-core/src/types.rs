@@ -320,6 +320,12 @@ pub struct Principal {
     pub user_id: Uuid,
     /// Teams the user belongs to (SCIM-synced in production; config-stubbed in v0).
     pub team_ids: Vec<Uuid>,
+    /// The project a managed key is scoped to (migration 0034), threaded into
+    /// the `app.project_id` RLS GUC by `Store::scoped_tx`. `None` for env
+    /// tokens and org-wide keys — a NULL/empty GUC that the project-isolation
+    /// policy (migration 0040) reads as "no project scope". Purely advisory
+    /// until a project opts into `isolated`; only then does it gate reads.
+    pub project_id: Option<Uuid>,
 }
 
 impl Principal {
@@ -825,6 +831,7 @@ mod tests {
             org_id: uuid(1),
             user_id: uuid(2),
             team_ids: vec![uuid(3)],
+            project_id: None,
         };
         // org-visible in my org: yes
         assert!(me.can_read(uuid(1), None, None, Visibility::Org));

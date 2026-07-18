@@ -4371,6 +4371,7 @@ pub(crate) async fn token_preview(
         org_id,
         user_id: body.user_id,
         team_ids: team_ids.clone(),
+        project_id: None,
     };
     let mut tx = state.store.scoped_tx(&candidate).await.map_err(internal)?;
     let counts = sqlx::query(

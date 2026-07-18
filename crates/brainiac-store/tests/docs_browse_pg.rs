@@ -21,6 +21,7 @@ fn principal() -> brainiac_core::Principal {
         org_id: org(),
         user_id: uuid(11),
         team_ids: vec![uuid(21)],
+        project_id: None,
     }
 }
 
