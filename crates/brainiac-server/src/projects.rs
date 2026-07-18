@@ -49,22 +49,52 @@ pub fn normalize_remote(raw: &str) -> Option<String> {
         .or_else(|| s.strip_prefix("ssh://"))
         .or_else(|| s.strip_prefix("git://"))
         .unwrap_or(s);
-    // scp-style `git@host:owner/name` → `host/owner/name`.
+    // scp-style `git@host:owner/name` (optionally `git@host:2222/owner/name`
+    // with an SSH port) → `host/owner/name`.
     let s = match (s.strip_prefix("git@"), s.find(':')) {
         (Some(rest), _) => rest.replacen(':', "/", 1),
         (None, _) => s.to_string(),
     };
     // A leftover `user@` (ssh://git@host/…) or embedded credentials.
-    let s = s.rsplit_once('@').map(|(_, tail)| tail.to_string()).unwrap_or(s);
+    let s = s
+        .rsplit_once('@')
+        .map(|(_, tail)| tail.to_string())
+        .unwrap_or(s);
     let s = s.trim_end_matches('/').trim_end_matches(".git");
-    let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+    let mut parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
     // host/owner/name — exactly three segments. Deeper paths (GitLab
     // subgroups) keep everything after the host as the repo path.
     if parts.len() < 3 {
         return None;
     }
+    // Both the scp form (`git@host:2222/owner/name`, after the `:` → `/`
+    // rewrite above becomes `host/2222/owner/name`) and the `ssh://`
+    // form (`ssh://host:2222/owner/name`, port still attached to the host
+    // segment) can carry an SSH port. Strip it so it isn't mistaken for
+    // the owner path segment.
+    if let Some((host, port)) = parts[0].split_once(':') {
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
+            parts[0] = host;
+        }
+    } else if parts.len() >= 4
+        && parts[1].chars().all(|c| c.is_ascii_digit())
+        && !parts[1].is_empty()
+    {
+        parts.remove(1);
+    }
+    if parts.len() < 3 {
+        return None;
+    }
     let host = parts[0].to_lowercase();
-    if !host.contains('.') {
+    // A plausible hostname: non-empty, alphanumeric + hyphens (dots are
+    // allowed too, for public hosts like github.com). Self-hosted Git
+    // servers commonly live behind a bare internal hostname with no
+    // public DNS suffix — see `dot_less_self_hosted_host_is_accepted`.
+    if host.is_empty()
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+    {
         return None;
     }
     let owner = parts[1..parts.len() - 1].join("/").to_lowercase();
@@ -382,13 +412,48 @@ mod tests {
             "   ",
             "payments",
             "acme/payments",
-            "localhost/acme/payments", // no dot in host
             "https://github.com/acme",
             "file:///C:/repos/payments",
             "https://github.com/acme/pay ments",
         ] {
             assert_eq!(normalize_remote(raw), None, "raw: {raw:?}");
         }
+    }
+
+    // Self-hosted enterprise Git servers routinely live behind a bare
+    // internal hostname with no public DNS suffix (e.g. `git-internal`,
+    // resolved via an internal /etc/hosts or split-horizon DNS). Refusing
+    // to onboard those repos just because the host lacks a dot blocked
+    // legitimate enterprise use; the existing ≥3-segment / non-empty
+    // owner+name guards already reject genuine garbage like bare
+    // `payments` or `acme/payments`, so the dot requirement was the only
+    // thing standing in the way and is dropped below.
+    #[test]
+    fn dot_less_self_hosted_host_is_accepted() {
+        assert_eq!(
+            normalize_remote("git@git-internal:team/repo"),
+            Some("git-internal/team/repo".into())
+        );
+        assert_eq!(
+            normalize_remote("https://gitserver/team/repo"),
+            Some("gitserver/team/repo".into())
+        );
+    }
+
+    #[test]
+    fn scp_style_ssh_port_is_stripped_not_mistaken_for_owner() {
+        assert_eq!(
+            normalize_remote("git@host:2222/owner/name"),
+            Some("host/owner/name".into())
+        );
+    }
+
+    #[test]
+    fn ssh_url_ssh_port_is_stripped_not_mistaken_for_owner() {
+        assert_eq!(
+            normalize_remote("ssh://host:2222/owner/name"),
+            Some("host/owner/name".into())
+        );
     }
 
     #[test]
