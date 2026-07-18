@@ -21,6 +21,9 @@ pub struct RepoRow {
     pub id: Uuid,
     pub project_id: Uuid,
     pub remote: String,
+    /// Repo-relative subdirectory this row claims ('' = the whole repo).
+    /// See migrations/0039_project_path_prefix.sql.
+    pub path_prefix: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -59,7 +62,7 @@ pub async fn list(pool: &PgPool, org_id: Uuid) -> Result<Vec<ProjectRow>> {
 /// Every whitelisted repo in the org, for assembling the projects view.
 pub async fn list_repos(pool: &PgPool, org_id: Uuid) -> Result<Vec<RepoRow>> {
     let rows = sqlx::query(
-        "SELECT id, project_id, remote, created_at
+        "SELECT id, project_id, remote, path_prefix, created_at
          FROM project_repos WHERE org_id = $1 ORDER BY created_at",
     )
     .bind(org_id)
@@ -71,6 +74,7 @@ pub async fn list_repos(pool: &PgPool, org_id: Uuid) -> Result<Vec<RepoRow>> {
             id: r.get("id"),
             project_id: r.get("project_id"),
             remote: r.get("remote"),
+            path_prefix: r.get("path_prefix"),
             created_at: r.get("created_at"),
         })
         .collect())
@@ -87,27 +91,33 @@ pub async fn belongs(pool: &PgPool, org_id: Uuid, project_id: Uuid) -> Result<bo
     Ok(row.is_some())
 }
 
-/// Whitelist a (normalized) remote under a project. The guarded INSERT…SELECT
-/// refuses to attach a repo to another org's project; ON CONFLICT refuses a
-/// remote already claimed in this org. Both come back as `false` — the caller
-/// distinguishes with [`belongs`] when it needs a precise status code.
+/// Whitelist a (normalized) remote — optionally scoped to a repo-relative
+/// `path_prefix` ('' = the whole repo) — under a project. The guarded
+/// INSERT…SELECT refuses to attach a repo to another org's project;
+/// ON CONFLICT refuses a (remote, path_prefix) pair already claimed in this
+/// org (a monorepo CAN have several rows on the same remote, one per prefix —
+/// see migrations/0039_project_path_prefix.sql). Both come back as `false` —
+/// the caller distinguishes with [`belongs`] when it needs a precise status
+/// code.
 pub async fn add_repo(
     pool: &PgPool,
     id: Uuid,
     org_id: Uuid,
     project_id: Uuid,
     remote: &str,
+    path_prefix: &str,
 ) -> Result<bool> {
     let res = sqlx::query(
-        "INSERT INTO project_repos (id, org_id, project_id, remote)
-         SELECT $1, $2, $3, $4
+        "INSERT INTO project_repos (id, org_id, project_id, remote, path_prefix)
+         SELECT $1, $2, $3, $4, $5
          WHERE EXISTS (SELECT 1 FROM projects WHERE id = $3 AND org_id = $2)
-         ON CONFLICT (org_id, remote) DO NOTHING",
+         ON CONFLICT (org_id, remote, path_prefix) DO NOTHING",
     )
     .bind(id)
     .bind(org_id)
     .bind(project_id)
     .bind(remote)
+    .bind(path_prefix)
     .execute(pool)
     .await?;
     Ok(res.rows_affected() > 0)
@@ -125,19 +135,40 @@ pub async fn remove_repo(pool: &PgPool, org_id: Uuid, repo_id: Uuid) -> Result<b
 }
 
 /// The whitelist lookup onboarding approval rides on: which project (if any)
-/// claims this normalized remote in this org?
+/// claims this normalized remote in this org, at this repo-relative `path`
+/// (pass `""` for a whole-repo lookup)?
+///
+/// Resolution is LONGEST-PREFIX match: a row whose `path_prefix` is a prefix
+/// of `path` is eligible, and among eligible rows the longest prefix wins —
+/// so a monorepo split (`apps/web` vs `apps`) always prefers the more
+/// specific project, and the `''` (whole-repo) row is the fallback every
+/// pre-monorepo caller still gets when it passes an empty path.
 pub async fn find_by_remote(
     pool: &PgPool,
     org_id: Uuid,
     remote: &str,
+    path: &str,
 ) -> Result<Option<(Uuid, String)>> {
+    // Match on a SEGMENT boundary, not a bare character prefix: a row's
+    // `path_prefix` claims `path` only when it is the whole repo (''), equals
+    // `path` exactly, or is followed by a '/' in `path`. Otherwise a prefix
+    // `client` would wrongly claim another project's `clientdata/…` path — a
+    // cross-project mis-attribution, which is exactly the isolation this arc
+    // must not leak. `left(…)` (not `LIKE`) so a real directory name's `_`/`%`
+    // is never treated as a wildcard.
     let row = sqlx::query(
         "SELECT p.id, p.name FROM project_repos pr
          JOIN projects p ON p.id = pr.project_id
-         WHERE pr.org_id = $1 AND pr.remote = $2",
+         WHERE pr.org_id = $1 AND pr.remote = $2
+           AND (pr.path_prefix = ''
+                OR $3 = pr.path_prefix
+                OR left($3, length(pr.path_prefix) + 1) = pr.path_prefix || '/')
+         ORDER BY length(pr.path_prefix) DESC
+         LIMIT 1",
     )
     .bind(org_id)
     .bind(remote)
+    .bind(path)
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|r| (r.get::<Uuid, _>("id"), r.get::<String, _>("name"))))

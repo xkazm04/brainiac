@@ -37,7 +37,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::http::{auth_of, internal, AppState, HttpError};
-use crate::projects::normalize_remote;
+use crate::projects::{normalize_path_prefix, normalize_remote};
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -83,11 +83,7 @@ fn mint_user_code() -> String {
 /// Device-code secret: same construction as API-token secrets (auth.rs
 /// mint_secret) with its own prefix so a leaked one is recognizable.
 fn mint_device_code() -> String {
-    format!(
-        "obc_{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    )
+    format!("obc_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
 fn console_url() -> String {
@@ -103,6 +99,12 @@ pub(crate) struct OnboardStartBody {
     /// Who is asking — hostname/username, shown to the approver.
     #[serde(default)]
     pub label: Option<String>,
+    /// The checkout subdir relative to the repo root (e.g. `apps/web`), for
+    /// monorepos split across projects by path_prefix. Omit (or `""`) for a
+    /// whole-repo checkout — the default, back-compat with every
+    /// pre-monorepo caller.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -212,6 +214,7 @@ pub(crate) async fn onboard_start(
         .filter(|s| !s.is_empty())
         .unwrap_or("unnamed device");
     let label: String = label.chars().take(MAX_LABEL_CHARS).collect();
+    let path = normalize_path_prefix(body.path.as_deref().unwrap_or(""));
 
     let pool = state.store.pool();
     // Hygiene first, gauge second: a flood yesterday must not brick today.
@@ -236,6 +239,7 @@ pub(crate) async fn onboard_start(
         &crate::auth::hash_token(&device_code),
         &remote,
         &label,
+        &path,
         PAIRING_TTL_SECS,
     )
     .await
@@ -311,20 +315,17 @@ pub(crate) async fn onboard_poll(
         // Lost the race (or expired between read and claim): report the truth.
         return Ok(bare("claimed"));
     };
-    let (org_id, project_id, approved_by) = match (
-        claimed.org_id,
-        claimed.project_id,
-        claimed.approved_by,
-    ) {
-        (Some(o), Some(p), Some(u)) => (o, p, u),
-        _ => {
-            return Err(internal(anyhow::anyhow!(
-                "approved pairing {} is missing org/project/approver",
-                claimed.id
-            ))
-            .into())
-        }
-    };
+    let (org_id, project_id, approved_by) =
+        match (claimed.org_id, claimed.project_id, claimed.approved_by) {
+            (Some(o), Some(p), Some(u)) => (o, p, u),
+            _ => {
+                return Err(internal(anyhow::anyhow!(
+                    "approved pairing {} is missing org/project/approver",
+                    claimed.id
+                ))
+                .into())
+            }
+        };
     let project_name = brainiac_store::projects::list(pool, org_id)
         .await
         .map_err(internal)?
@@ -391,10 +392,14 @@ pub(crate) async fn requests_list(
         .map_err(internal)?;
     let mut requests = Vec::with_capacity(rows.len());
     for r in rows {
-        let matched =
-            brainiac_store::projects::find_by_remote(pool, ctx.principal.org_id, &r.remote)
-                .await
-                .map_err(internal)?;
+        let matched = brainiac_store::projects::find_by_remote(
+            pool,
+            ctx.principal.org_id,
+            &r.remote,
+            &r.path,
+        )
+        .await
+        .map_err(internal)?;
         requests.push(OnboardRequestView {
             id: r.id,
             user_code: r.user_code,
@@ -433,13 +438,24 @@ pub(crate) async fn request_approve(
 ) -> Result<Json<OnboardDecisionResponse>, HttpError> {
     let ctx = auth_of(&state, &headers, "admin").await?;
     let pool = state.store.pool();
-    let Some(req) = brainiac_store::onboard::get(pool, id).await.map_err(internal)? else {
-        return Err((StatusCode::NOT_FOUND, "pairing request not found".to_string()).into());
+    let Some(req) = brainiac_store::onboard::get(pool, id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "pairing request not found".to_string(),
+        )
+            .into());
     };
-    let Some((project_id, project_name)) =
-        brainiac_store::projects::find_by_remote(pool, ctx.principal.org_id, &req.remote)
-            .await
-            .map_err(internal)?
+    let Some((project_id, project_name)) = brainiac_store::projects::find_by_remote(
+        pool,
+        ctx.principal.org_id,
+        &req.remote,
+        &req.path,
+    )
+    .await
+    .map_err(internal)?
     else {
         return Err((
             StatusCode::CONFLICT,
@@ -549,9 +565,10 @@ mod tests {
         for _ in 0..50 {
             let code = mint_user_code();
             assert_eq!(code.len(), 8);
-            assert!(code
-                .bytes()
-                .all(|b| CODE_ALPHABET.contains(&b)), "code: {code}");
+            assert!(
+                code.bytes().all(|b| CODE_ALPHABET.contains(&b)),
+                "code: {code}"
+            );
         }
     }
 

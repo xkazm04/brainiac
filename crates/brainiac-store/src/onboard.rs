@@ -19,6 +19,9 @@ pub struct OnboardRequestRow {
     pub user_code: String,
     pub remote: String,
     pub label: String,
+    /// Checkout-relative subdir the request was opened from ('' = whole
+    /// repo). See migrations/0039_project_path_prefix.sql.
+    pub path: String,
     pub status: String,
     pub org_id: Option<Uuid>,
     pub project_id: Option<Uuid>,
@@ -33,6 +36,7 @@ fn row_of(r: &sqlx::postgres::PgRow) -> OnboardRequestRow {
         user_code: r.get("user_code"),
         remote: r.get("remote"),
         label: r.get("label"),
+        path: r.get("path"),
         status: r.get("status"),
         org_id: r.get("org_id"),
         project_id: r.get("project_id"),
@@ -50,18 +54,20 @@ pub async fn start(
     device_code_hash: &[u8],
     remote: &str,
     label: &str,
+    path: &str,
     ttl_secs: i64,
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO onboard_requests
-             (id, user_code, device_code_hash, remote, label, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+             (id, user_code, device_code_hash, remote, label, path, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))",
     )
     .bind(id)
     .bind(user_code)
     .bind(device_code_hash)
     .bind(remote)
     .bind(label)
+    .bind(path)
     .bind(ttl_secs as f64)
     .execute(pool)
     .await?;
@@ -84,7 +90,7 @@ pub async fn pending_count(pool: &PgPool) -> Result<i64> {
 /// The console's approval queue: pending, unexpired, oldest first.
 pub async fn list_pending(pool: &PgPool) -> Result<Vec<OnboardRequestRow>> {
     let rows = sqlx::query(
-        "SELECT id, user_code, remote, label, status, org_id, project_id,
+        "SELECT id, user_code, remote, label, path, status, org_id, project_id,
                 approved_by, created_at, expires_at
          FROM onboard_requests
          WHERE status = 'pending' AND expires_at > now()
@@ -102,7 +108,7 @@ pub async fn get_by_device_hash(
     device_code_hash: &[u8],
 ) -> Result<Option<OnboardRequestRow>> {
     let row = sqlx::query(
-        "SELECT id, user_code, remote, label, status, org_id, project_id,
+        "SELECT id, user_code, remote, label, path, status, org_id, project_id,
                 approved_by, created_at, expires_at
          FROM onboard_requests WHERE device_code_hash = $1",
     )
@@ -114,7 +120,7 @@ pub async fn get_by_device_hash(
 
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<OnboardRequestRow>> {
     let row = sqlx::query(
-        "SELECT id, user_code, remote, label, status, org_id, project_id,
+        "SELECT id, user_code, remote, label, path, status, org_id, project_id,
                 approved_by, created_at, expires_at
          FROM onboard_requests WHERE id = $1",
     )
@@ -162,11 +168,10 @@ pub async fn deny(pool: &PgPool, id: Uuid) -> Result<bool> {
 /// day past expiry are dead weight whatever state they reached (pairing codes
 /// are single-shot and the minted key lives in api_tokens, not here).
 pub async fn prune_expired(pool: &PgPool) -> Result<u64> {
-    let res = sqlx::query(
-        "DELETE FROM onboard_requests WHERE expires_at < now() - interval '1 day'",
-    )
-    .execute(pool)
-    .await?;
+    let res =
+        sqlx::query("DELETE FROM onboard_requests WHERE expires_at < now() - interval '1 day'")
+            .execute(pool)
+            .await?;
     Ok(res.rows_affected())
 }
 
@@ -174,15 +179,12 @@ pub async fn prune_expired(pool: &PgPool) -> Result<u64> {
 /// minting. The WHERE clause is the whole security argument: only an approved,
 /// unexpired row flips, and it flips exactly once, so two racing polls with
 /// the same device code mint at most one key.
-pub async fn claim(
-    pool: &PgPool,
-    device_code_hash: &[u8],
-) -> Result<Option<OnboardRequestRow>> {
+pub async fn claim(pool: &PgPool, device_code_hash: &[u8]) -> Result<Option<OnboardRequestRow>> {
     let row = sqlx::query(
         "UPDATE onboard_requests
          SET status = 'claimed', claimed_at = now()
          WHERE device_code_hash = $1 AND status = 'approved' AND expires_at > now()
-         RETURNING id, user_code, remote, label, status, org_id, project_id,
+         RETURNING id, user_code, remote, label, path, status, org_id, project_id,
                    approved_by, created_at, expires_at",
     )
     .bind(device_code_hash)

@@ -3003,6 +3003,13 @@
           "remote"
         ],
         "properties": {
+          "path_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Repo-relative subdirectory this row claims (e.g. `apps/web`), for\nsplitting a monorepo across projects. Omit (or `\"\"`) to claim the\nwhole repo — the default, back-compat with every pre-monorepo caller."
+          },
           "remote": {
             "type": "string",
             "description": "Any spelling of the remote (https, ssh, scp, bare); stored normalized."
@@ -3014,12 +3021,16 @@
         "required": [
           "id",
           "project_id",
-          "remote"
+          "remote",
+          "path_prefix"
         ],
         "properties": {
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "path_prefix": {
+            "type": "string"
           },
           "project_id": {
             "type": "string",
@@ -5946,6 +5957,13 @@
             ],
             "description": "Who is asking — hostname/username, shown to the approver."
           },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The checkout subdir relative to the repo root (e.g. `apps/web`), for\nmonorepos split across projects by path_prefix. Omit (or `\"\"`) for a\nwhole-repo checkout — the default, back-compat with every\npre-monorepo caller."
+          },
           "remote": {
             "type": "string",
             "description": "The checkout's `git remote get-url origin`, any spelling."
@@ -6344,6 +6362,7 @@
         "required": [
           "id",
           "remote",
+          "path_prefix",
           "created_at"
         ],
         "properties": {
@@ -6354,6 +6373,10 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "path_prefix": {
+            "type": "string",
+            "description": "Repo-relative subdirectory this row claims ('' = the whole repo —\nsee migrations/0039_project_path_prefix.sql)."
           },
           "remote": {
             "type": "string",

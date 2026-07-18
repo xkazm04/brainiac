@@ -155,7 +155,12 @@ async fn pairing_flow_mints_a_scoped_key_exactly_once() {
             .json(&json!({"device_code": code}))
             .send()
     };
-    let p: serde_json::Value = poll(device_code).await.expect("poll").json().await.expect("json");
+    let p: serde_json::Value = poll(device_code)
+        .await
+        .expect("poll")
+        .json()
+        .await
+        .expect("json");
     assert_eq!(p["status"], "pending");
     assert!(p.get("token").is_none());
 
@@ -189,13 +194,23 @@ async fn pairing_flow_mints_a_scoped_key_exactly_once() {
         .expect("approve");
     assert_eq!(r.status(), reqwest::StatusCode::OK);
 
-    let claimed: serde_json::Value = poll(device_code).await.expect("poll").json().await.expect("json");
+    let claimed: serde_json::Value = poll(device_code)
+        .await
+        .expect("poll")
+        .json()
+        .await
+        .expect("json");
     assert_eq!(claimed["status"], "approved");
     assert_eq!(claimed["project_name"], "payments");
     let secret = claimed["token"].as_str().expect("token").to_string();
     assert!(secret.starts_with("brk_"));
 
-    let again: serde_json::Value = poll(device_code).await.expect("poll").json().await.expect("json");
+    let again: serde_json::Value = poll(device_code)
+        .await
+        .expect("poll")
+        .json()
+        .await
+        .expect("json");
     assert_eq!(again["status"], "claimed");
     assert!(again.get("token").is_none());
 
@@ -258,7 +273,10 @@ async fn pairing_flow_mints_a_scoped_key_exactly_once() {
             .fetch_one(&admin)
             .await
             .expect("source row");
-    assert_eq!(stamped.map(|u| u.to_string()).as_deref(), Some(project_uuid));
+    assert_eq!(
+        stamped.map(|u| u.to_string()).as_deref(),
+        Some(project_uuid)
+    );
 
     // An org-wide key writes org-shared (NULL) by default…
     let r = http
@@ -296,7 +314,10 @@ async fn pairing_flow_mints_a_scoped_key_exactly_once() {
             .fetch_one(&admin)
             .await
             .expect("source row");
-    assert_eq!(stamped.map(|u| u.to_string()).as_deref(), Some(project_uuid));
+    assert_eq!(
+        stamped.map(|u| u.to_string()).as_deref(),
+        Some(project_uuid)
+    );
 
     // …and a project the org does not own is a 400, not a silent mint.
     let r = http
@@ -401,4 +422,167 @@ async fn unwhitelisted_remotes_cannot_be_approved_and_denial_mints_nothing() {
         .await
         .expect("start garbage");
     assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+/// Monorepo support (migrations/0039_project_path_prefix.sql): one remote,
+/// several projects, split by `path_prefix`. Covers the split itself, the
+/// longest-prefix tiebreak, and the whole-repo ('') fallback every
+/// pre-monorepo caller (no `path`) still gets — the two prior tests in this
+/// file exercise exactly that back-compat path and must stay green.
+#[tokio::test]
+async fn monorepo_path_prefix_resolves_by_longest_match() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let base = boot_http(&ctx).await;
+    let http = reqwest::Client::new();
+
+    let create_project = |name: &'static str| {
+        let http = http.clone();
+        let base = base.clone();
+        async move {
+            let r = http
+                .post(format!("{base}/v1/projects"))
+                .bearer_auth("tok_admin")
+                .json(&json!({"name": name}))
+                .send()
+                .await
+                .expect("create project");
+            assert_eq!(r.status(), reqwest::StatusCode::CREATED);
+            let project: serde_json::Value = r.json().await.expect("json");
+            project["id"].as_str().expect("id").to_string()
+        }
+    };
+    let web_id = create_project("web").await;
+    let api_id = create_project("api").await;
+    let root_id = create_project("apps-root").await;
+    let whole_id = create_project("whole-repo").await;
+
+    let remote = "https://github.com/acme/mono";
+    let add_repo = |project_id: String, path_prefix: &'static str| {
+        let http = http.clone();
+        let base = base.clone();
+        async move {
+            let r = http
+                .post(format!("{base}/v1/projects/{project_id}/repos"))
+                .bearer_auth("tok_admin")
+                .json(&json!({"remote": remote, "path_prefix": path_prefix}))
+                .send()
+                .await
+                .expect("add repo");
+            assert_eq!(
+                r.status(),
+                reqwest::StatusCode::CREATED,
+                "path {path_prefix:?}"
+            );
+            let repo: serde_json::Value = r.json().await.expect("json");
+            assert_eq!(repo["path_prefix"], path_prefix);
+        }
+    };
+    // Same remote, four different prefixes — the whole point of the split.
+    add_repo(web_id.clone(), "apps/web").await;
+    add_repo(api_id.clone(), "apps/api").await;
+    add_repo(root_id.clone(), "apps").await;
+    add_repo(whole_id.clone(), "").await;
+
+    // Re-adding the same (remote, path_prefix) pair is still a 409 — the
+    // uniqueness constraint moved from (org, remote) to (org, remote,
+    // path_prefix), it didn't disappear.
+    let r = http
+        .post(format!("{base}/v1/projects/{web_id}/repos"))
+        .bearer_auth("tok_admin")
+        .json(&json!({"remote": remote, "path_prefix": "apps/web"}))
+        .send()
+        .await
+        .expect("dup repo");
+    assert_eq!(r.status(), reqwest::StatusCode::CONFLICT);
+
+    let start = |path: &'static str| {
+        let http = http.clone();
+        let base = base.clone();
+        async move {
+            let mut body = json!({"remote": remote, "label": "dev@laptop"});
+            if !path.is_empty() {
+                body["path"] = json!(path);
+            }
+            let r = http
+                .post(format!("{base}/v1/onboard/start"))
+                .json(&body)
+                .send()
+                .await
+                .expect("start");
+            assert_eq!(r.status(), reqwest::StatusCode::CREATED);
+            let started: serde_json::Value = r.json().await.expect("json");
+            started["device_code"]
+                .as_str()
+                .expect("device_code")
+                .to_string()
+        }
+    };
+    let queue_match_for = |request_index: usize| {
+        let http = http.clone();
+        let base = base.clone();
+        async move {
+            let r = http
+                .get(format!("{base}/v1/onboard/requests"))
+                .bearer_auth("tok_admin")
+                .send()
+                .await
+                .expect("requests");
+            let queue: serde_json::Value = r.json().await.expect("json");
+            queue["requests"][request_index]["project_name"]
+                .as_str()
+                .map(|s| s.to_string())
+        }
+    };
+
+    // Deep path under apps/web: apps/web (8 chars) beats apps (4 chars) and
+    // the '' fallback — longest prefix wins, resolves to "web".
+    let _web_code = start("apps/web/src/x").await;
+    assert_eq!(queue_match_for(0).await.as_deref(), Some("web"));
+
+    // A sibling path under apps/, not under apps/web or apps/api: only the
+    // "apps" row's prefix is actually a prefix of it, so it resolves there —
+    // proof the match isn't "any row whose prefix looks similar".
+    let _root_code = start("apps/other").await;
+    assert_eq!(queue_match_for(1).await.as_deref(), Some("apps-root"));
+
+    // No path at all (whole-repo checkout): resolves to the '' row, exactly
+    // the behavior every caller had before path_prefix existed.
+    let _whole_code = start("").await;
+    assert_eq!(queue_match_for(2).await.as_deref(), Some("whole-repo"));
+
+    // Segment-boundary, not bare character prefix: `appserver/x` character-
+    // starts with "apps" but is NOT under the `apps` segment, so it must fall
+    // through to the '' whole-repo row — never mis-attribute to "apps-root".
+    // (A bare `left(path, len(prefix)) = prefix` match would wrongly claim it —
+    // a cross-project leak; the Director-added segment guard prevents it.)
+    let _seg_code = start("appserver/x").await;
+    assert_eq!(queue_match_for(3).await.as_deref(), Some("whole-repo"));
+
+    // And the resolution isn't just cosmetic in the queue view — approval
+    // (which re-runs the same lookup) actually lands the key in "web".
+    let r = http
+        .get(format!("{base}/v1/onboard/requests"))
+        .bearer_auth("tok_admin")
+        .send()
+        .await
+        .expect("requests");
+    let queue: serde_json::Value = r.json().await.expect("json");
+    let web_request_id = queue["requests"][0]["id"].as_str().expect("id").to_string();
+    let r = http
+        .post(format!(
+            "{base}/v1/onboard/requests/{web_request_id}/approve"
+        ))
+        .bearer_auth("tok_admin")
+        .send()
+        .await
+        .expect("approve");
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let decision: serde_json::Value = r.json().await.expect("json");
+    assert_eq!(decision["project_name"], "web");
+    assert_eq!(decision["project_id"], web_id);
 }

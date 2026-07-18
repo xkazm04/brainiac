@@ -105,6 +105,16 @@ pub fn normalize_remote(raw: &str) -> Option<String> {
     Some(format!("{host}/{owner}/{name}"))
 }
 
+/// Normalize a repo-relative path prefix for `project_repos.path_prefix` /
+/// onboarding's `path`: trim whitespace and strip leading/trailing slashes
+/// so `"/apps/web/"`, `"apps/web"`, and `"apps/web/"` all collide to
+/// `"apps/web"` — the longest-prefix match in
+/// [`brainiac_store::projects::find_by_remote`] otherwise depends on exact
+/// string shape. `""` (the default) means "whole repo".
+pub fn normalize_path_prefix(raw: &str) -> String {
+    raw.trim().trim_matches('/').to_string()
+}
+
 // ── DTOs ────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, ToSchema)]
@@ -112,6 +122,9 @@ pub(crate) struct ProjectRepoView {
     pub id: Uuid,
     /// Normalized remote, e.g. `github.com/acme/payments`.
     pub remote: String,
+    /// Repo-relative subdirectory this row claims ('' = the whole repo —
+    /// see migrations/0039_project_path_prefix.sql).
+    pub path_prefix: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -143,6 +156,11 @@ pub(crate) struct CreatedProjectResponse {
 pub(crate) struct AddRepoBody {
     /// Any spelling of the remote (https, ssh, scp, bare); stored normalized.
     pub remote: String,
+    /// Repo-relative subdirectory this row claims (e.g. `apps/web`), for
+    /// splitting a monorepo across projects. Omit (or `""`) to claim the
+    /// whole repo — the default, back-compat with every pre-monorepo caller.
+    #[serde(default)]
+    pub path_prefix: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -151,6 +169,7 @@ pub(crate) struct AddedRepoResponse {
     pub project_id: Uuid,
     /// The normalized form that was stored — what onboarding will match on.
     pub remote: String,
+    pub path_prefix: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -198,6 +217,7 @@ pub(crate) async fn projects_list(
                     .map(|r| ProjectRepoView {
                         id: r.id,
                         remote: r.remote.clone(),
+                        path_prefix: r.path_prefix.clone(),
                         created_at: r.created_at,
                     })
                     .collect(),
@@ -295,12 +315,19 @@ pub(crate) async fn repo_add(
         )
             .into());
     };
+    let path_prefix = normalize_path_prefix(body.path_prefix.as_deref().unwrap_or(""));
     let pool = state.store.pool();
     let id = Uuid::new_v4();
-    let added =
-        brainiac_store::projects::add_repo(pool, id, ctx.principal.org_id, project_id, &remote)
-            .await
-            .map_err(internal)?;
+    let added = brainiac_store::projects::add_repo(
+        pool,
+        id,
+        ctx.principal.org_id,
+        project_id,
+        &remote,
+        &path_prefix,
+    )
+    .await
+    .map_err(internal)?;
     if !added {
         // The guarded insert can refuse for two reasons; tell them apart so the
         // operator fixes the right thing.
@@ -312,7 +339,7 @@ pub(crate) async fn repo_add(
         }
         return Err((
             StatusCode::CONFLICT,
-            format!("{remote} is already whitelisted in this org"),
+            format!("{remote} (path {path_prefix:?}) is already whitelisted in this org"),
         )
             .into());
     }
@@ -322,6 +349,7 @@ pub(crate) async fn repo_add(
             id,
             project_id,
             remote,
+            path_prefix,
         }),
     ))
 }
