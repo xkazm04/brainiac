@@ -88,8 +88,8 @@ The loop READS Brainiac when proposing and WRITES it when shipping. Credentials 
     -d '{"artifact_kind":"skill","artifact_slug":"perfect","event":"apply"}' || true
   ```
   Best-effort telemetry — needs a `lib:read`-scoped key; a plain onboarding key (`read,write`) gets 403, which is fine to swallow. Never let a usage 403 stop the round.
-- **Read at Propose (Phase P, before drafting):** search org memory for the cursor context's prior art, so the loop never re-proposes a shipped decision or a rejected idea, and builds on known pitfalls. `POST $API/v1/memories/search {query: "<context concern>", k: 5}` (bearer token). Fold hits into the challenge checks alongside the vault's own history.
-- **Write at Ship (Phase B merge / Phase W):** each shipped direction becomes a decision memory; each pitfall a builder reported becomes a pitfall memory. `POST $API/v1/memories {content: "<one self-contained statement>", kind: "decision"|"pitfall"}`. One statement per fact, not a transcript — it enters the governed review pipeline. Stamp is automatic (the key is project-scoped).
+- **Read at Propose (Phase P, before drafting):** search org memory for the cursor context's prior art, so the loop never re-proposes a shipped decision or a rejected idea, and builds on known pitfalls. `POST $API/v1/memories/search {query: "<context concern>", k: 5}` (bearer token). Fold hits into the challenge checks alongside the vault's own history. **0 hits is normal on a young org** — writes are only searchable after the pipeline WORKER drains and processes them (a `serve` with no `--with-worker` never does), so this pays off only once the knowledge plane has processed mass. Don't over-invest in it early; the vault's own history is the reliable veto source.
+- **Write at Ship (Phase B merge / Phase W):** each shipped direction becomes a decision memory; each pitfall a builder reported becomes a pitfall memory. `POST $API/v1/memories {content: "<one self-contained statement>", kind: "decision"|"pitfall"}`. One statement per fact, not a transcript — it enters the governed review pipeline. Stamp is automatic (the key is project-scoped). A write is best-effort: a 400 or connection error is reworded-and-retried once, then skipped — never allowed to block the wrap.
 
 ## The loop — a vault-driven state machine
 
@@ -135,17 +135,26 @@ Loop while `pool < 10` and the user hasn't said stop:
    git worktree add .claude/worktrees/perfect-<ctx> -b worktree-perfect-<ctx>
    # Console builders need node_modules — junction, NOT copy:
    cmd //c mklink //J ".claude\\worktrees\\perfect-<ctx>\\console\\node_modules" "..\\..\\..\\..\\console\\node_modules"
-   # Rust builders share the main target dir to avoid a cold full rebuild per worktree:
-   #   run cargo with CARGO_TARGET_DIR=<main repo>/target
-   # Pg tests: docker compose (main repo) provides postgres on :5433 — builders reuse it via DATABASE_URL.
+   # Rust builders get a PRIVATE target dir (CARGO_TARGET_DIR=<worktree>/target-build).
+   #   Cold first build, but it avoids two hazards this repo has actually hit: cache poisoning
+   #   under concurrent cross-branch builds, AND a hard file LOCK when a server is running off
+   #   the main target (brainiac.exe is held open — cargo can't relink). Never point a builder
+   #   at the main target while `serve` is up.
+   # Pg tests: give each builder its OWN empty DB (`createdb brainiac_<ctx>`; the test setup
+   #   migrates it). The shared :5433/brainiac is NOT idempotent across runs — a persisted
+   #   skill draft / un-truncated rows make handshake/propose tests fail duplicate-vs-created
+   #   on reuse (bit round 5, wave 2). One fresh DB per builder, dropped at cleanup.
    ```
 3. **Model selection (per brief, Director's judgment):** default from the SIZE of the largest direction in the brief — all S/M → `model: "sonnet"`; any L → `model: "opus"`. Escalate an S/M brief to Opus when the Director judges the risk profile warrants it: RLS/permission-touching query paths, concurrency/locking semantics, schema migrations with subtle invariants, or work that must integrate against signatures that moved on master mid-wave. Never de-escalate an L brief. Record the chosen model in the direction notes' build record; if a Sonnet builder's diff fails review on capability grounds (not spec ambiguity), redo that direction with Opus and log it in the skill-improvement log — repeated capability failures recalibrate the default.
+   **For a high-risk / core-invariant direction (RLS policy, a locking protocol, a migration with subtle semantics), the Director designs the DANGEROUS PART in the brief** — the exact policy SQL, the exact predicate, the exact ordering — and the builder's job is verified execution, not invention. This is not micromanagement; it is where "Opus directs, the model executes" is load-bearing. Round 5's RLS-isolation direction shipped safely because the RESTRICTIVE policy was designed up front and the builder implemented + tested it exactly; the Director then reviewed the implementation against its own design.
 4. **Brief** each builder (see template below); launch with the selected model, `subagent_type: "general-purpose"`, all briefs in one message so they run concurrently.
 5. **Mid-flight decisions**: a builder returning `DECISION NEEDED: …` gets an answer from the Director via `SendMessage` — product calls, trade-offs, and scope cuts are the Director's alone. A builder that stops without its final report gets one `SendMessage` nudge.
    **Builder-death recovery (session limits WILL kill builders):** the instant a builder dies, `git add -A && git commit --no-verify` a `wip(…)` snapshot **inside its worktree** (isolated tree — add-all is safe there; never-lose-work beats commit hygiene). Then the Director either finishes the work inline (review the WIP diff, complete gaps, split into per-direction commits along file boundaries — same-file hunks may share a commit if the message says so) or re-briefs a fresh builder after the limit resets with "continue from the WIP commit".
 6. **Review — the Director earns its title here.** Per builder branch: `git diff master...worktree-perfect-<ctx>` and review against each direction's acceptance criteria, repo conventions (workspace crate boundaries, sqlx query style, error handling, console component patterns, OpenAPI/types sync), and taste. Verdict per direction: **merge** / **redo with notes** (SendMessage, builder fixes in place) / **drop** (`status: failed`, reason recorded). Never merge on "tests pass" alone — read the diff.
    **Docs-vs-code check:** when a diff documents a behavior (contract text, formula, doc comment, OpenAPI description), grep for the code that implements it before merging — a contract describing behavior the code doesn't have is worse than nothing.
    **Silent-skip check (Brainiac-specific):** pg-backed tests skip without `DATABASE_URL` — before trusting a builder's "tests pass", confirm the pg tests actually RAN (look for the test names in output, not just exit 0).
+   **Guarantee-boundary check (for a security / correctness / isolation direction):** the acceptance criteria cover the CHANGED files; the guarantee may leak through an UNCHANGED one. Ask "where else is this guarantee load-bearing?" — a derived projection (KB compose), another read path, a cached view, a background sweep. Round 5's RLS isolation was correct in direct reads but leaked through `compose::admits` (an org page could still project an isolated project's memory, because compose runs under the worker escape). The catch came from that question, not from the diff. If a boundary gap is found: ship the correct increment honestly SCOPED, and log the gap as a follow-up direction + a Brainiac pitfall — never silently overclaim the guarantee.
+   **A flagged test failure is refuted or reproduced, never merged-past:** re-run on a genuinely FRESH DB before believing a builder's "pre-existing" characterization — a persisted row from the builder's own prior run reads identically to a real bug (round 5 wave 2).
 7. **Merge serially**: per direction, `git merge --squash` (or cherry-pick) → ONE atomic commit on master, message `feat(<context>): <direction title>` + `Co-Authored-By` footer. Stage per-file, verify `git diff --cached --stat` matches intent (foreign pre-staged files → `git restore --staged` them). Run the config gates on master after each merge; a red gate is fixed inline before the next merge. Run `cargo fmt --all` before committing Rust changes (repo history shows fmt-sweep commits — don't create the need for another).
 8. **Contract-sync in the same turn**: changes to handlers/routes regenerate `openapi.json` + `console/src/lib/api-schema.d.ts` (`npm run gen:api`); changes to file ownership update `context-map.json`; architecture-level changes update `docs/ARCHITECTURE.md`.
 9. **Cleanup**: per worktree — `cmd //c rmdir` the node_modules **junction FIRST** (if created), then `git worktree remove`, then delete the branch once its commits are on master.
@@ -183,11 +192,17 @@ direction in progress, not everything.
 
 Repo law (non-negotiable):
 - Rust: cargo fmt --all before every commit; no new clippy warnings in files you touch
-  (run with CARGO_TARGET_DIR=<main repo>/target to reuse the build cache).
-- Schema changes go through migrations/ (sqlx migrate) — never mutate schema inline.
-- Pg-backed integration tests (*_pg.rs) need DATABASE_URL=postgres://brainiac:brainiac@localhost:5433/brainiac
-  (docker compose postgres in the main repo). They SILENTLY SKIP without it — a green run
-  without DATABASE_URL does not count as verification. Say explicitly whether they ran.
+  (run with a PRIVATE CARGO_TARGET_DIR=<worktree>/target-build — never the main target: a
+  running server holds brainiac.exe open and cargo can't relink).
+- Schema changes go through migrations/ (sqlx migrate) — never mutate schema inline. VERIFY the
+  next free migration number at BUILD time (the user commits during sessions).
+- Adding a field to a SHARED struct (Principal, McpState, NewMemory) breaks its literals across
+  the whole workspace; adding `field: None` in other crates/tests to make it compile is COMPAT
+  MECHANICS — do it, note it, and do NOT treat it as a scope violation or a DECISION NEEDED.
+- Pg-backed integration tests (*_pg.rs) need DATABASE_URL pointed at YOUR OWN empty DB
+  (`createdb brainiac_<ctx>`; the setup migrates it) — the shared :5433/brainiac is not
+  idempotent across runs. They SILENTLY SKIP without DATABASE_URL — a green run without it
+  does not count as verification. Say explicitly whether they ran (paste the test names).
 - API changes: keep openapi.json in sync (it is derived from the handlers) and regenerate
   console types with `npm run gen:api` in console/; commit both artifacts.
 - Console: typecheck with `npm run typecheck`, test with `npm test` (vitest) in console/;
