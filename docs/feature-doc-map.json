@@ -1,0 +1,179 @@
+{
+  "_comment": "Source->doc coupling manifest for Brainiac. Each entry maps a doc that DESCRIBES living code to the crate/console/migration/deploy/tool paths it documents; the Personas doc-rot scan reads this file to flag any doc whose coupled source changed without the doc being touched. Excluded as pure history/research with no owned-source coupling (unknown coupling is not rot): docs/ONBOARDING-QUICK-ACTION.md (2026-07-15 feasibility study, explicitly 'not built'); docs/harness/** (session learnings and a one-off bug-hunt log); docs/research/embeddings.md (external-model bake-off web sweep whose only owned seam, brainiac_core::embed::Embedder, is already covered by EVAL.md/ARCHITECTURE.md).",
+  "entries": [
+    {
+      "doc": "README.md",
+      "sourceGlobs": [
+        "crates/brainiac-server/src/main.rs",
+        "crates/brainiac-server/src/lib.rs",
+        "Cargo.toml",
+        "docker-compose.yml",
+        "docker-compose.deploy.yml"
+      ]
+    },
+    {
+      "doc": "docs/ARCHITECTURE.md",
+      "sourceGlobs": [
+        "crates/brainiac-core/**",
+        "crates/brainiac-store/**",
+        "crates/brainiac-gateway/**",
+        "crates/brainiac-pipeline/**",
+        "crates/brainiac-server/**",
+        "crates/brainiac-publish/**",
+        "migrations/**"
+      ]
+    },
+    {
+      "doc": "docs/PLAN.md",
+      "sourceGlobs": [
+        "crates/**",
+        "Cargo.toml",
+        "docker-compose.yml",
+        "migrations/0001_init.sql",
+        "migrations/0003_api_tokens.sql",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "doc": "docs/EVAL.md",
+      "sourceGlobs": [
+        "crates/brainiac-eval/**",
+        "crates/brainiac-fixtures/**",
+        "fixtures/schema/**",
+        "fixtures/v1/**",
+        "fixtures/v2/**",
+        "results/**",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "doc": "docs/KNOWLEDGE-BASE.md",
+      "sourceGlobs": [
+        "crates/brainiac-store/src/documents.rs",
+        "crates/brainiac-store/src/publishing.rs",
+        "crates/brainiac-pipeline/src/compose.rs",
+        "crates/brainiac-pipeline/src/standards_page.rs",
+        "crates/brainiac-publish/**",
+        "crates/brainiac-server/src/docs.rs",
+        "console/src/kb/**",
+        "console/src/docs/**",
+        "migrations/0017_document_layer.sql",
+        "migrations/0020_kb_publishing.sql"
+      ]
+    },
+    {
+      "doc": "docs/KB-PLAN.md",
+      "sourceGlobs": [
+        "crates/brainiac-store/src/documents.rs",
+        "crates/brainiac-store/src/publishing.rs",
+        "crates/brainiac-pipeline/src/compose.rs",
+        "crates/brainiac-publish/**",
+        "crates/brainiac-server/src/docs.rs",
+        "crates/brainiac-server/src/sweeps.rs",
+        "console/src/kb/**",
+        "console/src/docs/**",
+        "console/src/health/**",
+        "migrations/0014_knowledge_health_snapshots.sql",
+        "migrations/0015_memory_facets.sql",
+        "migrations/0017_document_layer.sql",
+        "migrations/0018_sweep_schedules.sql",
+        "migrations/0019_document_delete_policy.sql",
+        "migrations/0020_kb_publishing.sql",
+        "migrations/0023_memory_title.sql",
+        "migrations/0025_document_reads.sql",
+        "migrations/0027_digest_kind.sql"
+      ]
+    },
+    {
+      "doc": "docs/LIBRARY-PLAN.md",
+      "sourceGlobs": [
+        "crates/brainiac-core/src/library.rs",
+        "crates/brainiac-store/src/library/**",
+        "crates/brainiac-pipeline/src/library_sweep.rs",
+        "crates/brainiac-pipeline/src/standards_page.rs",
+        "crates/brainiac-pipeline/src/divergence.rs",
+        "crates/brainiac-server/src/library.rs",
+        "console/src/library/**",
+        "console/src/divergence/**",
+        "migrations/0016_practice_divergences.sql",
+        "migrations/0028_library_substrate.sql",
+        "migrations/0029_library_mining.sql",
+        "migrations/0030_library_proposals.sql",
+        "migrations/0031_standards_pages.sql",
+        "migrations/0032_skill_proposals.sql",
+        "migrations/0033_list_indexes.sql"
+      ]
+    },
+    {
+      "doc": "docs/PROJECT-PLAN.md",
+      "sourceGlobs": [
+        "crates/brainiac-store/src/projects.rs",
+        "crates/brainiac-store/src/memories.rs",
+        "crates/brainiac-store/src/governance.rs",
+        "crates/brainiac-store/src/retrieval.rs",
+        "crates/brainiac-server/src/projects.rs",
+        "crates/brainiac-server/src/http.rs",
+        "crates/brainiac-server/src/mcp.rs",
+        "crates/brainiac-pipeline/src/extract.rs",
+        "crates/brainiac-pipeline/src/divergence.rs",
+        "console/src/observatory/**",
+        "console/src/divergence/**",
+        "migrations/0034_projects_onboarding.sql",
+        "migrations/0035_project_stamping.sql",
+        "migrations/0037_divergence_axis.sql",
+        "migrations/0038_document_project.sql",
+        "migrations/0039_project_path_prefix.sql",
+        "migrations/0040_project_isolation.sql"
+      ]
+    },
+    {
+      "doc": "docs/VISIBILITY-TIERS.md",
+      "sourceGlobs": [
+        "crates/brainiac-store/src/retrieval.rs",
+        "crates/brainiac-store/src/identities.rs",
+        "crates/brainiac-store/src/memories.rs",
+        "crates/brainiac-server/src/auth.rs",
+        "crates/brainiac-core/src/health.rs",
+        "migrations/0001_init.sql",
+        "migrations/0002_worker_read.sql",
+        "migrations/0022_identities.sql",
+        "migrations/0040_project_isolation.sql",
+        "fixtures/v1/**",
+        "fixtures/v2/**"
+      ]
+    },
+    {
+      "doc": "docs/BANK-CORPUS.md",
+      "sourceGlobs": [
+        "tools/bank-org.mjs",
+        "tools/gen-bank-corpus.mjs",
+        "tools/seed-bank-docs.mjs",
+        "fixtures/bank/**"
+      ]
+    },
+    {
+      "doc": "docs/deploy/alibaba.md",
+      "sourceGlobs": [
+        "docker-compose.deploy.yml",
+        ".env.deploy.example",
+        "Dockerfile",
+        "console/Dockerfile"
+      ]
+    },
+    {
+      "doc": "docs/skills/brainiac-onboard/SKILL.md",
+      "sourceGlobs": [
+        "crates/brainiac-server/src/onboard.rs",
+        "crates/brainiac-server/src/provision.rs",
+        "crates/brainiac-server/src/projects.rs",
+        "crates/brainiac-store/src/onboard.rs",
+        "crates/brainiac-store/src/projects.rs",
+        "crates/brainiac-store/src/tokens.rs",
+        "console/app/api/onboard/**",
+        "migrations/0034_projects_onboarding.sql",
+        "migrations/0035_project_stamping.sql",
+        "migrations/0039_project_path_prefix.sql"
+      ]
+    }
+  ]
+}
