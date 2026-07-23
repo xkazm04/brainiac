@@ -241,6 +241,8 @@ impl Resilience {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn breaker(threshold: u32, cooldown_ms: u64) -> CircuitBreaker {
         CircuitBreaker {
@@ -248,6 +250,25 @@ mod tests {
             threshold,
             cooldown: Duration::from_millis(cooldown_ms),
         }
+    }
+
+    /// A `Resilience` with an explicit (fast) retry config + the given breaker —
+    /// no env, no wall-clock beyond the millisecond backoffs under test.
+    fn resilience(max_attempts: u32, base_ms: u64, cb: CircuitBreaker) -> Resilience {
+        Resilience {
+            retry: RetryConfig {
+                max_attempts,
+                base_delay: Duration::from_millis(base_ms),
+                max_delay: Duration::from_millis(base_ms.max(1) * 4),
+            },
+            breaker: cb,
+        }
+    }
+
+    /// A fresh GET builder at the mock server's root. `send` re-clones per
+    /// attempt, so one builder drives the whole retry loop.
+    fn get(server: &MockServer) -> reqwest::RequestBuilder {
+        reqwest::Client::new().get(server.uri())
     }
 
     #[test]
@@ -320,5 +341,174 @@ mod tests {
         let r = RetryConfig::default();
         assert!(r.max_attempts >= 2);
         assert!(r.base_delay < r.max_delay);
+    }
+
+    // ── send(): retry + breaker integration against a mock upstream ──────────
+
+    #[tokio::test]
+    async fn send_retries_5xx_up_to_the_budget_then_errors_with_backoff() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("upstream on fire"))
+            .mount(&server)
+            .await;
+
+        let r = resilience(3, 10, CircuitBreaker::default());
+        let start = Instant::now();
+        let err = r
+            .send(get(&server), "probe")
+            .await
+            .expect_err("a persistent 503 exhausts the attempt budget");
+
+        // Exactly max_attempts requests reached the upstream — the retry count.
+        let hits = server.received_requests().await.expect("recorded");
+        assert_eq!(hits.len(), 3, "3 attempts against a persistent 5xx");
+
+        let chain = format!("{err:#}");
+        assert!(chain.contains("503"), "names the 5xx status, got: {chain}");
+        assert!(
+            chain.contains("failed after 3 attempts"),
+            "reports the exhausted budget, got: {chain}"
+        );
+
+        // Backoff actually slept between the 3 attempts (two gaps ≥ base_delay).
+        // Only a conservative lower bound is asserted — exact timing is jittered
+        // and would be flaky under CI load; `send` uses tokio sleeps that never
+        // undershoot, so base_delay is a hard floor.
+        assert!(
+            start.elapsed() >= Duration::from_millis(10),
+            "exponential backoff slept at least base_delay between attempts"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_recovers_when_a_5xx_burst_clears_before_the_budget() {
+        let server = MockServer::start().await;
+        // Two 500s, then healthy — priority 1 (higher) wins until it is spent.
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(2)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("recovered"))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let r = resilience(5, 5, CircuitBreaker::default());
+        let body = r
+            .send(get(&server), "probe")
+            .await
+            .expect("recovers on the third attempt, within budget");
+        assert_eq!(body, "recovered");
+
+        let hits = server.received_requests().await.expect("recorded");
+        assert_eq!(hits.len(), 3, "two 5xx then the 200 that succeeds");
+    }
+
+    #[tokio::test]
+    async fn send_does_not_retry_a_permanent_4xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .mount(&server)
+            .await;
+
+        let r = resilience(4, 5, CircuitBreaker::default());
+        let err = r
+            .send(get(&server), "probe")
+            .await
+            .expect_err("400 is permanent");
+
+        let hits = server.received_requests().await.expect("recorded");
+        assert_eq!(hits.len(), 1, "a permanent 4xx is not retried");
+        assert!(format!("{err:#}").contains("400"));
+    }
+
+    #[tokio::test]
+    async fn send_opens_the_breaker_then_fails_fast_without_touching_upstream() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        // max_attempts = 1 ⇒ each failed send records exactly one breaker
+        // failure; threshold 3 opens after three; a 500ms cooldown keeps it open
+        // across the immediate fourth call.
+        let r = resilience(1, 1, breaker(3, 500));
+        for _ in 0..3 {
+            assert!(
+                r.send(get(&server), "probe").await.is_err(),
+                "each 503 send fails and records a breaker failure"
+            );
+        }
+
+        let err = r
+            .send(get(&server), "probe")
+            .await
+            .expect_err("circuit is open");
+        assert!(
+            format!("{err:#}").contains("circuit open"),
+            "the fourth call is a fail-fast, got: {err:#}"
+        );
+
+        let hits = server.received_requests().await.expect("recorded");
+        assert_eq!(
+            hits.len(),
+            3,
+            "the fail-fast call never reached the upstream"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_probe_recovers_the_breaker_after_cooldown() {
+        let server = MockServer::start().await;
+        // One 503 to trip a threshold-1 breaker, then healthy forever.
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("healthy"))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let r = resilience(1, 1, breaker(1, 40));
+
+        // 1) open the breaker.
+        assert!(r.send(get(&server), "probe").await.is_err(), "opens");
+
+        // 2) immediately: fail fast, upstream untouched.
+        let fast = r
+            .send(get(&server), "probe")
+            .await
+            .expect_err("open circuit fails fast");
+        assert!(format!("{fast:#}").contains("circuit open"));
+
+        // 3) after cooldown: the half-open probe reaches the now-healthy upstream
+        //    and closes the circuit.
+        tokio::time::sleep(Duration::from_millis(55)).await;
+        let body = r
+            .send(get(&server), "probe")
+            .await
+            .expect("the probe succeeds and closes the breaker");
+        assert_eq!(body, "healthy");
+
+        // 4) closed: calls pass straight through.
+        let body2 = r
+            .send(get(&server), "probe")
+            .await
+            .expect("a closed circuit passes through");
+        assert_eq!(body2, "healthy");
+
+        // open(1) + probe(1) + passthrough(1); the step-2 fail-fast hit nothing.
+        let hits = server.received_requests().await.expect("recorded");
+        assert_eq!(hits.len(), 3);
     }
 }

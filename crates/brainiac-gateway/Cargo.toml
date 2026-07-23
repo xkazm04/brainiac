@@ -14,5 +14,11 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+# Mock HTTP upstream for provider + resilience tests. 0.6 targets the hyper-1
+# ecosystem already present in the lockfile (reqwest 0.12 / hyper 1.10), so it
+# shares the existing dependency graph rather than pulling a second http stack.
+wiremock = "0.6"
+
 [lints]
 workspace = true
