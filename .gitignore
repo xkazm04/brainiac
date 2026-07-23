@@ -22,3 +22,6 @@ target-*/
 # Next.js build output
 .next/
 .claude/worktrees/
+
+# Personal cost data — the Personas passport reads it locally; never in VCS
+app-cost.json
