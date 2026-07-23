@@ -201,6 +201,33 @@ Metric: exact-hit rate on the temporally correct memory at rank 1, and absence o
 - **Staleness propagation** — supersession → dirty-mark → recompose loop completes and the new revision reflects the change.
 - **Pin preservation** — pinned sections byte-identical across regeneration.
 
+### 2.7 Practice-divergence gold (the standardization sweep)
+
+```yaml
+# fixtures/v1/divergence/clusters.yaml
+clusters:
+  - id: div-retry-policy
+    canonical: retry-policy-std          # the shared entity every position anchors on
+    expected_divergence: true            # teams solve ONE practice incompatibly
+    practice: service retry policy
+    positions:
+      - {team: payments, kind: decision, content: "fixed 2s backoff, 3 attempts"}
+      - {team: platform, kind: decision, content: "exponential backoff + jitter, 30s cap"}
+  - id: div-kafka-aspects
+    canonical: kafka-usage
+    expected_divergence: false           # different ASPECTS, not a divergence (the trap)
+    practice: ""
+    positions:
+      - {team: platform, kind: fact, content: "MSK: 6 brokers, 3 AZs, tiered storage"}
+      - {team: data,     kind: fact, content: "checkout events consumed into event-lake"}
+```
+
+The divergence sweep (`divergence.rs`) is the org-intelligence analog of `contradict`: where contradiction catches two facts that cannot both be true, this catches several teams solving the SAME practice in DIFFERENT, each-locally-reasonable ways — a standardization signal invisible to any one team. Each gold cluster carries its own canonical entity and the per-team memories recorded about it (self-contained — no cross-reference into the retrieval corpus), plus the expected verdict.
+
+**Method:** seed one isolated org from the clusters (canonical entity → per-team raw entities linked to it → per-team memories anchored to those entities — the exact graph the sweep's cluster query walks), run the REAL `scan_org` with a deterministic gold-oracle provider, then read back the stored `practice_divergences` rows and score.
+
+**Metrics:** detection recall/precision, plus the **false-positive rate** — the load-bearing half. A *consistent* cluster (two teams that agree, or that describe different aspects) flagged as a divergence is the queue-poisoning failure the sweep exists to avoid, so the gold deliberately includes those traps. Like the contradiction profile, scores under the gold oracle are PLUMBING floors — the sweep GATHERS each cross-team cluster, fires the team axis, parses the verdict, and stores only the divergent ones — and the soft gate refuses a cross-provider comparison. Deterministic under the mock (CI-safe with Postgres, no real key). The adjudicator is routable on its own via `BRAINIAC_MODEL_DIVERGENCE` (gateway `Stage::Divergence`).
+
 ---
 
 ## 3. Harness architecture & CLI

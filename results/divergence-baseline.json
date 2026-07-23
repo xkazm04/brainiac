@@ -1,0 +1,7 @@
+{
+  "provider": "mock:deterministic",
+  "fixture_version": "v1",
+  "detection_recall": 1.0,
+  "detection_precision": 1.0,
+  "false_positive_rate": 0.0
+}

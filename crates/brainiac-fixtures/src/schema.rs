@@ -169,6 +169,65 @@ pub struct DriftGoldFx {
     pub propose: Option<String>,
 }
 
+// ── divergence/clusters.yaml (practice-divergence gold) ─────────────────
+
+/// Practice-divergence gold (the standardization sweep — `divergence.rs`).
+/// Each cluster is a set of memories that different TEAMS recorded about the
+/// SAME canonical entity; the `divergence` profile seeds them, runs the real
+/// cross-team adjudication sweep, and scores whether the sweep's stored verdict
+/// matches `expected_divergence`.
+///
+/// Self-contained by design (unlike contradiction cases, which reference
+/// memories/gold.yaml): a cluster carries its own canonical entity and the
+/// per-team memory text, so the divergence gold can be read, reviewed, and
+/// extended without cross-referencing the retrieval corpus. Same
+/// present-but-empty-directory refusal as `documents/` and `drift/`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct DivergenceFile {
+    pub clusters: Vec<DivergenceClusterFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DivergenceClusterFx {
+    pub id: String,
+    /// The shared canonical entity every position anchors on (its display name,
+    /// e.g. `retry-policy-std`). Must be UNIQUE across clusters — both the sweep
+    /// (which groups by canonical entity) and the gold-oracle mock (which keys
+    /// its verdict off the canonical name in the prompt) identify a cluster by
+    /// this string.
+    pub canonical: String,
+    #[serde(default = "default_canonical_kind")]
+    pub canonical_kind: String,
+    /// Gold verdict. `true` = the teams genuinely do the SAME thing in
+    /// INCOMPATIBLE ways (a divergence worth standardizing). `false` = they are
+    /// consistent, complementary, or about different aspects — the trap an
+    /// over-eager detector flags, poisoning the platform-lead's review queue.
+    pub expected_divergence: bool,
+    /// The practice name the sweep should land on, for a divergent cluster.
+    /// Required (non-empty) when `expected_divergence`; must be empty otherwise.
+    #[serde(default)]
+    pub practice: String,
+    pub positions: Vec<DivergencePositionFx>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DivergencePositionFx {
+    /// The team that recorded this practice (display name; the seeder creates
+    /// it). A cluster needs ≥2 DISTINCT teams or the team-axis sweep never fires.
+    pub team: String,
+    /// One of the kinds the sweep gathers: `decision | howto | pattern | fact`.
+    /// Any other kind is dropped by the sweep's `kind IN (...)` filter, which
+    /// would silently shrink the cluster below the ≥2-team threshold — the
+    /// linter refuses it so the gold can't lie.
+    pub kind: String,
+    /// The memory text this team recorded about the canonical entity.
+    pub content: String,
+}
+
+fn default_canonical_kind() -> String {
+    "concept".into()
+}
+
 // ── documents/pages.yaml (EVAL.md §2.6 — composition gold) ──────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

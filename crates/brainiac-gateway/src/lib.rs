@@ -375,6 +375,11 @@ pub enum Stage {
     /// Wants a strong writer — a weak one paraphrases past the evidence, and
     /// every unbacked sentence is a hallucination the eval will fail on.
     Compose,
+    /// Practice-divergence adjudication (the standardization sweep): decides
+    /// whether several teams solve one practice in incompatible ways. A short
+    /// classification call like resolve/contradict — a cheaper model is usually
+    /// enough — but routable on its own so an operator can dial it independently.
+    Divergence,
 }
 
 impl Stage {
@@ -384,6 +389,7 @@ impl Stage {
             Stage::Resolve => "resolve",
             Stage::Contradict => "contradict",
             Stage::Compose => "compose",
+            Stage::Divergence => "divergence",
         }
     }
 
@@ -393,6 +399,7 @@ impl Stage {
             Stage::Resolve => "BRAINIAC_MODEL_RESOLVE",
             Stage::Contradict => "BRAINIAC_MODEL_CONTRADICT",
             Stage::Compose => "BRAINIAC_MODEL_COMPOSE",
+            Stage::Divergence => "BRAINIAC_MODEL_DIVERGENCE",
         }
     }
 }
@@ -425,13 +432,15 @@ pub fn provider_from_spec(spec: &str) -> Result<std::sync::Arc<dyn ChatProvider>
 
 /// Routes each pipeline stage to a provider. Defaults to one provider for
 /// everything; `BRAINIAC_MODEL_EXTRACT` / `_RESOLVE` / `_CONTRADICT` /
-/// `_COMPOSE` override a stage with a spec accepted by [`provider_from_spec`].
+/// `_COMPOSE` / `_DIVERGENCE` override a stage with a spec accepted by
+/// [`provider_from_spec`].
 pub struct ProviderRouter {
     default: std::sync::Arc<dyn ChatProvider>,
     extract: Option<std::sync::Arc<dyn ChatProvider>>,
     resolve: Option<std::sync::Arc<dyn ChatProvider>>,
     contradict: Option<std::sync::Arc<dyn ChatProvider>>,
     compose: Option<std::sync::Arc<dyn ChatProvider>>,
+    divergence: Option<std::sync::Arc<dyn ChatProvider>>,
 }
 
 impl ProviderRouter {
@@ -443,6 +452,7 @@ impl ProviderRouter {
             resolve: None,
             contradict: None,
             compose: None,
+            divergence: None,
         }
     }
 
@@ -454,6 +464,7 @@ impl ProviderRouter {
             Stage::Resolve,
             Stage::Contradict,
             Stage::Compose,
+            Stage::Divergence,
         ] {
             if let Ok(spec) = std::env::var(stage.env_key()) {
                 if spec.trim().is_empty() {
@@ -467,6 +478,7 @@ impl ProviderRouter {
                     Stage::Resolve => router.resolve = Some(provider),
                     Stage::Contradict => router.contradict = Some(provider),
                     Stage::Compose => router.compose = Some(provider),
+                    Stage::Divergence => router.divergence = Some(provider),
                 }
             }
         }
@@ -479,6 +491,7 @@ impl ProviderRouter {
             Stage::Resolve => &self.resolve,
             Stage::Contradict => &self.contradict,
             Stage::Compose => &self.compose,
+            Stage::Divergence => &self.divergence,
         };
         slot.as_deref().unwrap_or(self.default.as_ref())
     }

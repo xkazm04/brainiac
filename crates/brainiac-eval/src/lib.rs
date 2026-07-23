@@ -12,12 +12,17 @@
 //! - `contradiction`: seeds the gold contradiction pairs into isolated orgs,
 //!   runs the real contradict stage with a gold-oracle verdict mock, and scores
 //!   detection recall/precision, false-positive rate, and direction accuracy.
+//! - `divergence`: seeds the gold divergence clusters into one isolated org,
+//!   runs the real practice-divergence sweep with a gold-oracle verdict mock,
+//!   and scores detection recall/precision + the false-positive rate (the
+//!   consistent-cluster trap).
 //!
 //! Alongside the profiles, `grid` is the §3.1 bake-off driver: it runs the
 //! retrieval profile across the available backend cross-product and emits one
 //! exploratory decision-table artifact (no gates).
 
 pub mod contradiction_profile;
+pub mod divergence_profile;
 pub mod docs_profile;
 pub mod drift_profile;
 pub mod extraction_profile;
@@ -30,6 +35,7 @@ pub mod retrieval_profile;
 pub mod seed;
 
 pub use contradiction_profile::ContradictionReport;
+pub use divergence_profile::DivergenceReport;
 pub use drift_profile::DriftReport;
 pub use extraction_profile::ExtractionReport;
 pub use pipeline_profile::PipelineReport;

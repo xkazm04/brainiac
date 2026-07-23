@@ -83,6 +83,7 @@ const F_QA: &str = "retrieval/qa.yaml";
 const F_LEAK: &str = "retrieval/leak.yaml";
 const F_DOCUMENTS: &str = "documents/pages.yaml";
 const F_DRIFT: &str = "drift/docs.yaml";
+const F_DIVERGENCE: &str = "divergence/clusters.yaml";
 
 /// Flat-string view of [`lint`] — the loader's bail-on-invalid contract.
 pub fn validate(fx: &Fixtures) -> Vec<String> {
@@ -323,6 +324,80 @@ pub fn lint(fx: &Fixtures) -> Vec<Diagnostic> {
                     format!("unknown label `{other}` (drifted | aligned | unmatched)"),
                 ),
             }
+        }
+    }
+
+    // ── divergence gold (the standardization sweep) ──────────────────────
+    // The sweep gathers a cluster only from memories whose kind is in its
+    // filter set and whose teams number ≥2; a gold cluster that violates either
+    // would be scored against a sweep that never saw it — a silent lie. And
+    // both the sweep and the gold-oracle mock key a cluster by canonical NAME,
+    // so two clusters sharing one is unscoreable.
+    const SWEEP_KINDS: [&str; 4] = ["decision", "howto", "pattern", "fact"];
+    check_unique(
+        fx.divergence.clusters.iter().map(|c| c.id.as_str()),
+        "divergence cluster",
+        F_DIVERGENCE,
+        &mut e,
+    );
+    check_unique(
+        fx.divergence.clusters.iter().map(|c| c.canonical.as_str()),
+        "divergence canonical",
+        F_DIVERGENCE,
+        &mut e,
+    );
+    for c in &fx.divergence.clusters {
+        let at = |field: &str| format!("clusters[{}].{field}", c.id);
+        let teams: HashSet<&str> = c.positions.iter().map(|p| p.team.as_str()).collect();
+        if teams.len() < 2 {
+            e.err(
+                "divergence-teams",
+                F_DIVERGENCE,
+                at("positions"),
+                format!(
+                    "cluster `{}` has {} distinct team(s) — the team-axis sweep needs ≥2, \
+                     so this cluster is never adjudicated",
+                    c.id,
+                    teams.len()
+                ),
+            );
+        }
+        for (i, p) in c.positions.iter().enumerate() {
+            if !SWEEP_KINDS.contains(&p.kind.as_str()) {
+                e.err(
+                    "divergence-kind",
+                    F_DIVERGENCE,
+                    at(&format!("positions[{i}].kind")),
+                    format!(
+                        "cluster `{}` position kind `{}` is outside the sweep's filter \
+                         (decision | howto | pattern | fact) — it would be dropped, \
+                         silently shrinking the cluster",
+                        c.id, p.kind
+                    ),
+                );
+            }
+        }
+        // A divergent cluster must name the practice the sweep should land on; a
+        // consistent one must NOT (its gold is "detected nothing", so a practice
+        // name would be scored against a row that must never exist).
+        if c.expected_divergence && c.practice.trim().is_empty() {
+            e.err(
+                "divergence-practice",
+                F_DIVERGENCE,
+                at("practice"),
+                format!("divergent cluster `{}` must name a practice", c.id),
+            );
+        }
+        if !c.expected_divergence && !c.practice.trim().is_empty() {
+            e.err(
+                "divergence-practice",
+                F_DIVERGENCE,
+                at("practice"),
+                format!(
+                    "consistent cluster `{}` must not carry a practice (it detects nothing)",
+                    c.id
+                ),
+            );
         }
     }
 

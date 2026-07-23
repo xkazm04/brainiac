@@ -1,0 +1,96 @@
+# Practice-divergence gold — the standardization sweep (`divergence.rs`).
+#
+# Each cluster is a set of memories that different TEAMS recorded about the SAME
+# canonical entity. The `divergence` profile seeds one isolated eval org from
+# these clusters, runs the REAL cross-team adjudication sweep (`scan_org`) with a
+# deterministic gold-oracle provider, and scores whether the sweep's stored
+# verdict matches `expected_divergence`.
+#
+# The point of the gold is the SAME distinction the sweep exists to draw, and
+# the same trap it must not fall into:
+#   - divergence:true  — the teams solve ONE practice in INCOMPATIBLE ways.
+#   - divergence:false — they agree, OR each describes a DIFFERENT ASPECT. An
+#                        over-eager detector that flags these poisons the queue,
+#                        so the consistent clusters are the load-bearing half.
+#
+# Positions must use a kind the sweep gathers (decision | howto | pattern |
+# fact) and span ≥2 teams; canonical names are unique across clusters. The
+# fixtures linter enforces all three.
+clusters:
+  # ── divergent: two teams, incompatible retry rules for one std policy ──
+  - id: div-retry-policy
+    canonical: retry-policy-std
+    canonical_kind: concept
+    expected_divergence: true
+    practice: service retry policy
+    positions:
+      - team: payments
+        kind: decision
+        content: >-
+          refund-worker retries failed psp-gateway calls with a fixed 2-second
+          backoff, capped at 3 attempts, then dead-letters the payment.
+      - team: platform
+        kind: decision
+        content: >-
+          every service must use exponential backoff with full jitter and a
+          30-second ceiling under the std-retry policy; fixed short backoffs are
+          banned because they synchronize into retry storms.
+
+  # ── divergent: three teams store secrets three incompatible ways ──
+  - id: div-secret-storage
+    canonical: secret-storage
+    canonical_kind: concept
+    expected_divergence: true
+    practice: secret storage and retrieval
+    positions:
+      - team: platform
+        kind: howto
+        content: >-
+          services read secrets from HashiCorp Vault at boot through the sidecar
+          injector; nothing is baked into the image.
+      - team: data
+        kind: pattern
+        content: >-
+          the fraud pipeline loads credentials from AWS Secrets Manager at
+          runtime via the SDK, rotated by a Lambda on a 90-day schedule.
+      - team: payments
+        kind: decision
+        content: >-
+          payment-service keeps PSP API keys as sealed Kubernetes secrets
+          mounted as files, decrypted by the cluster KMS at deploy time.
+
+  # ── consistent (trap): both teams agree on the SAME ArgoCD practice ──
+  - id: div-argocd-consistent
+    canonical: argocd-delivery
+    canonical_kind: tech
+    expected_divergence: false
+    practice: ""
+    positions:
+      - team: payments
+        kind: howto
+        content: >-
+          we deploy every service through ArgoCD app-of-apps, auto-syncing from
+          the git overlay so the cluster always matches main.
+      - team: platform
+        kind: howto
+        content: >-
+          ArgoCD is the single delivery path: every workload auto-syncs from the
+          infra-live repo, and drift is reconciled back to git.
+
+  # ── consistent (trap): two teams describe DIFFERENT ASPECTS of Kafka ──
+  - id: div-kafka-aspects
+    canonical: kafka-usage
+    canonical_kind: tech
+    expected_divergence: false
+    practice: ""
+    positions:
+      - team: platform
+        kind: fact
+        content: >-
+          the MSK cluster runs 6 brokers across 3 availability zones with tiered
+          storage enabled for long retention.
+      - team: data
+        kind: fact
+        content: >-
+          checkout-funnel events are consumed off the event bus into event-lake,
+          where the analytics jobs aggregate them nightly.

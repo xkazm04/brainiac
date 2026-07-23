@@ -26,6 +26,9 @@ pub struct Fixtures {
     pub documents: DocumentsFile,
     /// Docs-drift gold (Level 2). Same absence semantics as `documents`.
     pub drift: DriftFile,
+    /// Practice-divergence gold (the standardization sweep). Same absence
+    /// semantics as `documents` and `drift`.
+    pub divergence: DivergenceFile,
 }
 
 fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -116,6 +119,25 @@ pub fn load_unvalidated(root: impl AsRef<Path>) -> Result<Fixtures> {
                 );
             } else {
                 DriftFile::default()
+            }
+        },
+        divergence: {
+            // Same vacuous-pass refusal as `documents/` and `drift/`: a present
+            // but empty divergence directory means someone moved the gold, not
+            // that the tree has no divergence profile.
+            let dir = root.join("divergence");
+            let p = dir.join("clusters.yaml");
+            if p.exists() {
+                read_yaml(&p)?
+            } else if dir.exists() {
+                bail!(
+                    "fixtures: {} exists but clusters.yaml is missing — the divergence \
+                     profile would score zero clusters and report green. Restore the file, \
+                     or remove the directory if this tree has no divergence gold.",
+                    dir.display()
+                );
+            } else {
+                DivergenceFile::default()
             }
         },
         root,

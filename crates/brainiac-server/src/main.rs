@@ -480,10 +480,18 @@ async fn scan_divergence() -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let pool = brainiac_store::admin_pool(&url).await?;
-    let provider = brainiac_gateway::QwenProvider::from_env().context(
+    let default: Arc<dyn brainiac_gateway::ChatProvider> =
+        Arc::new(brainiac_gateway::QwenProvider::from_env().context(
         "scan-divergence adjudicates with a real provider — set QWEN_API_KEY (or DASHSCOPE_API_KEY)",
-    )?;
-    let stats = brainiac_pipeline::divergence::scan_all(&pool, &provider).await?;
+    )?);
+    // Route through the Divergence stage so BRAINIAC_MODEL_DIVERGENCE can dial
+    // the adjudicator independently of the pipeline's other stages.
+    let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
+    let stats = brainiac_pipeline::divergence::scan_all(
+        &pool,
+        providers.for_stage(brainiac_gateway::Stage::Divergence),
+    )
+    .await?;
     pool.close().await;
     tracing::info!(
         clusters = stats.clusters,
@@ -1286,11 +1294,12 @@ async fn eval(
                 | "resolution"
                 | "pipeline"
                 | "contradiction"
+                | "divergence"
                 | "extraction"
                 | "docs"
                 | "drift"
         ),
-        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|extraction|docs|drift"
+        "v0 CLI supports profile=retrieval|resolution|pipeline|contradiction|divergence|extraction|docs|drift"
     );
 
     // The drift profile is deliberately DB-free — instrument calibration over
@@ -1393,6 +1402,10 @@ async fn eval(
             write_baseline_path,
         )
         .await;
+    }
+
+    if profile == "divergence" {
+        return eval_divergence(&store, &admin, &fx, out, baseline_path, write_baseline_path).await;
     }
 
     // Stage-5 reranker axis (retrieval profile only): tagged into the report so
@@ -1721,6 +1734,83 @@ async fn eval_contradiction(
             std::process::exit(1);
         }
         tracing::info!(path, "contradiction regression gates passed");
+    }
+    Ok(())
+}
+
+/// The `divergence` profile: seed the gold divergence clusters into one isolated
+/// org, drive the REAL practice-divergence sweep (`divergence::scan_org`) with a
+/// gold-oracle verdict mock, and score detection recall/precision + the
+/// false-positive rate (the consistent-cluster trap). Soft regression gate only
+/// (cross-provider comparison refused). Deterministic under the mock — CI-safe
+/// with Postgres, no real key. `store`/`admin`/`fx` are set up and the tenant
+/// truncated by the caller; the sweep needs no embedder.
+async fn eval_divergence(
+    store: &Store,
+    admin: &sqlx::PgPool,
+    fx: &brainiac_fixtures::Fixtures,
+    out: Option<&str>,
+    baseline_path: Option<&str>,
+    write_baseline_path: Option<&str>,
+) -> Result<()> {
+    use brainiac_eval::divergence_profile::{regression_failures, run, DivergenceBaseline};
+
+    let report = run(store, admin, fx).await?;
+
+    let json = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, &json)?;
+            tracing::info!(path, "divergence report written");
+        }
+        None => println!("{json}"),
+    }
+    tracing::info!(
+        provider = %report.provider,
+        clusters_scanned = report.clusters_scanned,
+        detection_recall = report.detection_recall,
+        detection_precision = report.detection_precision,
+        false_positive_rate = report.false_positive_rate,
+        "practice-divergence detection quality"
+    );
+
+    // No hard gate (see DivergenceReport::gate_failures) — over-flagging is a
+    // soft quality regression tracked by the false-positive rate.
+    let failures = report.gate_failures();
+    if !failures.is_empty() {
+        eprintln!("HARD GATES FAILED:\n{}", failures.join("\n"));
+        std::process::exit(1);
+    }
+
+    if let Some(path) = write_baseline_path {
+        let baseline = DivergenceBaseline::from_report(&report);
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&baseline)?)?;
+        tracing::info!(
+            path,
+            "divergence baseline recalibrated — commit the diff with a reason"
+        );
+    }
+
+    if let Some(path) = baseline_path {
+        let baseline: DivergenceBaseline = serde_json::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("reading baseline {path}"))?,
+        )
+        .context("parsing baseline")?;
+        let regressions = regression_failures(&report, &baseline);
+        if !regressions.is_empty() {
+            eprintln!(
+                "REGRESSION GATES FAILED (baseline {path}):\n{}",
+                regressions.join("\n")
+            );
+            std::process::exit(1);
+        }
+        tracing::info!(path, "divergence regression gates passed");
     }
     Ok(())
 }

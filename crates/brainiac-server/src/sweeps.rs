@@ -267,9 +267,17 @@ pub async fn run_due(admin: &PgPool, provider: Arc<dyn ChatProvider>) -> anyhow:
 async fn execute(admin: PgPool, provider: Arc<dyn ChatProvider>, kind: String) {
     let start = tokio::time::Instant::now();
     let outcome: anyhow::Result<String> = match kind.as_str() {
-        "divergence" => brainiac_pipeline::divergence::scan_all(&admin, provider.as_ref())
+        // Route through the Divergence stage so BRAINIAC_MODEL_DIVERGENCE dials
+        // the adjudicator here exactly as it does for the standalone CLI scan.
+        "divergence" => match brainiac_gateway::ProviderRouter::from_env(provider.clone()) {
+            Ok(providers) => brainiac_pipeline::divergence::scan_all(
+                &admin,
+                providers.for_stage(brainiac_gateway::Stage::Divergence),
+            )
             .await
             .map(|s| format!("{} clusters, {} divergences", s.clusters, s.divergences)),
+            Err(e) => Err(e),
+        },
         "health_snapshot" => crate::console::snapshot_all_orgs(&admin)
             .await
             .map(|(_, detail)| detail),
