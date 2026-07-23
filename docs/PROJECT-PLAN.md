@@ -160,6 +160,11 @@ The team-aggregation surfaces get project twins, in value order:
 
 - **RLS enforcement on project** (hard isolation) — would change principle 4;
   only if a customer needs contractual separation inside one org.
+  **SHIPPED 2026-07-18 (opt-in, migration 0040, retrieval-layer):** a
+  RESTRICTIVE RLS policy hides an isolated project rows from org-wide and
+  other-project principals in direct reads; default stays byte-identical.
+  KNOWN FOLLOW-UP: the KB compose path (compose::admits) does not yet honor
+  isolation — an org page can still project an isolated project memory.
 - **Monorepo `path_prefix` on project_repos** — the schema slot exists in the
   design; add when a real monorepo onboards.
 - **Promotion flow project→org-shared** — explicit console action + audit

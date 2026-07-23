@@ -21,3 +21,4 @@ target-*/
 
 # Next.js build output
 .next/
+.claude/worktrees/
