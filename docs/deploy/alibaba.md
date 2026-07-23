@@ -102,7 +102,8 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```bash
 git clone https://github.com/xkazm04/brainiac && cd brainiac
 cp .env.deploy.example .env.deploy
-# Fill in: POSTGRES_PASSWORD, QWEN_API_KEY, BRAINIAC_TOKENS, BRAINIAC_API_TOKEN
+# Fill in: POSTGRES_PASSWORD, QWEN_API_KEY, BRAINIAC_TOKENS, BRAINIAC_API_TOKEN,
+# CONSOLE_PASSCODE (+ CONSOLE_SESSION_SECRET), BRAINIAC_CONSOLE_URL
 nano .env.deploy
 
 docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d --build
@@ -130,6 +131,110 @@ docker compose -f docker-compose.deploy.yml exec server \
 
 That populates the org and gives you honest numbers to point at (NDCG@10
 0.876 with `text-embedding-v4` — see `results/history/`).
+
+> **Fail-fast note.** `docker-compose.deploy.yml` marks `POSTGRES_PASSWORD`,
+> `QWEN_API_KEY`, `BRAINIAC_API_TOKEN` and `CONSOLE_PASSCODE` as required
+> (`${VAR:?...}`). If any is missing, `up` aborts before starting a container —
+> so a half-configured deploy stops loudly instead of silently serving only the
+> public pages.
+
+## Auth & the break-glass token
+
+The identity model has two tiers (see `crates/brainiac-server/src/auth.rs`):
+
+- **Env bootstrap tokens** (`BRAINIAC_TOKENS`) — the JSON map key is a bearer
+  secret mapped to a principal. These carry **every scope and bypass the scope
+  system entirely** (`scopes = None`), and they are **un-revocable and
+  un-audited**. They are your **break-glass** credentials — the ones that mint
+  everything else.
+- **Managed API tokens** (`brk_…`, minted via `POST /v1/tokens`) — stored hashed
+  (sha256), **scoped**, **revocable**, and `last_used_at`-tracked. Mintable
+  scopes are exactly: `read`, `write`, `kb:read`, `kb:publish`, `lib:read`,
+  `lib:propose`, `lib:publish`, `admin` (`admin` implies all).
+
+**The intended flow — don't run day-to-day on the break-glass token:**
+
+1. **Boot** with a strong break-glass secret in `BRAINIAC_TOKENS`, and set
+   `BRAINIAC_API_TOKEN` to it for the first start.
+2. **Mint a scoped key.** Minting requires the `admin` scope, which the env token
+   has. The server's `8600` is on the Docker network only (never the public
+   internet — see the security-group note above), so reach it from a throwaway
+   curl container that shares the server's network namespace:
+
+   ```bash
+   SERVER=$(docker compose -f docker-compose.deploy.yml ps -q server)
+   docker run --rm --network "container:$SERVER" curlimages/curl -sS \
+     -X POST http://localhost:8600/v1/tokens \
+     -H "Authorization: Bearer $BRAINIAC_API_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"name":"console","scopes":["read","write","kb:read","kb:publish","lib:read","lib:propose","lib:publish"]}'
+   ```
+
+   The `201` response contains `"token":"brk_…"` — the plaintext secret, shown
+   **once and never retrievable again**. Copy it now.
+3. **Point the console at the scoped key.** Set `BRAINIAC_API_TOKEN=brk_…` in
+   `.env.deploy` and `docker compose -f docker-compose.deploy.yml up -d console`.
+   The console now runs on a revocable, auditable key instead of break-glass.
+4. **Store the break-glass secret offline** (password manager / access-controlled
+   `.env.deploy`, which is git-ignored). Use it only to mint, rotate, or revoke
+   keys. Revoke a leaked key with `POST /v1/tokens/{id}/revoke`; list keys with
+   `GET /v1/tokens`.
+
+**Scope guidance for the console key.** The scopes above (everything except
+`admin`) let the console do its knowledge-plane work — reads, writes, KB, and
+library — while a leaked console key **cannot mint further keys**. The trade-off:
+the console's own key-management (`/keys`), org directory, and blast-radius
+preview require `admin` and will `403` under a non-admin key. If you want those
+modules to work in-console, mint the console key with `admin` instead — still a
+strict upgrade over the env token, because it is revocable and audited. Either
+way, key management can always be done with the offline break-glass token via the
+curl above.
+
+## Backup & restore
+
+The whole corpus is a single Postgres database in the `brainiac-pg` volume —
+back it up with a logical dump, not by copying files out from under a running
+server.
+
+**Cadence.** A daily `pg_dump` is plenty at this scale. `scripts/backup.sh`
+writes a compressed custom-format archive to `./backups/` (auto-git-ignored) and
+prunes dumps older than 14 days (`RETENTION_DAYS`). Wire it into cron on the ECS
+box:
+
+```bash
+# daily at 03:15, keep 14 days (the script's default)
+15 3 * * * cd /home/ubuntu/brainiac && ./scripts/backup.sh >> /var/log/brainiac-backup.log 2>&1
+```
+
+Run it by hand the same way (defaults to the deploy stack):
+
+```bash
+./scripts/backup.sh                                   # -> ./backups/brainiac-<ts>.dump
+COMPOSE_FILE=docker-compose.yml ./scripts/backup.sh   # the local dev stack instead
+```
+
+**Restore drill.** Stop the API so nothing holds locks, restore, restart:
+
+```bash
+docker compose -f docker-compose.deploy.yml stop server
+./scripts/restore.sh backups/brainiac-<ts>.dump --yes
+docker compose -f docker-compose.deploy.yml start server
+```
+
+`restore.sh` is destructive (`pg_restore --clean --if-exists` drops and recreates
+the dumped objects); without `--yes` it prompts before touching anything. Both
+scripts take the same `COMPOSE_FILE` / `PG_SERVICE` / `PG_USER` / `PG_DB`
+overrides, so the identical drill works against the local stack.
+
+**Volume-snapshot alternative.** For a byte-exact copy (e.g. before a risky
+migration), stop the stack for consistency and tar the named volume — confirm
+the name first with `docker volume ls`:
+
+```bash
+docker compose -f docker-compose.deploy.yml down
+docker run --rm -v brainiac_brainiac-pg:/data -v "$PWD/backups":/out alpine \
+  tar czf /out/pgdata-$(date +%F).tgz -C /data .
+```
 
 ## Gotchas that cost hours
 
