@@ -12,6 +12,7 @@
     "gen:api": "openapi-typescript ../openapi.json -o src/lib/api-schema.d.ts"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.67.0",
     "firebase": "^12.16.0",
     "firebase-admin": "^14.1.0",
     "framer-motion": "^12.42.2",

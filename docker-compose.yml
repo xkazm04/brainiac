@@ -15,5 +15,18 @@ services:
     volumes:
       - brainiac-pg:/var/lib/postgresql/data
 
+  # OPTIONAL — LightTrack LLM-call telemetry sink (local dev only). The gateway
+  # posts fire-and-forget events here when LIGHTTRACK_URL is set (see
+  # .env.example); leave it off and the gateway simply records nothing. Bring it
+  # up explicitly with:  docker compose up -d lighttrack
+  lighttrack:
+    image: ghcr.io/xkazm04/lighttrack:v0.0.4
+    ports:
+      - "8787:8787"
+    volumes:
+      - lt-data:/data
+    restart: unless-stopped
+
 volumes:
   brainiac-pg:
+  lt-data:

@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 // The operator modules stopped being routes: the console is one page and the
 // module is a query param (/console?m=reviews). These keep every old inbound
@@ -52,4 +53,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Wrap with Sentry for build-time instrumentation + optional source-map upload.
+// Upload is opt-in: it only runs when SENTRY_AUTH_TOKEN is present (CI), so local
+// builds and builds without a token are unaffected. Runtime error capture works
+// regardless via the sentry.*.config / instrumentation-client files above.
+export default withSentryConfig(nextConfig, {
+  silent: !process.env.CI,
+  // Skips the upload plugin entirely without an auth token.
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+});
+

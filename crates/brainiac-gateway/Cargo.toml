@@ -10,7 +10,9 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { workspace = true }
+# `blocking` powers the LightTrack telemetry worker thread (see src/lighttrack.rs);
+# the provider calls themselves stay on the async client.
+reqwest = { workspace = true, features = ["blocking"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

@@ -199,15 +199,59 @@ fn reranker_select(name: Option<&str>) -> Result<Option<Arc<dyn Reranker>>> {
     }
 }
 
+/// Initialize Sentry error tracking, or return `None` to run without it.
+///
+/// OFF by design in local dev and tests: if `BRAINIAC_ENV` is unset or "local"
+/// (the default), or `SENTRY_DSN` is unset/blank, no client is initialized — no
+/// network, no panic-hook takeover, no warnings. A missing DSN must degrade
+/// silently, never crash or warn-spam. In `test`/`production` (any non-"local"
+/// `BRAINIAC_ENV`) with a DSN present, panics and `tracing::error!`s are captured
+/// and tagged with the environment. The returned guard is held for the process
+/// lifetime so queued events flush on exit.
+fn init_sentry() -> Option<sentry::ClientInitGuard> {
+    let environment = std::env::var("BRAINIAC_ENV").unwrap_or_else(|_| "local".into());
+    if environment == "local" {
+        return None;
+    }
+    let dsn = std::env::var("SENTRY_DSN")
+        .ok()
+        .filter(|d| !d.trim().is_empty())?;
+    Some(sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            environment: Some(environment.into()),
+            release: sentry::release_name!(),
+            ..Default::default()
+        },
+    )))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Local dev convenience: pick up DATABASE_URL / QWEN_API_KEY from .env.
     let _ = dotenvy::dotenv();
-    tracing_subscriber::fmt()
-        .with_env_filter(
+
+    // Error tracking (test/production only). Bound here so the guard lives for
+    // the whole process; a no-op when SENTRY_DSN is unset or BRAINIAC_ENV=local.
+    let sentry_guard = init_sentry();
+
+    use tracing_subscriber::prelude::*;
+    tracing_subscriber::registry()
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
+        .with(tracing_subscriber::fmt::layer())
+        // Forwards ERROR-level tracing events to Sentry when it is initialized;
+        // an inert layer otherwise (no client ⇒ nothing is sent).
+        .with(sentry_tracing::layer())
         .init();
+
+    if sentry_guard.is_some() {
+        tracing::info!(
+            environment = %std::env::var("BRAINIAC_ENV").unwrap_or_else(|_| "local".into()),
+            "sentry error tracking enabled"
+        );
+    }
 
     let cli = Cli::parse();
     match cli.command {

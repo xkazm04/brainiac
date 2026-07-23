@@ -15,6 +15,10 @@ use serde_json::json;
 
 pub mod resilience;
 
+/// Fire-and-forget LLM-call telemetry (LightTrack). Disabled unless
+/// `LIGHTTRACK_URL` is set; see [`lighttrack`].
+mod lighttrack;
+
 use resilience::Resilience;
 
 #[derive(Debug, Clone)]
@@ -142,52 +146,79 @@ impl ChatProvider for QwenProvider {
     }
 
     async fn complete(&self, req: &ChatRequest) -> Result<ChatResponse> {
-        let mut body = json!({
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": req.system},
-                {"role": "user", "content": req.user}
-            ],
-            "max_tokens": req.max_tokens,
-            "temperature": req.temperature,
-        });
-        if req.json_mode {
-            body["response_format"] = json!({"type": "json_object"});
-        }
-        let req = self
-            .http
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&body);
-        let text = self.resilience.send(req, "dashscope").await?;
-        let parsed: OpenAiResponse = serde_json::from_str(&text).context("dashscope parse")?;
-        // Empty `choices` (content-filter stub, or an error shaped as 200) is "no
-        // answer", not "empty answer" — returning it as Ok would have the pipeline
-        // extract from "" (0 memories) and nothing goes red. Fail so it retries /
-        // surfaces instead of manufacturing a hollow success.
-        let content = parsed
-            .choices
-            .first()
-            .map(|c| c.message.content.clone())
-            .ok_or_else(|| anyhow::anyhow!("dashscope returned 200 with no choices"))?;
-        // A missing `usage` means "cost unknown", not "cost zero" — never silently
-        // meter a real billed call at 0. Log it so accounting can flag the drift.
-        let usage = parsed.usage.unwrap_or_else(|| {
-            tracing::warn!(
-                model = %self.model,
-                "dashscope response omitted usage — recording 0 tokens for a billed call"
-            );
-            OpenAiUsage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
+        // Single telemetry chokepoint: every pipeline stage (extract / resolve /
+        // contradict / compose) AND `divergence` — which bypasses the router and
+        // calls this provider directly — funnels through here, so one wrapper
+        // captures them all without touching a single call site. Best-effort and
+        // fully disabled unless LIGHTTRACK_URL is set (see `lighttrack`).
+        let started = std::time::Instant::now();
+        let result: Result<ChatResponse> = async {
+            let mut body = json!({
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": req.system},
+                    {"role": "user", "content": req.user}
+                ],
+                "max_tokens": req.max_tokens,
+                "temperature": req.temperature,
+            });
+            if req.json_mode {
+                body["response_format"] = json!({"type": "json_object"});
             }
-        });
-        Ok(ChatResponse {
-            text: content,
-            model_ref: self.model_ref(),
-            input_tokens: usage.prompt_tokens,
-            output_tokens: usage.completion_tokens,
-        })
+            let http_req = self
+                .http
+                .post(format!("{}/chat/completions", self.base_url))
+                .bearer_auth(&self.api_key)
+                .json(&body);
+            let text = self.resilience.send(http_req, "dashscope").await?;
+            let parsed: OpenAiResponse = serde_json::from_str(&text).context("dashscope parse")?;
+            // Empty `choices` (content-filter stub, or an error shaped as 200) is "no
+            // answer", not "empty answer" — returning it as Ok would have the pipeline
+            // extract from "" (0 memories) and nothing goes red. Fail so it retries /
+            // surfaces instead of manufacturing a hollow success.
+            let content = parsed
+                .choices
+                .first()
+                .map(|c| c.message.content.clone())
+                .ok_or_else(|| anyhow::anyhow!("dashscope returned 200 with no choices"))?;
+            // A missing `usage` means "cost unknown", not "cost zero" — never silently
+            // meter a real billed call at 0. Log it so accounting can flag the drift.
+            let usage = parsed.usage.unwrap_or_else(|| {
+                tracing::warn!(
+                    model = %self.model,
+                    "dashscope response omitted usage — recording 0 tokens for a billed call"
+                );
+                OpenAiUsage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                }
+            });
+            Ok(ChatResponse {
+                text: content,
+                model_ref: self.model_ref(),
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+            })
+        }
+        .await;
+
+        let latency_ms = started.elapsed().as_millis() as u64;
+        let (input_tokens, output_tokens, ok) = match &result {
+            Ok(r) => (r.input_tokens, r.output_tokens, true),
+            Err(_) => (0, 0, false),
+        };
+        // The stage/use-case name is not reachable from the concrete provider
+        // (the router knows the stage, not the provider); left `None` here.
+        lighttrack::record(
+            "qwen",
+            &self.model,
+            None,
+            input_tokens,
+            output_tokens,
+            latency_ms,
+            ok,
+        );
+        result
     }
 }
 
