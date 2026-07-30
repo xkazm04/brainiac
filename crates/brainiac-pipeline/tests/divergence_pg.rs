@@ -91,9 +91,15 @@ async fn rescan_preserves_divergence_identity_and_provenance() {
     let org = Uuid::new_v4();
     let (team_pay, team_data) = (Uuid::new_v4(), Uuid::new_v4());
     let mut conn = admin.acquire().await.expect("conn");
-    orgs::upsert_org(&mut conn, org, "meridian").await.expect("org");
-    orgs::upsert_team(&mut conn, team_pay, org, "payments").await.expect("t1");
-    orgs::upsert_team(&mut conn, team_data, org, "data").await.expect("t2");
+    orgs::upsert_org(&mut conn, org, "meridian")
+        .await
+        .expect("org");
+    orgs::upsert_team(&mut conn, team_pay, org, "payments")
+        .await
+        .expect("t1");
+    orgs::upsert_team(&mut conn, team_data, org, "data")
+        .await
+        .expect("t2");
 
     // Two clusters, each anchored on a canonical entity two teams both speak about.
     for (canon_name, statements) in [
@@ -106,9 +112,18 @@ async fn rescan_preserves_divergence_identity_and_provenance() {
             .expect("canonical");
         for (team, text) in [team_pay, team_data].iter().zip(statements) {
             let entity = Uuid::new_v4();
-            entities::insert_entity(&mut conn, entity, org, Some(*team), canon_name, "concept", &[], None)
-                .await
-                .expect("entity");
+            entities::insert_entity(
+                &mut conn,
+                entity,
+                org,
+                Some(*team),
+                canon_name,
+                "concept",
+                &[],
+                None,
+            )
+            .await
+            .expect("entity");
             entities::link(&mut conn, entity, canonical, 0.9, "test", None)
                 .await
                 .expect("link");
@@ -116,7 +131,9 @@ async fn rescan_preserves_divergence_identity_and_provenance() {
             memories::insert(&mut conn, &mem(m, org, *team, MemoryKind::Decision, text))
                 .await
                 .expect("memory");
-            memories::link_entity(&mut conn, m, entity).await.expect("me");
+            memories::link_entity(&mut conn, m, entity)
+                .await
+                .expect("me");
         }
     }
 
@@ -158,15 +175,17 @@ async fn rescan_preserves_divergence_identity_and_provenance() {
     // ── sweep 2: the review divergence persists, retry is no longer confirmed ──
     let provider = MockProvider::new(|req| verdict_for(&req.user, false));
     let stats = scan_org(&admin, &provider, org).await.expect("sweep 2");
-    assert_eq!(stats.divergences, 1, "only the review cluster still diverges");
+    assert_eq!(
+        stats.divergences, 1,
+        "only the review cluster still diverges"
+    );
 
-    let after: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, practice, summary FROM practice_divergences WHERE org_id = $1",
-    )
-    .bind(org)
-    .fetch_all(&admin)
-    .await
-    .expect("read 2");
+    let after: Vec<(Uuid, String, Option<String>)> =
+        sqlx::query_as("SELECT id, practice, summary FROM practice_divergences WHERE org_id = $1")
+            .bind(org)
+            .fetch_all(&admin)
+            .await
+            .expect("read 2");
 
     // (1) identity preserved, content refreshed.
     assert_eq!(after.len(), 1, "the unconfirmed divergence was retired");
@@ -201,11 +220,17 @@ async fn rescan_preserves_divergence_identity_and_provenance() {
         .await
         .expect("re-bridge")
         .expect("candidate");
-    assert_eq!(again, candidate, "re-bridging must not mint a second candidate");
+    assert_eq!(
+        again, candidate,
+        "re-bridging must not mint a second candidate"
+    );
     let candidates: i64 = sqlx::query_scalar("SELECT count(*) FROM standards WHERE org_id = $1")
         .bind(org)
         .fetch_one(&admin)
         .await
         .expect("count standards");
-    assert_eq!(candidates, 1, "exactly one standard candidate for one practice");
+    assert_eq!(
+        candidates, 1,
+        "exactly one standard candidate for one practice"
+    );
 }
