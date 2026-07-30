@@ -33,8 +33,11 @@ export default function Finale() {
           <p className="mx-auto mt-6 max-w-xl text-sm leading-relaxed" style={{ color: dim(0.5) }}>
             The memory layer underneath is shipped and measured. The knowledge base on top of it
             is shipped and measured. The Library&apos;s substrate and its distribution surface now
-            run the same way — agents already fetch the org&apos;s rules and skills. What remains
-            is the console, the mining, and the agents&apos; own proposals.
+            run the same way — the mining sweep, the console, and the agents&apos; own proposals
+            included: agents already fetch the org&apos;s rules and skills. What remains is the
+            write-back loop. A skill can be proposed but not adopted or published through any
+            interface, the way a standard can; and a standard mined from a divergence still lands
+            in a single general stack rather than the one it belongs to.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link

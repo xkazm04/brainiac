@@ -23,10 +23,10 @@ export default function Anatomy() {
     <Section id="anatomy" eyebrow="the anatomy" tone={MINT}>
       <H2>A library with a pulse, part by part.</H2>
       <Lede>
-        Five mechanisms, drawn. Four run today — the detector, the rule atom, the
-        attribution constraint, the skill shelf — and the pulse is readable in the console.
-        The vital signs stay stamped roadmap for one honest reason: nothing goes red on its
-        own yet; a human still has to look. The stamps are tested.
+        Five mechanisms, drawn. All five run today — the detector, the rule atom, the
+        attribution constraint, the skill shelf, and the vital signs, readable in the console.
+        One honest caveat on the last: the signs are computed and rendered, but nothing goes
+        red on its own yet; a human still has to look. The stamps are tested.
       </Lede>
 
       <div className="mt-14 space-y-6">

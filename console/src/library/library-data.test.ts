@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -20,13 +23,21 @@ import {
 /*
  * The honesty guard, Library edition.
  *
- * This page has the hardest honesty job of the three public surfaces: almost
- * nothing it describes is built. A page like that survives on the credibility
- * of its stamps, so these tests pin every status to the LIBRARY-PLAN status
- * log — a future edit that quietly promotes an unbuilt phase to "shipped"
- * fails CI instead of shipping.
+ * This page has the hardest honesty job of the three public surfaces, and the
+ * job has changed shape: when it was written almost nothing it described was
+ * built, and the risk was a stamp quietly promoting itself to "shipped". The
+ * whole ladder has since landed, so the risk inverted — prose that still tells
+ * a visitor the feature is roadmap. Both directions are drift, and both fail
+ * here now: the status tests below pin every stamp to the LIBRARY-PLAN status
+ * log, and `section prose keeps up with the stamps` scans the section
+ * components for unbuiltness claims the data no longer supports.
  *
- * When a phase actually lands, the fix is to update BOTH this expectation and
+ * That second test exists because the first one could not see it: ALL_PAGE_TEXT
+ * flattens library-data.ts only, so three sections spent weeks telling readers
+ * the Library was "almost all roadmap" while every status beside it said
+ * shipped — on the page whose own argument is that unmeasured claims drift.
+ *
+ * When a phase changes state, the fix is to update BOTH this expectation and
  * docs/LIBRARY-PLAN.md — in that order of annoyance, deliberately.
  */
 
@@ -146,6 +157,41 @@ describe("library-data honesty rules", () => {
     }
     // The direct write must stay disallowed.
     expect(INTAKE.some((f) => f.label === "direct write" && !f.allowed)).toBe(true);
+  });
+
+  it("section prose keeps up with the stamps", () => {
+    // The gap this closes: ALL_PAGE_TEXT covers library-data.ts, so nothing was
+    // watching the JSX. Where every status is "shipped", no section may still
+    // describe the feature as unbuilt — in prose or in a hardcoded stamp.
+    const everythingShipped = [...LADDER, ...PROPERTIES, ...RULE_STAGES].every(
+      (x) => x.status === "shipped",
+    );
+    if (!everythingShipped) return; // mixed state: the stamps carry the nuance.
+
+    const dir = path.resolve(__dirname, "sections");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".tsx"));
+    expect(files.length, "sections must be discoverable").toBeGreaterThan(4);
+
+    // Claims of unbuiltness that the data no longer supports.
+    const stale: RegExp[] = [
+      /almost\s+(?:all|none)[^.]{0,40}roadmap/i,
+      /(?:stay|stays|remain|remains)\s+stamped\s+roadmap/i,
+      /mostly\s+roadmap/i,
+      /not\s+built\s+yet/i,
+      /nothing\s+(?:here|it\s+describes)\s+is\s+built/i,
+      // A hardcoded roadmap stamp is the same claim in component form.
+      /<Stamp\s+status=["']roadmap["']/,
+    ];
+
+    for (const f of files) {
+      const text = readFileSync(path.join(dir, f), "utf8");
+      for (const re of stale) {
+        expect(
+          re.test(text),
+          `${f} claims the Library is unbuilt (${re}) while every status says shipped`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("keeps the telemetry promise in the refusals", () => {

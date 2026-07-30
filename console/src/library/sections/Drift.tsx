@@ -20,7 +20,6 @@ export default function Drift() {
               the library · standards + skills
             </div>
             <Stamp status="shipped" />
-            <Stamp status="roadmap" className="opacity-90" />
           </div>
           <h1 className="mt-6 text-[2.4rem] font-semibold leading-[1.06] tracking-tight text-white lg:text-[3.2rem]">
             Your standards are <span style={{ color: MAGENTA }}>wishes</span>.

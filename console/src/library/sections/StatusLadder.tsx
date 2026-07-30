@@ -12,7 +12,7 @@ import { H2, Lede, STATUS_GLYPH, STATUS_TONE, Section, Stamp, dim, rise } from "
 export default function StatusLadder() {
   return (
     <Section id="status" eyebrow="what is actually built" tone={dim(0.6)}>
-      <H2>The status of every phase — almost all of it roadmap, on purpose.</H2>
+      <H2>The status of every phase — the whole ladder, built and tested.</H2>
       <Lede>{CHECK_US}</Lede>
 
       <div className="relative mt-14">
