@@ -126,16 +126,25 @@ export const MECHANISMS: Mechanism[] = [
     claim:
       "An agent cannot retrieve what its operator cannot read, because the database refuses, not because the code remembered to filter.",
     how:
-      "Visibility is a row-level security policy on the memories table. The retrieval path opens a transaction as the calling principal, so the pgvector similarity scan is evaluated against rows the policy already excluded. There is no code path that returns a memory the caller may not see, because the planner never sees one either.",
+      "Visibility is a row-level security policy on the memories table. The retrieval path opens a transaction as the calling principal, so the pgvector similarity scan is evaluated against rows the policy already excluded. There is no code path that returns a memory the caller may not see, because the planner never sees one either. The policy carries exactly one escape, and it is in the artifact rather than hidden behind it: a transaction that sets app.worker (only the pipeline's own worker_tx does) reads the org and team tiers so later stages can see what the extract stage wrote. The private tier stays excluded even there.",
     instead:
       "Every independent scopes memory with a caller-supplied user_id or org_id. It is a filter you pass, and passing the wrong one returns someone else's knowledge. Mem0's own docs tell you to build the access-control boundary yourself.",
+    // VERBATIM from migrations/0002_worker_read.sql — the policy that actually
+    // runs. `pitch-data.test.ts` fails if the two drift apart. It used to be a
+    // hand-simplified copy of 0001's policy, which 0002 had already replaced:
+    // the page's one checkable proof artifact was not the policy in force.
     artifact: `CREATE POLICY memories_read ON memories FOR SELECT USING (
-  org_id = current_setting('app.org_id')::uuid
-  AND ( visibility = 'org'
-     OR (visibility = 'team' AND team_id IN (
-           SELECT team_id FROM team_members
-            WHERE user_id = current_setting('app.user_id')::uuid))
-     OR (visibility = 'private' AND owner_user_id = current_setting('app.user_id')::uuid))
+    org_id = current_setting('app.org_id')::uuid
+    AND deleted_at IS NULL
+    AND (
+        visibility = 'org'
+        OR (coalesce(current_setting('app.worker', true), 'off') = 'on'
+            AND visibility <> 'private')
+        OR (visibility = 'team' AND team_id IN
+            (SELECT tm.team_id FROM team_members tm
+             WHERE tm.user_id = current_setting('app.user_id')::uuid))
+        OR (visibility = 'private' AND owner_user_id = current_setting('app.user_id')::uuid)
+    )
 );`,
     band: "alpha",
   },
