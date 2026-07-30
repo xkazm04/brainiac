@@ -222,7 +222,7 @@ fn tool_scope(tool: &str) -> &'static str {
     match tool {
         // reads over the governed memory
         "memory_search" | "memory_list" | "memory_context" | "memory_provenance"
-        | "entity_lookup" | "memory_status" => "read",
+        | "entity_lookup" | "memory_status" | "edit_preflight" => "read",
         // writes: a proposal, a memory, a feedback verdict
         "memory_add" | "knowledge_propose" | "memory_feedback" => "write",
         // the knowledge base
@@ -482,6 +482,19 @@ fn tool_definitions() -> Value {
             }
         },
         {
+            "name": "edit_preflight",
+            "description": "What the org already knows about code you are ABOUT TO CHANGE. Pass the files you are editing; you get back the canonical pitfalls and decisions anchored to that project plus its mandatory standards. Call it before you edit shared behavior — it is the same computation an agent hook runs automatically on every write, so calling it yourself keeps you level with hook-equipped agents. Advisory: it never blocks, and an empty result means the org has recorded nothing about this area, not that the area is safe.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "changed_paths": { "type": "array", "items": { "type": "string" }, "description": "Repo-relative paths you are about to change" },
+                    "remote": { "type": "string", "description": "Git remote of the checkout; defaults to the session's BRAINIAC_REPO_REMOTE" },
+                    "diff_excerpt": { "type": "string", "description": "Optional: a short excerpt of what you are changing, which sharpens the match" }
+                },
+                "required": ["changed_paths"]
+            }
+        },
+        {
             "name": "memory_add",
             "description": "Record a piece of durable knowledge (fact, decision, pattern, pitfall, howto). It enters the extraction/review pipeline as raw knowledge — it is NOT immediately canonical. Returns a source_id; extraction is asynchronous, so call memory_status with it to learn the memory ids it produced (needed to cite the new memory as evidence). The optional kind/entities hints steer the extractor.",
             "inputSchema": {
@@ -681,6 +694,7 @@ async fn call_tool(state: &McpState, params: &Value) -> Result<Value, RpcError> 
         "memory_search" => memory_search(state, &args).await,
         "memory_list" => memory_list(state, &args).await,
         "memory_context" => memory_context(state, &args).await,
+        "edit_preflight" => edit_preflight(state, &args).await,
         "memory_add" => memory_add(state, &args).await,
         "memory_status" => memory_status(state, &args).await,
         "entity_lookup" => entity_lookup(state, &args).await,
@@ -821,6 +835,71 @@ fn parse_filters(state: &McpState, args: &Value) -> Result<RetrievalFilters, Too
     }
 
     Ok(filters)
+}
+
+/// The write-path guard, reachable by agents whose client has no hook system.
+/// Delegates to `guard::preflight` so REST and MCP can never drift — the same
+/// parity discipline `tool_scope` enforces for authorization.
+async fn edit_preflight(state: &McpState, args: &Value) -> Result<Value, ToolError> {
+    let changed_paths: Vec<String> = args
+        .get("changed_paths")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if changed_paths.is_empty() {
+        return Err(rejected("changed_paths must list at least one path"));
+    }
+    // The session already knows its checkout (PROJECT-PLAN PR2, the same value
+    // memory_add uses to auto-attribute writes), so an agent normally passes
+    // only the paths.
+    let remote = args
+        .get("remote")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| state.session_remote.clone())
+        .ok_or_else(|| {
+            rejected("no remote: pass `remote`, or register the session with BRAINIAC_REPO_REMOTE")
+        })?;
+    let diff_excerpt = args
+        .get("diff_excerpt")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let out = crate::guard::preflight(
+        &state.store,
+        state.embedder.as_ref(),
+        state.embedding_version,
+        &state.principal,
+        crate::guard::PreEditBody {
+            remote,
+            changed_paths,
+            tool: Some("mcp".to_string()),
+            diff_excerpt,
+        },
+    )
+    .await
+    .map_err(|e| match e {
+        crate::guard::PreflightError::BadRemote => rejected("unusable remote"),
+        crate::guard::PreflightError::Internal(e) => ToolError::from(e),
+    })?;
+
+    Ok(json!({
+        "decision": out.decision,
+        "project": out.project_name,
+        // The rendered form is what a model actually reads; the structured notes
+        // are there for a client that wants to display or filter them.
+        "context": crate::guard::render_notes(&out),
+        "notes": out.notes.iter().map(|n| json!({
+            "kind": n.kind,
+            "statement": n.statement,
+            "memory_id": n.memory_id,
+            "slug": n.slug,
+        })).collect::<Vec<_>>(),
+    }))
 }
 
 async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolError> {

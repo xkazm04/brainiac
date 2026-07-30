@@ -7,6 +7,7 @@ pub mod auth;
 pub mod console;
 pub mod demand;
 pub mod docs;
+pub mod guard;
 pub mod http;
 pub mod library;
 pub mod mcp;

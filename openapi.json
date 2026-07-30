@@ -608,6 +608,46 @@
         }
       }
     },
+    "/v1/guard/pre-edit": {
+      "post": {
+        "tags": [
+          "guard"
+        ],
+        "description": "What the org already knows about the code an agent is about to change: canonical pitfalls and decisions anchored to the touched project, plus its mandatory standards. Advisory only — the decision is always `allow`. Called by `brainiac hook pre-edit` from an agent's PreToolUse hook, or as the `edit_preflight` MCP tool. Deliberately not recorded as retrieval demand.",
+        "operationId": "pre_edit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreEditBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Advisory notes for the pending edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreEditResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unusable remote"
+          },
+          "401": {
+            "description": "Missing or unknown bearer token"
+          },
+          "403": {
+            "description": "Token lacks the `read` scope"
+          }
+        }
+      }
+    },
     "/v1/library/divergences/{id}/ratify": {
       "post": {
         "tags": [
@@ -6457,6 +6497,104 @@
               "$ref": "#/components/schemas/PracticeDivergence"
             },
             "description": "Detected divergences, highest-impact first. Empty until the first scan."
+          }
+        }
+      },
+      "PreEditBody": {
+        "type": "object",
+        "required": [
+          "remote"
+        ],
+        "properties": {
+          "changed_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths the agent is about to change, repo-relative. The first one resolves\nthe project in a monorepo."
+          },
+          "diff_excerpt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A bounded excerpt of what is about to change. Optional: without it the\nquery is built from the paths alone, which still resolves the project and\nits standards."
+          },
+          "remote": {
+            "type": "string",
+            "description": "The checkout's git remote, in any spelling — normalized server-side, the\nsame way onboarding normalizes it."
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tool about to run (`Edit`, `Write`, `MultiEdit`) — carried for\ntelemetry and future per-tool policy; it does not change the answer."
+          }
+        }
+      },
+      "PreEditNote": {
+        "type": "object",
+        "required": [
+          "kind",
+          "statement"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`pitfall` | `decision` | `standard`."
+          },
+          "memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The memory this came from, so the agent can cite or fetch provenance.\n`null` for a standard, which carries `slug` instead."
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The standard's deep-linkable slug; `null` for a memory."
+          },
+          "statement": {
+            "type": "string",
+            "description": "The one-sentence claim, verbatim — never re-typed by a model."
+          }
+        }
+      },
+      "PreEditResponse": {
+        "type": "object",
+        "required": [
+          "decision",
+          "notes"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "description": "Always `allow` today. The field exists so a future `guard_mode` can warn\nor block without a shape change — and so a client written now already\nreads the decision instead of assuming it."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreEditNote"
+            }
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The project the remote+path resolved to; `null` when the repo is not\nregistered, which is not an error — the org's cross-cutting standards\nstill apply and are returned."
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

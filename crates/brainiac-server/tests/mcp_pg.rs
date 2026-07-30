@@ -97,6 +97,9 @@ async fn mcp_handshake_and_tools() {
             "memory_search",
             "memory_list",
             "memory_context",
+            // The write-path guard's MCP parity twin: agents whose client has
+            // no hook system reach the same preflight computation.
+            "edit_preflight",
             "memory_add",
             // F-1/F-2: close the async-ingest loop — poll a source for the
             // memory ids it produced, so an agent can confirm its contribution

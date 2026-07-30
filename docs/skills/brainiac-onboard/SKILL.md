@@ -5,6 +5,15 @@ description: Connect this repository to the org's Brainiac memory. Pairs the rep
 
 # Brainiac onboarding
 
+> **Source of truth (code this skill drives).** If these change, this skill is stale.
+>
+> - `crates/brainiac-server/src/onboard.rs` — the device-authorization pairing flow
+> - `crates/brainiac-server/src/provision.rs` — free-tier self-serve provisioning
+> - `crates/brainiac-server/src/projects.rs` — projects + the repo whitelist API
+> - `crates/brainiac-store/src/onboard.rs`, `crates/brainiac-store/src/projects.rs`, `crates/brainiac-store/src/tokens.rs`
+> - `console/app/api/onboard/**` — the console's approval surface
+> - Migrations: `migrations/0034_projects_onboarding.sql`, `migrations/0035_project_stamping.sql`, `migrations/0039_project_path_prefix.sql`
+
 You are onboarding this repository onto Brainiac — the org's governed memory.
 The outcome: a working `.env` with a **project-scoped** API key, verified
 connectivity, and agent instructions (CLAUDE.md/AGENTS.md) that teach future
@@ -153,6 +162,46 @@ claude mcp add brainiac --scope project \
 the project's MCP config, which the user should also gitignore if their
 `.mcp.json` is committed.) If the binary or DB access is missing, skip with a
 note — REST from Step 3 covers the same operations.
+
+## Step 4b (offer, don't assume) — the write-path guard
+
+MCP tools only pay out when the agent *elects* to call them. The guard inverts
+that: it runs on every `Edit`/`Write`/`MultiEdit` and hands back what the org
+already knows about the files being changed — canonical pitfalls and decisions
+anchored to the project, plus its mandatory standards. It is the same
+computation as the `edit_preflight` MCP tool; the hook just makes it automatic.
+
+Offer to add it to the checkout's `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "brainiac hook pre-edit" }]
+      }
+    ]
+  }
+}
+```
+
+It needs three env vars visible to the agent — `BRAINIAC_API_URL`,
+`BRAINIAC_API_TOKEN` (a `read` key is enough) and `BRAINIAC_REPO_REMOTE` (the
+same value the MCP registration above sets). `BRAINIAC_GUARD_TIMEOUT_MS`
+defaults to 1500.
+
+Two properties worth stating to the user when you offer it, because they are
+what make it safe to leave installed:
+
+- **It never blocks an edit.** The response is advisory; the decision is always
+  `allow`.
+- **It fails open.** No token, no server, a timeout, a malformed payload — the
+  hook exits 0 having printed nothing, and the agent proceeds exactly as if
+  brainiac were not installed. Diagnostics go to stderr.
+
+Unlike Step 4, this needs no database reachability — it speaks REST — so it
+works for hosted deployments where MCP registration does not.
 
 ## Step 5 (offer, don't assume) — Sync the org's skill library
 

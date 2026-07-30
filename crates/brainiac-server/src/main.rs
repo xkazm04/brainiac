@@ -19,6 +19,14 @@ struct Cli {
     command: Command,
 }
 
+/// Which hook point this invocation is serving.
+#[derive(Subcommand)]
+enum HookCmd {
+    /// PreToolUse on Edit|Write|MultiEdit: what the org already knows about the
+    /// code the agent is about to change.
+    PreEdit,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Run the REST API (v0 surface; MCP arrives next).
@@ -132,6 +140,16 @@ enum Command {
     Fixtures {
         #[command(subcommand)]
         cmd: FixturesCmd,
+    },
+    /// Agent hooks — run BY a coding agent, not by a human.
+    ///
+    /// The binary you already installed is the hook: no npm package, no second
+    /// artifact to version. Reads the agent's hook JSON on stdin and writes hook
+    /// JSON on stdout. ALWAYS exits 0: a hook that fails an agent's edit because
+    /// a memory server was slow gets uninstalled the same day.
+    Hook {
+        #[command(subcommand)]
+        which: HookCmd,
     },
     /// Write the OpenAPI document (the same one `GET /openapi.json` serves).
     /// The console generates its TypeScript types from this file, so it is
@@ -292,6 +310,12 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Command::Hook { which } => match which {
+            HookCmd::PreEdit => {
+                hook_pre_edit().await;
+                Ok(())
+            }
+        },
         Command::Openapi { out } => openapi_dump(&out),
         Command::Fixtures { cmd } => match cmd {
             FixturesCmd::Lint { fixtures, format } => fixtures_lint(&fixtures, &format),
@@ -1813,4 +1837,172 @@ async fn eval_divergence(
         tracing::info!(path, "divergence regression gates passed");
     }
     Ok(())
+}
+
+// ── agent hooks ─────────────────────────────────────────────────────────
+
+/// `brainiac hook pre-edit` — the PreToolUse hook.
+///
+/// Reads the agent's hook payload on stdin, asks the server what the org knows
+/// about the files about to change, and prints the answer back as additional
+/// context. This is the whole point of the guard: knowledge arrives at the
+/// moment of the edit, whether or not the agent thought to ask.
+///
+/// **It fails open, always.** No token, no server, a timeout, a malformed
+/// payload, a 500 — every one of them exits 0 having printed nothing. The agent
+/// then proceeds exactly as it would without brainiac installed. The alternative
+/// (a hook that can block an edit because a memory server was slow) is a hook
+/// that gets removed from `settings.json` on day two, which costs the org every
+/// future delivery. Diagnostics go to stderr, which agents surface without
+/// treating as failure.
+///
+/// Wire it up (per checkout, alongside the MCP server entry):
+/// ```json
+/// { "hooks": { "PreToolUse": [ {
+///     "matcher": "Edit|Write|MultiEdit",
+///     "hooks": [ { "type": "command", "command": "brainiac hook pre-edit" } ]
+/// } ] } }
+/// ```
+/// Env: `BRAINIAC_API_URL` (default http://127.0.0.1:8600), `BRAINIAC_API_TOKEN`,
+/// `BRAINIAC_REPO_REMOTE` (the same variable the MCP registration already sets),
+/// `BRAINIAC_GUARD_TIMEOUT_MS` (default 1500).
+async fn hook_pre_edit() {
+    use std::io::Read;
+
+    let mut raw = String::new();
+    if std::io::stdin().read_to_string(&mut raw).is_err() {
+        return;
+    }
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+
+    // Paths the agent is about to touch. Edit/Write carry `file_path`;
+    // MultiEdit carries `edits[].file_path`. Unknown shapes yield nothing, and
+    // nothing means we say nothing.
+    let input = payload
+        .get("tool_input")
+        .unwrap_or(&serde_json::Value::Null);
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(p) = input.get("file_path").and_then(|v| v.as_str()) {
+        paths.push(p.to_string());
+    }
+    if let Some(edits) = input.get("edits").and_then(|v| v.as_array()) {
+        for e in edits {
+            if let Some(p) = e.get("file_path").and_then(|v| v.as_str()) {
+                paths.push(p.to_string());
+            }
+        }
+    }
+    if paths.is_empty() {
+        return;
+    }
+
+    let Ok(remote) = std::env::var("BRAINIAC_REPO_REMOTE") else {
+        eprintln!("brainiac: BRAINIAC_REPO_REMOTE unset — skipping preflight");
+        return;
+    };
+    let base =
+        std::env::var("BRAINIAC_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8600".to_string());
+    let token = std::env::var("BRAINIAC_API_TOKEN").unwrap_or_default();
+    let timeout_ms: u64 = std::env::var("BRAINIAC_GUARD_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1500);
+
+    // A short, hard budget: this sits in front of a human's edit. Slow is the
+    // same as absent here, and absent is the safe answer.
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // The agent's own description of the change, bounded — it sharpens the
+    // match without turning a read endpoint into a content channel.
+    let excerpt = input
+        .get("new_string")
+        .or_else(|| input.get("content"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.chars().take(2_000).collect::<String>());
+
+    let body = serde_json::json!({
+        "remote": remote,
+        "changed_paths": paths,
+        "tool": payload.get("tool_name").and_then(|v| v.as_str()).unwrap_or("Edit"),
+        "diff_excerpt": excerpt,
+    });
+
+    let resp = client
+        .post(format!("{base}/v1/guard/pre-edit"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await;
+    let out = match resp {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+        Ok(r) => {
+            eprintln!(
+                "brainiac: preflight unavailable ({}) — continuing",
+                r.status()
+            );
+            None
+        }
+        Err(e) => {
+            eprintln!("brainiac: preflight unavailable ({e}) — continuing");
+            None
+        }
+    };
+    let Some(out) = out else { return };
+
+    // Re-render server-side shape into the text a model reads. Silence when
+    // there is nothing to say: "no relevant knowledge found" on every edit
+    // teaches the model to ignore the channel entirely.
+    let notes = out
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty());
+    let Some(notes) = notes else { return };
+
+    let mut context = String::from("Organizational knowledge about the code you are changing");
+    if let Some(p) = out.get("project_name").and_then(|v| v.as_str()) {
+        context.push_str(&format!(" (project: {p})"));
+    }
+    context.push_str(":\n");
+    for n in notes {
+        let statement = n.get("statement").and_then(|v| v.as_str()).unwrap_or("");
+        match (
+            n.get("memory_id").and_then(|v| v.as_str()),
+            n.get("slug").and_then(|v| v.as_str()),
+        ) {
+            (Some(id), _) => {
+                let kind = n
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("note")
+                    .to_uppercase();
+                context.push_str(&format!("- {kind}: {statement} (memory:{id})\n"));
+            }
+            (None, Some(slug)) => {
+                context.push_str(&format!("- MANDATORY STANDARD {slug}: {statement}\n"));
+            }
+            _ => {}
+        }
+    }
+    context.push_str(
+        "These are canonical — the org certified them. Cite the ids if you rely on them; \
+         if you are about to contradict one, say so explicitly rather than silently.\n",
+    );
+
+    println!(
+        "{}",
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": context,
+            }
+        })
+    );
 }

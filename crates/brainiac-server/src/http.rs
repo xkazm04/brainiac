@@ -110,6 +110,7 @@ pub async fn router(
         .merge(crate::library::routes())
         .merge(crate::onboard::routes())
         .merge(crate::projects::routes())
+        .merge(crate::guard::routes())
         .merge(crate::provision::routes())
         // Explicit request-body cap. The largest free-text field REST accepts
         // is `memory_add` content (MAX_CONTENT_CHARS = 8000 chars ≈ 32 KiB of

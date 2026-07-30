@@ -339,6 +339,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/guard/pre-edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description What the org already knows about the code an agent is about to change: canonical pitfalls and decisions anchored to the touched project, plus its mandatory standards. Advisory only — the decision is always `allow`. Called by `brainiac hook pre-edit` from an agent's PreToolUse hook, or as the `edit_preflight` MCP tool. Deliberately not recorded as retrieval demand. */
+        post: operations["pre_edit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/library/divergences/{id}/ratify": {
         parameters: {
             query?: never;
@@ -2750,6 +2767,60 @@ export interface components {
             /** @description Detected divergences, highest-impact first. Empty until the first scan. */
             divergences: components["schemas"]["PracticeDivergence"][];
         };
+        PreEditBody: {
+            /**
+             * @description Paths the agent is about to change, repo-relative. The first one resolves
+             *     the project in a monorepo.
+             */
+            changed_paths?: string[];
+            /**
+             * @description A bounded excerpt of what is about to change. Optional: without it the
+             *     query is built from the paths alone, which still resolves the project and
+             *     its standards.
+             */
+            diff_excerpt?: string | null;
+            /**
+             * @description The checkout's git remote, in any spelling — normalized server-side, the
+             *     same way onboarding normalizes it.
+             */
+            remote: string;
+            /**
+             * @description The tool about to run (`Edit`, `Write`, `MultiEdit`) — carried for
+             *     telemetry and future per-tool policy; it does not change the answer.
+             */
+            tool?: string | null;
+        };
+        PreEditNote: {
+            /** @description `pitfall` | `decision` | `standard`. */
+            kind: string;
+            /**
+             * Format: uuid
+             * @description The memory this came from, so the agent can cite or fetch provenance.
+             *     `null` for a standard, which carries `slug` instead.
+             */
+            memory_id?: string | null;
+            /** @description The standard's deep-linkable slug; `null` for a memory. */
+            slug?: string | null;
+            /** @description The one-sentence claim, verbatim — never re-typed by a model. */
+            statement: string;
+        };
+        PreEditResponse: {
+            /**
+             * @description Always `allow` today. The field exists so a future `guard_mode` can warn
+             *     or block without a shape change — and so a client written now already
+             *     reads the decision instead of assuming it.
+             */
+            decision: string;
+            notes: components["schemas"]["PreEditNote"][];
+            /**
+             * Format: uuid
+             * @description The project the remote+path resolved to; `null` when the repo is not
+             *     registered, which is not an error — the org's cross-cutting standards
+             *     still apply and are returned.
+             */
+            project_id?: string | null;
+            project_name?: string | null;
+        };
         PreviewBody: {
             /** Format: uuid */
             user_id: string;
@@ -4010,6 +4081,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["GraphOverviewResponse"];
                 };
+            };
+        };
+    };
+    pre_edit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreEditBody"];
+            };
+        };
+        responses: {
+            /** @description Advisory notes for the pending edit */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreEditResponse"];
+                };
+            };
+            /** @description Unusable remote */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or unknown bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Token lacks the `read` scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

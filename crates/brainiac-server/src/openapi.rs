@@ -96,6 +96,7 @@ impl Modify for BearerAuth {
         console::graph_overview,
         console::graph_canonical,
         // analytics
+        crate::guard::pre_edit,
         console::analytics,
         console::analytics_value,
         console::observatory,
@@ -243,6 +244,9 @@ impl Modify for BearerAuth {
         console::AnalyticsReviews,
         console::AnalyticsGraph,
         console::QueueDepth,
+        crate::guard::PreEditBody,
+        crate::guard::PreEditNote,
+        crate::guard::PreEditResponse,
         console::AnalyticsResponse,
         console::UnansweredAsk,
         console::AnalyticsValueResponse,
