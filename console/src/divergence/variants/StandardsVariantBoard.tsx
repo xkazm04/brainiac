@@ -284,8 +284,10 @@ function BenchRow({
                   ratify as standard
                 </button>
                 <span className="min-w-0 flex-1 text-sm leading-snug" style={{ color: INK_FAINT }}>
-                  Not wired yet — nothing on the server records a ratification. It is not the sweep&rsquo;s
-                  call to make either: a lead ratifies this, with the approaches above in hand.
+                  Not wired in this board yet — the server does record a ratification
+                  (<code>POST /v1/library/divergences/{"{id}"}/ratify</code>, maintainer-gated, which
+                  mints the standard candidate). It is not the sweep&rsquo;s call to make either: a
+                  lead ratifies this, with the approaches above in hand.
                 </span>
               </div>
 

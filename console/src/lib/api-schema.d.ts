@@ -2651,6 +2651,15 @@ export interface components {
             axis: string;
             /** Format: date-time */
             detected_at: string;
+            /**
+             * Format: uuid
+             * @description Stable id of the divergence — the handle `POST
+             *     /v1/library/divergences/{id}/ratify` takes. Withholding it was what left
+             *     the console's "ratify as standard" control disabled even though the
+             *     endpoint and `library::ratify_divergence` both existed. Stable across
+             *     sweeps as of migration 0042.
+             */
+            id: string;
             /** @description high | medium | low. */
             impact: string;
             /** @description Which model adjudicated it — provenance for a decision-shaping report. */

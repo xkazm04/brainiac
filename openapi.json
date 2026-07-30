@@ -6288,6 +6288,7 @@
       "PracticeDivergence": {
         "type": "object",
         "required": [
+          "id",
           "practice",
           "summary",
           "recommended_standard",
@@ -6307,6 +6308,11 @@
           "detected_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable id of the divergence — the handle `POST\n/v1/library/divergences/{id}/ratify` takes. Withholding it was what left\nthe console's \"ratify as standard\" control disabled even though the\nendpoint and `library::ratify_divergence` both existed. Stable across\nsweeps as of migration 0042."
           },
           "impact": {
             "type": "string",

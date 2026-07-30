@@ -2940,6 +2940,12 @@ pub(crate) async fn snapshot_all_orgs(admin: &sqlx::PgPool) -> anyhow::Result<(u
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct PracticeDivergence {
+    /// Stable id of the divergence — the handle `POST
+    /// /v1/library/divergences/{id}/ratify` takes. Withholding it was what left
+    /// the console's "ratify as standard" control disabled even though the
+    /// endpoint and `library::ratify_divergence` both existed. Stable across
+    /// sweeps as of migration 0042.
+    pub id: Uuid,
     /// The named practice, e.g. "service retry policy".
     pub practice: String,
     /// One line: what actually differs between the teams.
@@ -2979,7 +2985,7 @@ pub(crate) async fn practice_divergence(
     let principal = principal_of(&state, &headers).await?;
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let rows = sqlx::query(
-        "SELECT practice, summary, recommended_standard, impact, positions, model_ref, detected_at, axis
+        "SELECT id, practice, summary, recommended_standard, impact, positions, model_ref, detected_at, axis
          FROM practice_divergences
          ORDER BY CASE impact WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, detected_at DESC",
     )
@@ -2989,6 +2995,7 @@ pub(crate) async fn practice_divergence(
     let divergences = rows
         .iter()
         .map(|r| PracticeDivergence {
+            id: r.get("id"),
             practice: r.get("practice"),
             summary: r.get("summary"),
             recommended_standard: r.get("recommended_standard"),

@@ -15,6 +15,7 @@ import type { PracticeDivergences } from "@/lib/types";
 export const DEMO_DIVERGENCES: PracticeDivergences = {
   divergences: [
     {
+      id: "11111111-1111-4111-8111-111111111111",
       practice: "service retry policy",
       summary:
         "The platform team and the payments team run different retry caps for service calls, so the same failure is handled two ways depending on who owns the code.",
@@ -30,6 +31,7 @@ export const DEMO_DIVERGENCES: PracticeDivergences = {
       axis: "team",
     },
     {
+      id: "22222222-2222-4222-8222-222222222222",
       practice: "idempotency key TTL",
       summary:
         "Payments and platform expire idempotency keys on different clocks, so a retried request that is safe for one service is a duplicate for the other.",
@@ -47,6 +49,7 @@ export const DEMO_DIVERGENCES: PracticeDivergences = {
     // The PR3 class: two APPLICATIONS diverging — a per-stack rule candidate
     // for the Library, not a team conversation.
     {
+      id: "33333333-3333-4333-8333-333333333333",
       practice: "client timeout budget",
       summary:
         "payments-api calls the PSP with a 30-second timeout while checkout-web abandons the same call at 5 seconds, so one user journey gives up while the other is still waiting.",

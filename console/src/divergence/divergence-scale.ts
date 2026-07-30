@@ -61,6 +61,8 @@ export function makeLargeDivergences(n: number = SCALE_DIVERGENCES): PracticeDiv
     if (tc === ta || tc === tb) tc = TEAMS[(TEAMS.indexOf(tc) + 2) % TEAMS.length];
     const suffix = i >= PRACTICES.length ? ` (${["ingest", "serving", "batch", "edge", "mobile"][Math.floor(i / PRACTICES.length) % 5]})` : "";
     return {
+      // Deterministic stand-in for the server's stable divergence id (0042).
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
       practice: `${practice}${suffix}`,
       summary: `${ta} and ${tb} each solved this their own way, ${pick(QUALIFIER, seed, 6)}.`,
       recommended_standard: standard,
