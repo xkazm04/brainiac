@@ -336,6 +336,62 @@ mod tests {
         assert!(regression_failures(&r, &b).is_empty());
     }
 
+    /// What the committed baselines actually cover — pinned in code, because
+    /// "the eval gates are green" is easy to read as "retrieval quality is
+    /// defended for the embedder you deploy", and the truth is split.
+    ///
+    /// Five baselines are calibrated on `DeterministicEmbedder`
+    /// ("deterministic-bow-v1"), a bag-of-words embedder that exists so CI can
+    /// run with no provider key: those gates defend the plumbing and the graph
+    /// thesis on numbers no production deployment observes. Two — docs and
+    /// extraction — are calibrated on a real embedder, so they defend numbers a
+    /// deployment does see, and can only run where that key exists.
+    ///
+    /// Comparing across embedders is refused rather than silently allowed (the
+    /// `embedder mismatch` check above, mirrored in the contradiction, docs and
+    /// drift profiles), so the split is sound. It is also invisible, which is
+    /// what this test fixes: re-committing any baseline from a different
+    /// embedder changes what CI promises, and that should be a deliberate edit
+    /// here plus a line in docs/EVAL.md — not a quiet change of meaning.
+    #[test]
+    fn committed_baselines_pin_the_embedder_they_were_calibrated_on() {
+        use brainiac_core::embed::{DeterministicEmbedder, Embedder};
+
+        let toy = DeterministicEmbedder::default().model_name().to_string();
+        // The scope of every committed baseline, as of 2026-07-30.
+        let expected: &[(&str, &str)] = &[
+            ("baseline.json", &toy),
+            ("contradiction-baseline.json", &toy),
+            ("drift-baseline.json", &toy),
+            ("pipeline-baseline.json", &toy),
+            ("resolution-baseline.json", &toy),
+            // Real-embedder gates: they defend production-observable numbers and
+            // need a live key to reproduce.
+            ("docs-baseline.json", "qwen:text-embedding-v4"),
+            ("extraction-baseline.json", "qwen:text-embedding-v4"),
+        ];
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("results");
+
+        for (name, want) in expected {
+            let path = root.join(name);
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let v: serde_json::Value = serde_json::from_str(&raw).expect("baseline is json");
+            let got = v
+                .get("embedding_model")
+                .and_then(|m| m.as_str())
+                .unwrap_or_else(|| panic!("{name} carries no embedding_model stamp"));
+            assert_eq!(
+                got, *want,
+                "{name} is now calibrated on '{got}', not '{want}' — what CI promises just \
+                 changed scope. Update this table and docs/EVAL.md §3.2 deliberately."
+            );
+        }
+    }
+
     #[test]
     fn thesis_check_fires_when_graph_stops_helping() {
         let r = report(

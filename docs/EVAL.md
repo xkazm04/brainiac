@@ -1,5 +1,14 @@
 # Golden Fixture Design — Eval Harness & Embedding Bake-off
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `crates/brainiac-eval/**` — the profiles, gates, grid driver, and report format
+> - `crates/brainiac-fixtures/**` — the Meridian loader, schema, validator, exporter
+> - `fixtures/schema/**` — the fixture JSON schemas
+> - `fixtures/v1/**`, `fixtures/v2/**` — the golden corpora
+> - `results/**` — committed baselines and CI run artifacts
+> - `.github/workflows/ci.yml` — where the gates actually run
+
 **Purpose.** One synthetic dataset, three jobs:
 
 1. **CI regression gate** — prompt, model, or retrieval changes must not silently degrade pipeline quality.
@@ -277,6 +286,15 @@ Decision table output per configuration: NDCG@10 overall + per stratum (watch **
 | Retrieval p95 (hybrid+rerank, reference hardware) | ≤ 400 ms |
 
 Results JSON is append-committed to `results/history/` so score trajectories are diffable in Git — the same discipline the product itself preaches.
+
+**What a green gate does and does not promise.** Every baseline records the embedder that produced it, and a run against a different one is *refused*, not silently compared — so no gate here is comparing apples to oranges. But the committed set is deliberately split, and the halves mean different things:
+
+| Baseline | Embedder | So a green gate means |
+|---|---|---|
+| `baseline.json`, `contradiction-`, `drift-`, `pipeline-`, `resolution-` | `deterministic-bow-v1` (bag-of-words, no key needed) | the plumbing and the graph thesis did not regress — on numbers **no deployment observes** |
+| `docs-`, `extraction-` | `qwen:text-embedding-v4` | quality did not regress on numbers a deployment **does** observe; needs a live key to reproduce |
+
+That is a sound arrangement, not a gap: the deterministic half is what lets CI prove the wiring on every push with no provider key. It is worth stating because "eval gates green" reads like the stronger claim. `gates.rs::committed_baselines_pin_the_embedder_they_were_calibrated_on` pins the table above, so re-baselining anything on a different embedder fails until this section is updated with it.
 
 ### 3.3 LLM-as-judge hygiene
 
