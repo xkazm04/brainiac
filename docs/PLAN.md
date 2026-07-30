@@ -1,5 +1,13 @@
 # Brainiac — Implementation Plan (baseline build)
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `crates/**` — the whole workspace (this plan spans every crate)
+> - `Cargo.toml` — workspace membership and the pinned dependency set
+> - `docker-compose.yml` — the dev Postgres (pgvector) this plan assumes
+> - `migrations/0001_init.sql`, `migrations/0003_api_tokens.sql` — the baseline schema and API tokens
+> - `.github/workflows/ci.yml` — the gates that define "done"
+
 Goal of this plan: reach a **working baseline where every architecture component
 cooperates end-to-end** on the Meridian golden fixtures, in production-quality
 Rust, before any feature expansion or benchmarking. `docs/ARCHITECTURE.md` is

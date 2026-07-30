@@ -1,5 +1,14 @@
 # Brainiac — the knowledge base layer
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `crates/brainiac-store/src/documents.rs`, `crates/brainiac-store/src/publishing.rs` — the page/revision data plane and the publish gate
+> - `crates/brainiac-pipeline/src/compose.rs`, `crates/brainiac-pipeline/src/standards_page.rs` — composition
+> - `crates/brainiac-publish/**` — the outward targets (Git, Confluence, OKF)
+> - `crates/brainiac-server/src/docs.rs` — the `/v1/docs` surface
+> - `console/src/kb/**`, `console/src/docs/**` — the console's KB surfaces
+> - `migrations/0017_document_layer.sql`, `migrations/0020_kb_publishing.sql` — the schema
+
 **Status: v0.5 built end to end (KB0–KB5), and switched OFF.** The whole layer —
 substrate, document core, read surfaces, publishing, the human round trip — is
 merged and tested. Nothing is enabled for any real org: `kb_enabled` is false by

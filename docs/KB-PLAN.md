@@ -1,5 +1,17 @@
 # Brainiac — Knowledge Base Layer Plan (v0.5 line)
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `crates/brainiac-store/src/documents.rs`, `crates/brainiac-store/src/publishing.rs`
+> - `crates/brainiac-pipeline/src/compose.rs`
+> - `crates/brainiac-publish/**`
+> - `crates/brainiac-server/src/docs.rs`, `crates/brainiac-server/src/sweeps.rs`
+> - `console/src/kb/**`, `console/src/docs/**`, `console/src/health/**`
+> - Migrations: `migrations/0014_knowledge_health_snapshots.sql`, `migrations/0015_memory_facets.sql`,
+>   `migrations/0017_document_layer.sql`, `migrations/0018_sweep_schedules.sql`,
+>   `migrations/0019_document_delete_policy.sql`, `migrations/0020_kb_publishing.sql`,
+>   `migrations/0023_memory_title.sql`, `migrations/0025_document_reads.sql`, `migrations/0027_digest_kind.sql`
+
 Goal: implement the auto-managed document layer of `docs/ARCHITECTURE.md` §8 —
 **the wiki that cannot rot** — through external publishing (Confluence), in
 production-quality Rust, gated by the eval metrics already specified in

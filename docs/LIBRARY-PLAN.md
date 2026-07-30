@@ -1,5 +1,16 @@
 # Brainiac — Library Layer Plan (v0.6 line)
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `crates/brainiac-core/src/library.rs` — the normative-layer domain types
+> - `crates/brainiac-store/src/library/**` — standards, skills, proposals, usage, the divergence bridge
+> - `crates/brainiac-pipeline/src/library_sweep.rs`, `crates/brainiac-pipeline/src/standards_page.rs`, `crates/brainiac-pipeline/src/divergence.rs`
+> - `crates/brainiac-server/src/library.rs` — the `/v1/library` surface
+> - `console/src/library/**`, `console/src/divergence/**`
+> - Migrations: `migrations/0016_practice_divergences.sql`, `migrations/0028_library_substrate.sql`,
+>   `migrations/0029_library_mining.sql`, `migrations/0030_library_proposals.sql`,
+>   `migrations/0031_standards_pages.sql`, `migrations/0032_skill_proposals.sql`, `migrations/0033_list_indexes.sql`
+
 Goal: implement the third module group of the product — the **Library**: coding
 standards per tech stack and skills for LLM development, as governed,
 versioned, provenance-carrying artifacts with a programmatic distribution

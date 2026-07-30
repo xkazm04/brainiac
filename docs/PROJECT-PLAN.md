@@ -1,5 +1,16 @@
 # PROJECT-PLAN — the project dimension across memory, knowledge, and the console
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `crates/brainiac-store/src/projects.rs` — projects + the repo whitelist
+> - `crates/brainiac-store/src/memories.rs`, `crates/brainiac-store/src/governance.rs`, `crates/brainiac-store/src/retrieval.rs` — project stamping and the retrieval lens
+> - `crates/brainiac-server/src/projects.rs`, `crates/brainiac-server/src/http.rs`, `crates/brainiac-server/src/mcp.rs` — the REST + MCP project scope
+> - `crates/brainiac-pipeline/src/extract.rs`, `crates/brainiac-pipeline/src/divergence.rs` — stamping in the worker, the project divergence axis
+> - `console/src/observatory/**`, `console/src/divergence/**`
+> - Migrations: `migrations/0034_projects_onboarding.sql`, `migrations/0035_project_stamping.sql`,
+>   `migrations/0037_divergence_axis.sql`, `migrations/0038_document_project.sql`,
+>   `migrations/0039_project_path_prefix.sql`, `migrations/0040_project_isolation.sql`
+
 **Status:** analysis settled 2026-07-17; **PR0, PR1 and PR2 built 2026-07-17**
 (0035 + stamping through HTTP/MCP/worker; retrieval lens in both candidate
 queries + `admits`, REST `SearchBody.project_id`, MCP `scope: "project"`;

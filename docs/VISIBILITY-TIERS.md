@@ -1,5 +1,17 @@
 # Visibility: the contractor tier and the observer role
 
+> **Source of truth (the code this design constrains).** This document is a
+> contract for work not yet started; these are the paths any implementation
+> must touch, and the paths whose change makes this contract stale.
+>
+> - `crates/brainiac-store/src/retrieval.rs`, `crates/brainiac-store/src/memories.rs` — the admission predicate and the tier columns
+> - `crates/brainiac-store/src/identities.rs` — federated identity → org
+> - `crates/brainiac-server/src/auth.rs` — principal resolution and scopes
+> - `crates/brainiac-core/src/health.rs` — the health math the tiers feed
+> - Migrations: `migrations/0001_init.sql` (visibility enum + RLS), `migrations/0002_worker_read.sql`,
+>   `migrations/0022_identities.sql`, `migrations/0040_project_isolation.sql`
+> - `fixtures/v1/**`, `fixtures/v2/**` — the leak suite that must cover any new tier
+
 Status: **design** (2026-07-15). Implementation is deliberately not started —
 this document exists so that when it starts, it starts from a contract, and so
 the parts that need *no* implementation stop being listed as gaps.

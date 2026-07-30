@@ -1,5 +1,12 @@
 # The bank corpus — what a real org's knowledge actually looks like
 
+> **Source of truth (code this doc describes).** If these change, this doc is stale.
+>
+> - `tools/bank-org.mjs` — the org/team/user shape
+> - `tools/gen-bank-corpus.mjs` — corpus generation
+> - `tools/seed-bank-docs.mjs` — document seeding
+> - `fixtures/bank/**` — the generated corpus itself
+
 **Why this exists.** Every surface in this console was designed against Meridian
 the fintech: 9 users, 3 teams, 81 memories, 2 divergences, 0 contradictions. At
 that size every list fits on a screen, so no module has ever had to answer the
