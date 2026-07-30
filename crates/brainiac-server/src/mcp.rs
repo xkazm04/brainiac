@@ -208,6 +208,10 @@ pub struct McpState {
     /// project-scoped key (`project_id: Some(_)`) already knows its project
     /// and ignores this field.
     pub session_remote: Option<String>,
+    /// The managed key backing this session — the AGENT's identity, recorded on
+    /// the demand ledger (migration 0043) so "which agents were served this
+    /// belief?" is answerable. `None` for an env bootstrap token.
+    pub token_id: Option<Uuid>,
 }
 
 /// The scope a tool requires — the MCP mirror of the `auth_of(&state, scope)`
@@ -253,6 +257,7 @@ impl McpState {
         let principal = ctx.principal;
         let scopes = ctx.scopes;
         let project_id = ctx.project_id;
+        let token_id = ctx.token_id;
         // PROJECT-PLAN PR2: the checkout's git remote, if the registration
         // (`claude mcp add -e BRAINIAC_REPO_REMOTE=…`) set one. Absent/empty
         // is treated as "no remote" — never an error — so a session with no
@@ -283,6 +288,7 @@ impl McpState {
             scopes,
             project_id,
             session_remote,
+            token_id,
         })
     }
 
@@ -823,6 +829,7 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
     let as_of = parse_as_of(args)?;
     let filters = parse_filters(state, args)?;
 
+    let started = std::time::Instant::now();
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     let hits = brainiac_store::retrieval::search(
         &mut tx,
@@ -867,6 +874,29 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
             .filter(|h| contradictions.contains_key(&h.memory.id))
             .count()
     };
+    // The demand ledger (0043). Records what was actually SERVED — the withheld
+    // set is counted, not listed as served — plus `withheld_contested`, which
+    // until now was computed here and thrown away, losing the one signal that
+    // shows governance debt as pressure ("agents needed this 47 times and we
+    // refused because nobody has reconciled it"). Fire-and-forget: a ledger
+    // write must never fail an agent's answer.
+    let served: Vec<(uuid::Uuid, Option<f64>)> = hits
+        .iter()
+        .filter(|h| include_contested || !contradictions.contains_key(&h.memory.id))
+        .map(|h| (h.memory.id, Some(h.score)))
+        .collect();
+    crate::demand::record_retrieval_quietly(
+        &state.store,
+        &state.principal,
+        state.token_id,
+        "mcp",
+        "memory_search",
+        query,
+        &served,
+        withheld_contested,
+        started.elapsed().as_millis(),
+    )
+    .await;
     Ok(json!({
         "memories": hits.iter().filter(|h| {
             include_contested || !contradictions.contains_key(&h.memory.id)
@@ -1074,6 +1104,7 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
     // Optional point-in-time view — strictly parsed (see `parse_as_of`).
     let as_of = parse_as_of(args)?;
 
+    let started = std::time::Instant::now();
     let mut tx = state.store.scoped_tx(&state.principal).await?;
     // Push the Canonical floor INTO the SQL candidate stage (RetrievalFilters
     // min_status) rather than filtering post-hoc: the full k-budget is now spent
@@ -1122,6 +1153,7 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
     let mut contested = String::new();
     let mut included = 0usize;
     let mut contested_count = 0usize;
+    let mut packed: Vec<(Uuid, Option<f64>)> = Vec::new();
     for h in &hits {
         let mut line = format!(
             "- [{}] {} (memory:{})",
@@ -1153,6 +1185,10 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
         }
         bundle.push_str(&line);
         included += 1;
+        // What the agent actually received — not what retrieval returned. The
+        // bundle is char-budgeted and quarantines contested rows, so the served
+        // set is strictly smaller than `hits` and only this loop knows it.
+        packed.push((h.memory.id, Some(h.score)));
     }
     let mut context = format!(
         "Organizational knowledge relevant to your task ({included} settled canonical memories, cite ids when you rely on them):\n{bundle}"
@@ -1165,6 +1201,21 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
              If you need this, escalate or verify against the source/code:\n{contested}"
         ));
     }
+    // The demand ledger (0043). A context bundle is a retrieval too — arguably
+    // the most consequential one, since the agent acts on it directly rather
+    // than reading a ranked list. `contested_count` is the withheld figure here.
+    crate::demand::record_retrieval_quietly(
+        &state.store,
+        &state.principal,
+        state.token_id,
+        "mcp",
+        "memory_context",
+        hint,
+        &packed,
+        contested_count,
+        started.elapsed().as_millis(),
+    )
+    .await;
     Ok(json!({
         "context": context,
         "memories_included": included,
@@ -1456,6 +1507,24 @@ async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value, ToolEr
     if visible.is_none() {
         return Err(rejected("memory not found"));
     }
+    // Optional: the retrieval this verdict is about (migration 0043). Validated
+    // under the caller's RLS — an unknown or other-org event id is refused
+    // rather than silently stored as NULL, because a verdict that claims an
+    // answer worked must point at an answer that was actually served.
+    let retrieval_event_id = match args.get("event_id").and_then(|v| v.as_str()) {
+        None => None,
+        Some(raw) => {
+            let id = Uuid::parse_str(raw).map_err(|_| rejected("event_id must be a uuid"))?;
+            let seen = sqlx::query("SELECT 1 FROM retrieval_events WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            if seen.is_none() {
+                return Err(rejected("event_id not found"));
+            }
+            Some(id)
+        }
+    };
     brainiac_store::feedback::insert(
         &mut tx,
         Uuid::new_v4(),
@@ -1464,6 +1533,7 @@ async fn memory_feedback(state: &McpState, args: &Value) -> Result<Value, ToolEr
         state.principal.user_id,
         verdict,
         note,
+        retrieval_event_id,
     )
     .await?;
     let summary = brainiac_store::feedback::summary(&mut tx, memory_id).await?;

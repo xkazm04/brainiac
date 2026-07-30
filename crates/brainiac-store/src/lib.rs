@@ -24,6 +24,7 @@ pub mod projects;
 pub mod publishing;
 pub mod queue;
 pub mod retrieval;
+pub mod retrieval_events;
 pub mod test_support;
 pub mod tokens;
 

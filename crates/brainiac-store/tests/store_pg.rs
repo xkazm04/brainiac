@@ -1299,6 +1299,7 @@ async fn feedback_claims_queue_and_resolution() {
         uuid(11),
         "helpful",
         None,
+        None,
     )
     .await
     .expect("helpful");
@@ -1323,6 +1324,7 @@ async fn feedback_claims_queue_and_resolution() {
             uuid(11),
             verdict,
             note,
+            None,
         )
         .await
         .expect("negative verdict");
@@ -1406,6 +1408,7 @@ async fn feedback_claims_queue_and_resolution() {
         uuid(103),
         uuid(11),
         "wrong",
+        None,
         None,
     )
     .await

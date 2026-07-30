@@ -591,6 +591,7 @@ async fn mcp_state(ctx: &Ctx, user: Uuid) -> std::sync::Arc<brainiac_server::mcp
         scopes: None,
         project_id: None,
         session_remote: None,
+        token_id: None,
     })
 }
 

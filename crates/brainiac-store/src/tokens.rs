@@ -11,6 +11,11 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedToken {
+    /// The key's own row id. This is the AGENT's identity — the demand ledger
+    /// (0043) records it so a fleet-level question ("which agents acted on this
+    /// belief?") is answerable. It is deliberately NOT a person: see the
+    /// never-a-leaderboard note in 0043.
+    pub id: Uuid,
     pub org_id: Uuid,
     pub user_id: Uuid,
     pub scopes: Vec<String>,
@@ -37,12 +42,13 @@ pub async fn resolve(pool: &PgPool, token_hash: &[u8]) -> Result<Option<Resolved
     let row = sqlx::query(
         "UPDATE api_tokens SET last_used_at = now()
          WHERE token_hash = $1 AND revoked_at IS NULL
-         RETURNING org_id, user_id, scopes, project_id",
+         RETURNING id, org_id, user_id, scopes, project_id",
     )
     .bind(token_hash)
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|r| ResolvedToken {
+        id: r.get("id"),
         org_id: r.get("org_id"),
         user_id: r.get("user_id"),
         scopes: r.get("scopes"),

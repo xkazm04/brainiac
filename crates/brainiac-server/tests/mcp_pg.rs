@@ -63,6 +63,7 @@ async fn mcp_handshake_and_tools() {
         scopes: None,
         project_id: None,
         session_remote: None,
+        token_id: None,
     });
 
     // initialize
@@ -1515,6 +1516,7 @@ async fn memory_add_auto_attributes_via_resolved_session_remote() {
         // Un-normalized form of the whitelisted remote — normalize_remote
         // must fold it to exactly `remote` for find_by_remote to hit.
         session_remote: Some(format!("https://{remote}.git")),
+        token_id: None,
     });
 
     let r = handle_message(
@@ -1571,6 +1573,7 @@ async fn memory_add_unresolvable_session_remote_stays_org_shared() {
         scopes: None,
         project_id: None,
         session_remote: Some("github.com/nobody/unknown".to_string()),
+        token_id: None,
     });
 
     let r = handle_message(
@@ -1674,6 +1677,7 @@ async fn memory_add_project_scoped_key_ignores_session_remote() {
         project_id: Some(own_project),
         // ...even though this remote resolves to a DIFFERENT project.
         session_remote: Some(remote.to_string()),
+        token_id: None,
     });
 
     let r = handle_message(

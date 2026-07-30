@@ -121,6 +121,10 @@ pub struct AuthContext {
     /// stamping on memories/KB) has the value at every handler without
     /// another resolution round-trip; nothing enforces on it yet.
     pub project_id: Option<Uuid>,
+    /// The managed key's row id — the AGENT that is calling. `None` for env
+    /// bootstrap tokens, which have no `api_tokens` row. Recorded on the demand
+    /// ledger (migration 0043); never used to identify a person.
+    pub token_id: Option<Uuid>,
 }
 
 impl AuthContext {
@@ -161,6 +165,8 @@ pub async fn resolve_bearer(
             principal: principal.clone(),
             scopes: None,
             project_id: None,
+            // An env bootstrap token has no api_tokens row to point at.
+            token_id: None,
         }));
     }
     if !bearer.starts_with(TOKEN_PREFIX) {
@@ -184,6 +190,7 @@ pub async fn resolve_bearer(
         },
         scopes: Some(resolved.scopes),
         project_id: resolved.project_id,
+        token_id: Some(resolved.id),
     }))
 }
 
@@ -203,12 +210,14 @@ mod tests {
             principal: p.clone(),
             scopes: None,
             project_id: None,
+            token_id: None,
         };
         assert!(env.allows("admin"));
         let read_only = AuthContext {
             principal: p.clone(),
             scopes: Some(vec!["read".into()]),
             project_id: None,
+            token_id: None,
         };
         assert!(read_only.allows("read"));
         assert!(!read_only.allows("write"));
@@ -217,6 +226,7 @@ mod tests {
             principal: p,
             scopes: Some(vec!["admin".into()]),
             project_id: None,
+            token_id: None,
         };
         assert!(admin.allows("read") && admin.allows("write") && admin.allows("admin"));
     }

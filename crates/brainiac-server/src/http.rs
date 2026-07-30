@@ -362,9 +362,14 @@ pub(crate) async fn search(
     headers: HeaderMap,
     Json(body): Json<SearchBody>,
 ) -> Result<Json<SearchResponse>, HttpError> {
-    let principal = principal_of(&state, &headers).await?;
+    // `auth_of` rather than `principal_of`: the demand ledger records which
+    // agent (key) asked, and only the AuthContext carries that.
+    let ctx = auth_of(&state, &headers, "read").await?;
+    let principal = ctx.principal.clone();
     within_cap(&body.query, MAX_QUERY_CHARS, "query")?;
     let filters = body.filters()?;
+    let query_text = body.query.clone();
+    let started = std::time::Instant::now();
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let hits = brainiac_store::retrieval::search_reranked(
         &mut tx,
@@ -435,6 +440,23 @@ pub(crate) async fn search(
             }
         })
         .collect();
+    // The demand ledger (0043). Fire-and-forget, in its own transaction — note
+    // `tx` above is never committed by this handler, so a write into it would
+    // be dropped. REST withholds nothing, so `withheld_contested` is 0 here;
+    // the MCP surface is where governance withholds.
+    let served: Vec<(Uuid, Option<f64>)> = out.iter().map(|h| (h.id, Some(h.score))).collect();
+    crate::demand::record_retrieval_quietly(
+        &state.store,
+        &principal,
+        ctx.token_id,
+        "http",
+        "search",
+        &query_text,
+        &served,
+        0,
+        started.elapsed().as_millis(),
+    )
+    .await;
     Ok(Json(SearchResponse { hits: out }))
 }
 
@@ -925,6 +947,10 @@ pub(crate) async fn memory_feedback(
         principal.user_id,
         verdict,
         note,
+        // Console feedback is not answering a served retrieval — a reviewer is
+        // judging a row on its own terms. The MCP surface is where a verdict
+        // can name the retrieval it came from.
+        None,
     )
     .await
     .map_err(internal)?;

@@ -20,6 +20,14 @@ pub const VERDICTS: [&str; 3] = ["helpful", "wrong", "outdated"];
 pub const NEGATIVE_VERDICTS: [&str; 2] = ["wrong", "outdated"];
 pub const RESOLUTIONS: [&str; 3] = ["reverified", "deprecated", "dismissed"];
 
+/// Record a verdict.
+///
+/// `retrieval_event_id` (migration 0043) binds the verdict to the retrieval it
+/// is about, which is what turns "someone liked this row" into "this ANSWER
+/// worked for that question". `None` for console feedback and for any caller
+/// that did not come from a served result — the column is nullable precisely
+/// because a verdict is still valid without a question attached.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     conn: &mut PgConnection,
     id: Uuid,
@@ -28,10 +36,12 @@ pub async fn insert(
     user_id: Uuid,
     verdict: &str,
     note: Option<&str>,
+    retrieval_event_id: Option<Uuid>,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO memory_feedback (id, org_id, memory_id, user_id, verdict, note)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO memory_feedback
+            (id, org_id, memory_id, user_id, verdict, note, retrieval_event_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(id)
     .bind(org_id)
@@ -39,6 +49,7 @@ pub async fn insert(
     .bind(user_id)
     .bind(verdict)
     .bind(note)
+    .bind(retrieval_event_id)
     .execute(conn)
     .await?;
     Ok(())
