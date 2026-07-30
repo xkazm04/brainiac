@@ -5,8 +5,23 @@
 # (the pipeline worker runs in-process via `serve --with-worker`), and
 # Postgres is tuned down from its defaults. Add 2 GB of swap on the host.
 #
+# Images are PULLED from GHCR by default (published by
+# .github/workflows/release.yml on every `v*` tag) — a 1 vCPU box must not spend
+# ~10 minutes compiling Rust on every deploy:
+#
 #   cp .env.deploy.example .env.deploy && edit
-#   docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d --build
+#   docker compose -f docker-compose.deploy.yml --env-file .env.deploy pull
+#   docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d
+#
+# Building from source is the documented FALLBACK (unreleased commit, a fork, or
+# an arch GHCR doesn't publish). The `build:` stanzas live in a separate override
+# so this file has exactly one behaviour — compose only builds when you ask:
+#
+#   docker compose -f docker-compose.deploy.yml -f docker-compose.build.yml \
+#     --env-file .env.deploy up -d --build
+#
+# First boot: after the stack is healthy, run `scripts/first-boot.sh` to get off
+# the break-glass BRAINIAC_TOKENS admin and onto a revocable `brk_` key.
 
 services:
   postgres:
@@ -39,22 +54,89 @@ services:
 
   # REST + MCP + the pipeline worker, one process.
   server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/xkazm04/brainiac:${BRAINIAC_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://brainiac:${POSTGRES_PASSWORD}@postgres:5432/brainiac
-      BRAINIAC_TOKENS: ${BRAINIAC_TOKENS}
-      # Qwen cloud (Singapore) — LLM engine + embeddings.
-      QWEN_API_KEY: ${QWEN_API_KEY:?set QWEN_API_KEY}
+      # Break-glass bootstrap map. Deliberately OPTIONAL (`:-`): the end state of
+      # scripts/first-boot.sh is this var deleted from .env.deploy, with the
+      # console running on a minted `brk_` key that resolves from the api_tokens
+      # table instead. An empty map only logs a warning at boot
+      # (http.rs::router) — `brk_` keys keep resolving.
+      BRAINIAC_TOKENS: ${BRAINIAC_TOKENS:-}
+      # ── LLM provider selection ──────────────────────────────────────────
+      # BRAINIAC_PROVIDER picks the chat engine (default `qwen`); set the key(s)
+      # for whichever one you choose. See docs/deploy/providers.md for the full
+      # matrix. Unset vars pass through empty and are ignored by the gateway.
+      BRAINIAC_PROVIDER: ${BRAINIAC_PROVIDER:-qwen}
+      BRAINIAC_MODEL: ${BRAINIAC_MODEL:-}
+      BRAINIAC_EMBEDDER: ${BRAINIAC_EMBEDDER:-qwen}
+      # Qwen / DashScope (the default engine + embeddings; Singapore endpoint).
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
-      BRAINIAC_EMBEDDER: ${BRAINIAC_EMBEDDER:-qwen}
+      # OpenAI (+ any OpenAI-compatible vendor via OPENAI_BASE_URL: Groq, Together,
+      # DeepSeek, Mistral, OpenRouter, Ollama/vLLM).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      # Anthropic (Messages API).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      # Google Gemini (Generative Language API).
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_MODEL: ${GOOGLE_MODEL:-}
+      # Azure OpenAI.
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      # AWS Bedrock (SigV4; Claude-on-Bedrock).
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      BEDROCK_MODEL: ${BEDROCK_MODEL:-}
+      # Google Vertex AI (service-account OAuth or a pre-minted token).
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-}
+      VERTEX_MODEL: ${VERTEX_MODEL:-}
+      VERTEX_ACCESS_TOKEN: ${VERTEX_ACCESS_TOKEN:-}
+      VERTEX_SA_JSON: ${VERTEX_SA_JSON:-}
+      # Per-stage overrides (any `provider:model` spec), e.g. extract on a strong
+      # model, adjudication on a cheap one — optionally across providers.
+      BRAINIAC_MODEL_EXTRACT: ${BRAINIAC_MODEL_EXTRACT:-}
+      BRAINIAC_MODEL_RESOLVE: ${BRAINIAC_MODEL_RESOLVE:-}
+      BRAINIAC_MODEL_CONTRADICT: ${BRAINIAC_MODEL_CONTRADICT:-}
+      BRAINIAC_MODEL_COMPOSE: ${BRAINIAC_MODEL_COMPOSE:-}
+      BRAINIAC_MODEL_DIVERGENCE: ${BRAINIAC_MODEL_DIVERGENCE:-}
+      # Public console URL — onboarding device-flow approval links are built
+      # from this; leave unset and they point at localhost.
+      BRAINIAC_CONSOLE_URL: ${BRAINIAC_CONSOLE_URL:-}
       RUST_LOG: ${RUST_LOG:-info}
+      # ── Telemetry ───────────────────────────────────────────────────────
+      # All optional (`:-`) on purpose: telemetry must degrade silently when
+      # unset, never block a boot. Without this passthrough none of it can work
+      # no matter what .env.deploy contains — the container only sees what is
+      # listed here.
+      #
+      # BRAINIAC_ENV is the master switch for TWO things in main.rs: Sentry
+      # initializes only when this is non-"local" AND SENTRY_DSN is set, and the
+      # log format flips to line-delimited JSON on any non-"local" value so a log
+      # aggregator can parse fields instead of regexing rendered text. It is also
+      # the tag lighttrack.rs stamps on every LLM event. Defaulting to
+      # `production` matches what this file is — a deployed host, not a laptop.
+      BRAINIAC_ENV: ${BRAINIAC_ENV:-production}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # LightTrack LLM-call telemetry. UNSET ⇒ the gateway's client is
+      # permanently disabled (a no-op, no network). Production is deliberately
+      # SKIPPED for now — these stay empty here and are wired on test hosts via
+      # docker-compose.test.yml. Passed through anyway so enabling it later is an
+      # .env.deploy edit rather than a compose-file change.
+      LIGHTTRACK_URL: ${LIGHTTRACK_URL:-}
+      LIGHTTRACK_KEY: ${LIGHTTRACK_KEY:-}
+      LIGHTTRACK_PROJECT: ${LIGHTTRACK_PROJECT:-}
     command: ["brainiac", "serve", "--bind", "0.0.0.0:8600", "--with-worker"]
     expose:
       - "8600"
@@ -64,16 +146,34 @@ services:
           memory: 256M
 
   console:
-    build:
-      context: ./console
-      dockerfile: Dockerfile
+    image: ghcr.io/xkazm04/brainiac-console:${BRAINIAC_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       - server
     environment:
       BRAINIAC_API_URL: http://server:8600
       BRAINIAC_API_TOKEN: ${BRAINIAC_API_TOKEN:?set BRAINIAC_API_TOKEN}
+      # The access gate fails closed in production: without a passcode the
+      # console serves only "/" and "/demo".
+      CONSOLE_PASSCODE: ${CONSOLE_PASSCODE:?set CONSOLE_PASSCODE}
+      # Keys the session-cookie HMAC independently of the passcode. Without it
+      # console/src/lib/auth.ts `signingKey()` falls back to keying on the
+      # PASSCODE ITSELF, so anyone who guesses the passcode can mint a valid
+      # bx_console cookie offline and never touch /login's rate limiter. The
+      # console still boots — it just downgrades silently, which is why this
+      # fails closed here instead. Generate with: openssl rand -base64 32
+      CONSOLE_SESSION_SECRET: ${CONSOLE_SESSION_SECRET:?set CONSOLE_SESSION_SECRET (openssl rand -base64 32) — without it the session cookie is keyed on CONSOLE_PASSCODE, so a guessed passcode forges a session without hitting the login rate limiter}
       NODE_OPTIONS: --max-old-space-size=256
+      # NOT WIRED, deliberately: NEXT_PUBLIC_SENTRY_DSN / NEXT_PUBLIC_BRAINIAC_ENV.
+      # Next.js substitutes `NEXT_PUBLIC_*` at BUILD time (both the browser and
+      # the server bundles), and console/Dockerfile declares no matching ARG/ENV
+      # in its build stage — so in a released image the reads in
+      # instrumentation-client.ts / sentry.{server,edge}.config.ts are already
+      # compiled to `undefined` and every `if (dsn)` is dead code. Listing the
+      # vars here would change nothing at runtime while implying console error
+      # tracking works, so they are left out until console/Dockerfile grows the
+      # build args (out of scope for this file). The Rust server's Sentry above
+      # is unaffected — it reads its DSN at runtime.
     ports:
       - "80:3100"
     deploy:

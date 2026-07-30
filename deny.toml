@@ -1,0 +1,124 @@
+# cargo-deny configuration — the supply-chain gate for the Rust workspace.
+#
+# Run locally exactly as CI does:
+#   cargo install cargo-deny --locked
+#   cargo deny check
+#
+# Policy: this file describes the dependency tree as it ACTUALLY is. It is not
+# a place to make a red check green. If `advisories` fails, the fix is a
+# dependency bump or a documented, dated, per-advisory `ignore` entry with a
+# reason — never a blanket allow.
+
+# ---------------------------------------------------------------------------
+# Graph — which crates the checks below actually see.
+# ---------------------------------------------------------------------------
+[graph]
+# The workspace ships as a Debian-slim container (linux/amd64, linux/arm64) and
+# is developed on Windows and Apple Silicon. Scoping to those four targets is
+# not a suppression: it prunes crates that are never compiled or linked into
+# anything we ship (e.g. the UEFI-only `r-efi`, which is LGPL-2.1-or-later, and
+# the Apple `objc2-*` tree pulled in by sentry on non-Apple hosts). Add a target
+# here before you add its licenses to the allow-list below.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+]
+# Dev-dependencies stay in the graph: wiremock/tokio-test run in CI, so an
+# advisory there is still an advisory against our build machines.
+exclude-dev = false
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Advisories — RUSTSEC. This is the check that is allowed to be red.
+# ---------------------------------------------------------------------------
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# A yanked crate means the lockfile pins something the publisher withdrew;
+# `deny` forces us to notice it in CI rather than at the next clean build.
+yanked = "deny"
+# Flag unmaintained crates anywhere in the tree, not just direct deps —
+# unmaintained transitive crypto/parsing crates are exactly the risk here.
+unmaintained = "all"
+# Deliberately empty. See docs/ for open findings; do not add an entry without
+# a package, an advisory id, a reason, and the condition for removing it.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses — derived from `cargo deny list`, not from a template.
+# ---------------------------------------------------------------------------
+[licenses]
+# Every license below is present in the current tree under the targets above.
+# Adding a license here is a legal decision; re-run `cargo deny list` and add
+# only what the tree actually contains.
+allow = [
+    "0BSD",              # adler2
+    "Apache-2.0",        # the bulk of the tree
+    "BSD-2-Clause",      # zerocopy
+    "BSD-3-Clause",      # matchit, subtle, aws-lc-sys
+    "BSL-1.0",           # ryu, whoami, wasite
+    "CC0-1.0",           # dunce
+    "CDLA-Permissive-2.0", # webpki-roots (Mozilla CA bundle data)
+    "ISC",               # aws-lc-rs, untrusted, rustls-webpki
+    "MIT",               # the other bulk of the tree; also this workspace
+    "MIT-0",             # aws-lc-sys, dunce
+    "OpenSSL",           # aws-lc-sys vendored BoringSSL provenance (see exception)
+    "Unicode-3.0",       # the ICU / unicode-ident family
+    "Unlicense",         # memchr, aho-corasick, walkdir, byteorder (dual w/ MIT)
+    "Zlib",              # miniz_oxide, tinyvec, foldhash
+]
+# `Apache-2.0 WITH LLVM-exception` (wasi, wit-bindgen) is accepted by the
+# `Apache-2.0` entry plus this exception allowance.
+exceptions = []
+confidence-threshold = 0.9
+
+# aws-lc-sys ships vendored BoringSSL/AWS-LC sources whose SPDX expression
+# includes ISC AND (Apache-2.0 OR ISC) AND OpenSSL; the crate itself is
+# Apache-2.0/ISC. Clarify rather than blanket-allow OpenSSL tree-wide.
+[[licenses.clarify]]
+crate = "aws-lc-sys"
+expression = "ISC AND (Apache-2.0 OR ISC) AND OpenSSL"
+license-files = []
+
+# ---------------------------------------------------------------------------
+# Bans — architectural invariants that CI can enforce.
+# ---------------------------------------------------------------------------
+[bans]
+# Duplicate versions are a size/rebuild concern, not a security one, and the
+# reqwest 0.12 (gateway) / 0.13 (sentry) split is upstream's to resolve. Warn
+# so it stays visible; do not block a PR on someone else's release cadence.
+multiple-versions = "warn"
+# A `*` version requirement means an unreviewed major can land silently.
+# "warn", not "deny", for one specific and reversible reason: the only wildcard
+# reqs in this tree are the intra-workspace `{ path = "../brainiac-core" }`
+# style deps (32 of them, verified: `grep -rE '= *"\*"' --include=Cargo.toml`
+# returns nothing). `allow-wildcard-paths` cannot exempt them because none of
+# the workspace crates set `publish = false`, so cargo-deny must treat them as
+# publishable. Fix: add `publish = false` to `[workspace.package]` in the root
+# Cargo.toml and have each crate inherit it — then flip this back to "deny" and
+# the gate becomes real again.
+wildcards = "warn"
+allow-wildcard-paths = true
+# CLAUDE.md: the gateway is pure-Rust crypto (rustls, no ring-via-OpenSSL, no C
+# toolchain) so the slim release image and Windows/macOS dev builds stay
+# identical. Re-introducing openssl-sys would break that silently; this is the
+# gate that says so out loud.
+deny = [
+    { crate = "openssl-sys", reason = "TLS is rustls-only (workspace deps pin `default-features = false, tls-rustls` / `rustls-tls`); openssl-sys reintroduces a C/OpenSSL build dependency the release image does not have." },
+    { crate = "openssl", reason = "See openssl-sys — rustls is the only sanctioned TLS backend." },
+]
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Sources — where code is allowed to come from.
+# ---------------------------------------------------------------------------
+[sources]
+# Cargo.lock currently contains exactly one source: crates.io. Any git or
+# alternate-registry dependency is a supply-chain change that must be reviewed,
+# not merged silently.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

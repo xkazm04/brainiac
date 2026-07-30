@@ -1,0 +1,31 @@
+# Build-from-source OVERRIDE for docker-compose.deploy.yml.
+#
+# The deploy file pulls released images from GHCR. Layer this on top when you
+# need to build locally instead — an unreleased commit, a fork, a patched
+# Dockerfile, or a CPU architecture the release workflow doesn't publish:
+#
+#   docker compose -f docker-compose.deploy.yml -f docker-compose.build.yml \
+#     --env-file .env.deploy up -d --build
+#
+# Why a separate file rather than `image:` + `build:` in one service: with both
+# keys present, `compose up` builds whenever the image is merely absent locally
+# and `compose pull` needs --ignore-buildable to behave — the deploy path would
+# silently compile Rust for ~10 minutes on a 1 vCPU box the first time. Split
+# this way, the default file has exactly one behaviour (pull) and building is
+# always an explicit act.
+#
+# `image:` is repeated so the locally built artifact lands on the same tag the
+# deploy file references — no tag drift between the two paths.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/xkazm04/brainiac:${BRAINIAC_IMAGE_TAG:-latest}
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    image: ghcr.io/xkazm04/brainiac-console:${BRAINIAC_IMAGE_TAG:-latest}

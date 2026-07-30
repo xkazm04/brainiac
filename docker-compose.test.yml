@@ -1,0 +1,155 @@
+# Brainiac — TEST environment stack.
+#
+# Same three containers as docker-compose.deploy.yml (Postgres + server with the
+# in-process worker + console), but posture-tagged BRAINIAC_ENV=test: Sentry ON
+# when SENTRY_DSN is set, LightTrack ON when LIGHTTRACK_URL is set (see
+# .env.example § Environment tag).
+#
+# Deliberately collision-free with the local dev stack (docker-compose.yml) and
+# the production stack, so all of them can coexist on one machine:
+#   project name  brainiac-test        (vs brainiac / brainiac-deploy)
+#   postgres      host 5434            (vs 5433 local, unpublished in deploy)
+#   server        host 8601            (published on purpose — the smoke check
+#                                       and integration tests hit /health here)
+#   console       host 3200            (vs 3100 local, 80 in deploy)
+#   volume        brainiac-pg-test     (a separate database, never the dev one)
+#
+#   cp .env.test.example .env.test && edit
+#   docker compose -f docker-compose.test.yml --env-file .env.test up -d --build
+#   ./scripts/smoke-test-env.sh
+#
+# BUILDS FROM SOURCE, unlike docker-compose.deploy.yml which pulls a released
+# GHCR tag. That inversion is deliberate: a test host exists to run the commit
+# you are working on, usually before any tag exists. There is no `image:` key
+# here for the same reason docker-compose.build.yml is a separate file — with
+# both keys present, `up` builds whenever the image is merely absent and `pull`
+# needs --ignore-buildable. One key, one behaviour.
+#
+# Full guide: docs/deploy/test-env.md.
+
+name: brainiac-test
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brainiac
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: brainiac
+    # Published so you can psql the test corpus directly (fixtures, eval runs,
+    # a manual pg_dump). Bind to loopback only — a test box is still a box on
+    # the internet, and this database holds whatever you imported into it.
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brainiac -d brainiac"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - brainiac-pg-test:/var/lib/postgresql/data
+
+  # REST + MCP + the pipeline worker, one process — identical to production.
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://brainiac:${POSTGRES_PASSWORD}@postgres:5432/brainiac
+      BRAINIAC_TOKENS: ${BRAINIAC_TOKENS:?set BRAINIAC_TOKENS}
+      # ── Environment posture ─────────────────────────────────────────────
+      # The whole point of this file. "test" ⇒ Sentry initializes when
+      # SENTRY_DSN is set (main.rs), and every event is tagged environment=test
+      # so test noise never pollutes the production issue stream.
+      BRAINIAC_ENV: test
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # LightTrack LLM-call telemetry: UNSET ⇒ the gateway records nothing.
+      # Test is the environment this is designed for (production is skipped).
+      LIGHTTRACK_URL: ${LIGHTTRACK_URL:-}
+      LIGHTTRACK_KEY: ${LIGHTTRACK_KEY:-}
+      LIGHTTRACK_PROJECT: ${LIGHTTRACK_PROJECT:-brainiac-test}
+      # ── LLM provider selection ──────────────────────────────────────────
+      # Same matrix as the deploy stack (docs/deploy/providers.md). Mirror
+      # production's provider here or point at a cheaper model — that choice is
+      # exactly what a test environment exists to let you make.
+      BRAINIAC_PROVIDER: ${BRAINIAC_PROVIDER:-qwen}
+      BRAINIAC_MODEL: ${BRAINIAC_MODEL:-}
+      BRAINIAC_EMBEDDER: ${BRAINIAC_EMBEDDER:-qwen}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_MODEL: ${GOOGLE_MODEL:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      BEDROCK_MODEL: ${BEDROCK_MODEL:-}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-}
+      VERTEX_MODEL: ${VERTEX_MODEL:-}
+      VERTEX_ACCESS_TOKEN: ${VERTEX_ACCESS_TOKEN:-}
+      VERTEX_SA_JSON: ${VERTEX_SA_JSON:-}
+      # Per-stage model overrides (`provider:model`), same as production.
+      BRAINIAC_MODEL_EXTRACT: ${BRAINIAC_MODEL_EXTRACT:-}
+      BRAINIAC_MODEL_RESOLVE: ${BRAINIAC_MODEL_RESOLVE:-}
+      BRAINIAC_MODEL_CONTRADICT: ${BRAINIAC_MODEL_CONTRADICT:-}
+      BRAINIAC_MODEL_COMPOSE: ${BRAINIAC_MODEL_COMPOSE:-}
+      BRAINIAC_MODEL_DIVERGENCE: ${BRAINIAC_MODEL_DIVERGENCE:-}
+      BRAINIAC_CONSOLE_URL: ${BRAINIAC_CONSOLE_URL:-http://localhost:3200}
+      # Louder than production by default — a test host exists to be read.
+      RUST_LOG: ${RUST_LOG:-info,brainiac=debug}
+    command: ["brainiac", "serve", "--bind", "0.0.0.0:8600", "--with-worker"]
+    # Published (loopback only) unlike production, where 8600 never leaves the
+    # compose network: the smoke check and any CI job need to reach it.
+    ports:
+      - "127.0.0.1:8601:8600"
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      BRAINIAC_API_URL: http://server:8600
+      BRAINIAC_API_TOKEN: ${BRAINIAC_API_TOKEN:?set BRAINIAC_API_TOKEN}
+      # The access gate fails closed exactly as in production, so the test host
+      # exercises the real login path rather than a weakened one.
+      CONSOLE_PASSCODE: ${CONSOLE_PASSCODE:?set CONSOLE_PASSCODE}
+      # Required here for the same reason as in production: without it
+      # console/src/lib/auth.ts signingKey() falls back to keying the session
+      # cookie on the PASSCODE ITSELF, so a guessed passcode forges a session
+      # offline without ever hitting /login's rate limiter. A test host that
+      # silently downgrades is a test host that cannot tell you production is
+      # about to. Generate with: openssl rand -base64 32
+      CONSOLE_SESSION_SECRET: ${CONSOLE_SESSION_SECRET:?set CONSOLE_SESSION_SECRET (openssl rand -base64 32)}
+      # NOTE: Next inlines NEXT_PUBLIC_* at BUILD time and console/Dockerfile
+      # declares no build args for them, so these reach the Node runtime but NOT
+      # the browser bundle — console-side Sentry is server-runtime only until
+      # the image takes them as ARGs. The Rust server's Sentry above is
+      # unaffected. See docs/deploy/test-env.md § Known gaps.
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      NEXT_PUBLIC_BRAINIAC_ENV: test
+    # The one port deliberately NOT loopback-bound: the console is what a
+    # reviewer opens from their laptop, and it is passcode-gated (fail-closed)
+    # unlike the raw API and Postgres above. Publish it behind your firewall /
+    # security group, not on an open 0.0.0.0 the internet can reach.
+    ports:
+      - "3200:3100"
+
+volumes:
+  brainiac-pg-test:

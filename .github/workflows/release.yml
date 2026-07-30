@@ -1,0 +1,78 @@
+name: release
+
+# Publishes the two deployable images to GHCR on every version tag, so a
+# production host runs `pull && up -d` instead of compiling the Rust workspace
+# on a 1 vCPU box (~10 min of release LTO per deploy — see DEPLOY.md).
+#
+#   git tag v0.3.0 && git push origin v0.3.0
+#
+# No new secrets: GITHUB_TOKEN with `packages: write` is enough to push to
+# ghcr.io/<owner>/*. The first push of each package is private — flip it to
+# public (or grant the deploy host a read token) in the package settings once.
+on:
+  push:
+    tags: ["v*"]
+  # Rebuild the moving `latest` tag from master without cutting a version.
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # One tag must not ship half a stack: if the console image fails, the
+      # server image must not land on `latest` either.
+      fail-fast: true
+      matrix:
+        include:
+          # The Rust workspace image (serve | worker | mcp | eval).
+          - name: brainiac
+            context: .
+            dockerfile: Dockerfile
+          # The Next.js console (standalone output).
+          - name: brainiac-console
+            context: ./console
+            dockerfile: console/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Two tags per build: the immutable git tag (what a host pins via
+      # BRAINIAC_IMAGE_TAG) and the moving `latest` (the compose default).
+      # `latest` never moves for a prerelease tag (v1.0.0-rc1); on a manual
+      # workflow_dispatch there is no git tag at all, so `latest` is all we push.
+      - name: image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ github.ref_type != 'tag' || !contains(github.ref_name, '-') }}
+
+      - name: build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Buildx layer cache in the Actions cache — the Rust dependency layer
+          # is the expensive one and it changes only when Cargo.lock does.
+          # Scoped per image so the two builds don't evict each other.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

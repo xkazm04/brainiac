@@ -1,0 +1,80 @@
+# Supply-chain gate: RUSTSEC advisories + license/source policy for the Rust
+# workspace, and npm advisories for the console.
+#
+# This lives outside ci.yml on purpose. The gate needs a weekly `schedule:` —
+# an advisory published against an unchanged Cargo.lock is exactly the case CI
+# would otherwise never catch — and putting a cron on ci.yml would also spin up
+# the pgvector service, the full `cargo test --workspace` and the eval
+# regression run every week for no signal. Separate workflow, same triggers on
+# push/PR, plus the cron.
+name: security
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  schedule:
+    # Mondays 07:00 UTC — an hour after Dependabot opens its weekly PRs, so a
+    # red cron and the PR that fixes it show up together.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A second push while a scan is running makes the first one worthless.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # cargo-deny: advisories (RUSTSEC + yanked crates), licenses, bans, sources.
+  # Policy lives in deny.toml at the repo root — read the header there before
+  # changing anything here.
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Prebuilt binary rather than `cargo install cargo-deny --locked`, which
+      # compiles for ~2 minutes on every run.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      # Deliberately the same command a developer runs locally — no split
+      # checks, no per-check continue-on-error. If this is red, the dependency
+      # tree has a real problem: either bump the dep or add a dated, per-
+      # advisory `ignore` entry to deny.toml with a written reason.
+      - name: cargo deny check
+        run: cargo deny check
+
+  # npm audit for the console. Runs off package-lock.json alone — `npm audit`
+  # resolves the tree from the lockfile, so there is no `npm ci` here (verified;
+  # it produces identical results to a run with node_modules present).
+  npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      # --audit-level=high is the deliberate threshold. Lows and moderates are
+      # reported but do not fail the build: today's moderates are transitive
+      # (uuid bounds check via firebase-admin -> @google-cloud/storage), and
+      # failing on them would train everyone to ignore this job. High and
+      # critical DO fail — those are the ones with a reachable impact on a
+      # deployed console.
+      #
+      # Note this audits the full tree including devDependencies. That is
+      # intentional: the console's dev tree runs `next build` in CI and on the
+      # deploy host, so a compromised build-time package is a real path in.
+      # `npm audit --omit=dev` is the narrower view if you want to triage what
+      # actually ships.
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high

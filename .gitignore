@@ -10,6 +10,11 @@ node_modules/
 
 # deployment secrets
 .env.deploy
+# test-environment secrets (docker-compose.test.yml — see .env.test.example)
+.env.test
+# host backup config: POSTGRES_PASSWORD + the offsite BACKUP_S3_* credentials
+# that cron sources at run time (see docs/deploy/backups.md)
+.env.backup
 
 # stray worktree build output + local claude session logs
 target-wt-r/

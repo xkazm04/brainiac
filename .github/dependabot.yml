@@ -1,0 +1,101 @@
+# Dependabot — automated dependency updates for the three ecosystems this repo
+# actually has: the Rust workspace (root Cargo.toml), the Next.js console
+# (console/package.json), and the GitHub Actions used by ci.yml / release.yml /
+# security.yml.
+#
+# Design goal: keep the supply chain moving without burying the repo in PRs.
+# Everything is weekly, and non-major updates are batched into one PR per
+# ecosystem. Majors stay individual because they need a human to read a
+# changelog. Security updates are broken out into their own group so an
+# advisory fix is never queued behind a routine version bump.
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------
+  # Rust workspace. Cargo.lock is committed, so these PRs move the lock and
+  # are validated by the full `ci` workflow plus the `security` workflow's
+  # cargo-deny gate.
+  # ---------------------------------------------------------------------
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    labels: [dependencies, rust]
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      cargo-minor:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+    # Majors are deliberately left OUT of the groups above rather than
+    # `ignore`d: sqlx/axum/reqwest majors touch the data plane, the HTTP
+    # surface and the gateway respectively, so each gets its own PR and its own
+    # review + eval run. An `ignore: semver-major` rule would also swallow
+    # security fixes that are only published in a new major — don't add one.
+
+  # ---------------------------------------------------------------------
+  # Next.js console.
+  # ---------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/console"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    labels: [dependencies, console]
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      # React 19 + Next 15 + the @types/* pair must move together or the
+      # console typecheck breaks; grouping them avoids a half-updated tree.
+      react-next:
+        applies-to: version-updates
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      npm-minor:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+        update-types: [minor, patch]
+
+  # ---------------------------------------------------------------------
+  # GitHub Actions. Low volume; one batched PR is plenty.
+  # ---------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+    labels: [dependencies, github-actions]
+    groups:
+      actions:
+        patterns: ["*"]
