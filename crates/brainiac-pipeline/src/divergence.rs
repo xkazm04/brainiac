@@ -108,7 +108,9 @@ pub struct DivergenceStats {
     pub divergences: usize,
 }
 
-/// Scan one org for practice divergences, replacing any prior scan's rows. Uses a
+/// Scan one org for practice divergences, reconciling against any prior scan's
+/// rows: a divergence still present keeps its `id` (standards cite it), and only
+/// divergences this scan no longer confirms are retired. Uses a
 /// raw (RLS-bypassing) pool — this is an operator/scheduled sweep, like reembed,
 /// not a per-request path. Returns what it found.
 pub async fn scan_org(
@@ -237,12 +239,31 @@ pub async fn scan_org(
         }
     }
 
-    // Replace the org's prior scan atomically, then insert the fresh verdicts.
+    // Reconcile the org's divergences against this scan atomically, PRESERVING the
+    // id of any divergence that is still present. The id is load-bearing:
+    // `standard_provenance.ref_id` points at it, and `library_sweep::blocked()`
+    // dedupes mined standard candidates on it — so re-minting ids every sweep
+    // produced a duplicate standard candidate per practice per run and left every
+    // ratified standard's provenance dangling (migration 0042).
+    //
+    // Retire only what this scan no longer confirms; upsert the rest on the
+    // (org, canonical entity, axis) natural key.
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM practice_divergences WHERE org_id = $1")
-        .bind(org_id)
-        .execute(&mut *tx)
-        .await?;
+    let live_canonical: Vec<Uuid> = confirmed.iter().map(|(id, ..)| *id).collect();
+    let live_axis: Vec<String> = confirmed
+        .iter()
+        .map(|(.., axis)| (*axis).to_string())
+        .collect();
+    sqlx::query(
+        "DELETE FROM practice_divergences
+           WHERE org_id = $1
+             AND (canonical_id, axis) NOT IN (SELECT * FROM UNNEST($2::uuid[], $3::text[]))",
+    )
+    .bind(org_id)
+    .bind(&live_canonical)
+    .bind(&live_axis)
+    .execute(&mut *tx)
+    .await?;
     for (canonical_id, _name, v, model_ref, axis) in &confirmed {
         let impact = match v.impact.trim().to_lowercase().as_str() {
             "high" => "high",
@@ -252,7 +273,15 @@ pub async fn scan_org(
         sqlx::query(
             "INSERT INTO practice_divergences
                (org_id, canonical_id, practice, summary, recommended_standard, impact, positions, model_ref, axis)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             ON CONFLICT (org_id, canonical_id, axis) WHERE canonical_id IS NOT NULL
+             DO UPDATE SET practice = EXCLUDED.practice,
+                           summary = EXCLUDED.summary,
+                           recommended_standard = EXCLUDED.recommended_standard,
+                           impact = EXCLUDED.impact,
+                           positions = EXCLUDED.positions,
+                           model_ref = EXCLUDED.model_ref,
+                           detected_at = now()",
         )
         .bind(org_id)
         .bind(canonical_id)
