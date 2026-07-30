@@ -1,6 +1,7 @@
 ---
 name: code-review
 description: Production-readiness code review for the Brainiac Rust workspace (core/store/pipeline/gateway/eval/publish/server) and the Next.js console. Reads changed files, checks them against Brainiac's real invariants (RLS, crate layering, sqlx, OpenAPI type sync, eval regression gates), and produces a severity-bucketed 5-axis verdict with file+line findings.
+argument-hint: "[pr or diff]"
 allowed-tools: Read, Grep, Glob, Bash, Agent
 ---
 

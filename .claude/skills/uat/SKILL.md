@@ -1,6 +1,7 @@
 ---
 name: uat
 description: Simulated User Acceptance Testing for Brainiac, run as a controlled trial inside a simulated multi-stack engineering company rather than a feature walkthrough. Characters are developers (Rust/TS/Python/infra) doing real coding work; every journey runs in three arms — cold agent, Claude's native local memory (the free baseline), and Brainiac — and the verdict is the DELTA, which is allowed to come out negative. Two chronological certification levels: L1 theoretical (over a code-derived model of what an agent actually receives, cheap + mass-parallel) then L2 empirical (live server + workers + real agent sessions against the Meridian company). Ships a Harm Ledger alongside findings. Per-run specifics live in the repo's uat/ overlay. Invoke with `/uat init|update|run|promote [args]`.
+argument-hint: "[flow]"
 ---
 
 # Simulated UAT — a controlled trial of org memory (Brainiac)

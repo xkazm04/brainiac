@@ -1,6 +1,7 @@
 ---
 name: prototype
 description: Iteratively prototype a console page/component through directional variants behind a tab switcher, then consolidate the winner. Use when the user wants to explore multiple design approaches for a Brainiac console surface (visual appeal, creativity, UX clarity).
+argument-hint: "[component path]"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent
 ---
 

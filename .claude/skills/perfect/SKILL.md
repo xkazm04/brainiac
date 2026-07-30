@@ -1,6 +1,7 @@
 ---
 name: perfect
 description: Session-after-session product perfection loop. Opus (the strongest generally-available model) directs — it walks the repo's context map context-by-context, proposes 5 challenged, high-value directions per context (features, design elevations, significant optimizations), gates them with the user until 10 are accepted, then orchestrates builder subagents (model sized to the work — Sonnet for S/M briefs, Opus for L or high-risk ones) per context in isolated worktrees while making every review/merge decision itself. Loop control-state lives in a linked Obsidian vault; the knowledge it produces and consumes lives in Brainiac org memory. Invoke with `/perfect [init|propose|build|status|reflect] [context-name]`.
+argument-hint: "[context]"
 ---
 
 # Perfect — the direction-and-delivery loop (Brainiac)
