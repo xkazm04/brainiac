@@ -8,6 +8,7 @@ import "server-only";
 import type {
   AddedRepo,
   Analytics,
+  AnalyticsValue,
   ApiToken,
   CanonicalDetail,
   CreatedProject,
@@ -190,6 +191,10 @@ export async function getAnalytics(cfg: ApiConfig): Promise<Analytics> {
 
 export async function getObservatory(cfg: ApiConfig): Promise<ObservatoryPayload> {
   return call(cfg, "GET", "/v1/analytics/observatory");
+}
+
+export async function getAnalyticsValue(cfg: ApiConfig, days = 30): Promise<AnalyticsValue> {
+  return call(cfg, "GET", `/v1/analytics/value?days=${days}`);
 }
 
 export async function getKnowledgeHealth(cfg: ApiConfig): Promise<KnowledgeHealth> {

@@ -58,6 +58,8 @@ export type CanonicalDetail = S["CanonicalDetailResponse"];
 // ── analytics ───────────────────────────────────────────────────────────
 export type Analytics = S["AnalyticsResponse"];
 export type ObservatoryPayload = S["ObservatoryResponse"];
+/** The demand side (migration 0043): asks, answered-rate, and the miss list. */
+export type AnalyticsValue = S["AnalyticsValueResponse"];
 export type KnowledgeHealth = S["KnowledgeHealthResponse"];
 export type KhPillars = S["KhPillars"];
 export type KhSignals = S["KhSignals"];

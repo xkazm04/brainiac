@@ -28,7 +28,7 @@ import {
 
 import { band, bandGlow, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
-import type { ObservatoryData } from "./observatory-data";
+import type { DemandView, ObservatoryData } from "./observatory-data";
 
 const MINT = band("beta");
 const MINT_DIM = band("beta", 68, 0.35);
@@ -402,6 +402,116 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
           </div>
         </motion.div>
       </div>
+
+      {/*
+       * ┌ the demand side ──────────────────────────────────────────────┐
+       *
+       * Everything above this line is INVENTORY: what the org has captured,
+       * promoted, contradicted. None of it can say whether the corpus is
+       * answering the questions agents actually ask, because until migration
+       * 0043 nothing recorded a question. This tile is the other half — and the
+       * miss list is the useful half of it, because a ranked list of what the
+       * org could not answer IS the acquisition backlog.
+       *
+       * Omitted entirely (not zero-filled) when the endpoint is unreachable:
+       * an invented 0% answered-rate would be a worse lie than a missing tile.
+       */}
+      {data.demand && <DemandTile d={data.demand} />}
+    </motion.div>
+  );
+}
+
+function DemandTile({ d }: { d: DemandView }) {
+  const pct = d.answeredRate === null ? null : Math.round(d.answeredRate * 100);
+  return (
+    <motion.div variants={rise} className={`${TILE} mt-3`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className={`${FONT_DISPLAY} text-lg font-semibold text-white`}>
+          What agents asked for
+        </h2>
+        <span className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+          last {d.windowDays} days
+        </span>
+      </div>
+
+      {d.asks === 0 ? (
+        /* The honest empty state. The ledger starts at 0043, so an established
+           corpus will read "no questions yet" until agents run against it —
+           saying that is better than rendering 0% and implying failure. */
+        <p className="mt-3 text-sm leading-relaxed text-white/45">
+          No retrievals recorded yet. Every agent search and context bundle is logged from
+          migration 0043 onward, so this fills in as agents start asking — an established
+          corpus still starts empty here.
+        </p>
+      ) : (
+        <>
+          <dl className={`${FONT_MONO} mt-4 grid gap-4 sm:grid-cols-4`}>
+            <div>
+              <dt className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+                questions asked
+              </dt>
+              <dd className="mt-1 text-2xl text-white">{d.asks.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+                answered
+              </dt>
+              <dd className="mt-1 text-2xl" style={{ color: MINT }}>
+                {pct === null ? "—" : `${pct}%`}
+              </dd>
+            </div>
+            <div>
+              <dt className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+                withheld — contested
+              </dt>
+              {/* Not a retrieval failure: the org has an unreconciled
+                  contradiction, and agents kept needing it anyway. Review debt
+                  with a demand number attached. */}
+              <dd
+                className="mt-1 text-2xl"
+                style={{ color: d.withheldAsks ? MAGENTA : "rgba(233,237,255,0.25)" }}
+              >
+                {d.withheldAsks}
+              </dd>
+            </div>
+            <div>
+              <dt className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+                missed
+              </dt>
+              <dd className="mt-1 text-2xl text-white/70">
+                {(d.asks - d.answered).toLocaleString()}
+              </dd>
+            </div>
+          </dl>
+
+          <p className="mt-3 text-xs leading-relaxed text-white/30">
+            {d.scoreFloor > 0
+              ? `"Answered" means the best hit scored at or above ${d.scoreFloor}.`
+              : `"Answered" means at least one result came back. Retrieval scores are fused, not calibrated across queries, so there is no default relevance bar — set BRAINIAC_ANSWERED_SCORE_FLOOR once you have measured one on your own corpus.`}
+          </p>
+
+          {d.topUnanswered.length > 0 && (
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <div className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
+                questions Brainiac could not answer — ranked by how many projects asked
+              </div>
+              <ul className={`${FONT_MONO} mt-3 space-y-2 text-sm`}>
+                {d.topUnanswered.map((u) => (
+                  <li key={u.query} className="flex items-baseline justify-between gap-4">
+                    <span className="min-w-0 flex-1 truncate text-white/75" title={u.query}>
+                      {u.query}
+                    </span>
+                    <span className="shrink-0 text-white/40">
+                      {u.asks}× · {u.projects} project{u.projects === 1 ? "" : "s"} ·{" "}
+                      {u.bestScore === null ? "nothing returned" : `best ${u.bestScore.toFixed(2)}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
     </motion.div>
   );
 }

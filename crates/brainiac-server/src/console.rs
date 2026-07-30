@@ -47,6 +47,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/audit", get(audit))
         .route("/v1/graph", get(graph))
         .route("/v1/analytics", get(analytics))
+        .route("/v1/analytics/value", get(analytics_value))
         .route("/v1/analytics/observatory", get(observatory))
         .route("/v1/analytics/knowledge-health", get(knowledge_health))
         .route(
@@ -1767,6 +1768,117 @@ pub(crate) struct AnalyticsReviews {
 pub(crate) struct AnalyticsGraph {
     pub entities: i64,
     pub canonicals: i64,
+}
+
+// ── The demand side (migration 0043) ───────────────────────────────────
+
+/// A question the corpus could not answer, aggregated over the window.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct UnansweredAsk {
+    /// The normalized question — lowercased and whitespace-collapsed, with
+    /// identifiers left intact.
+    pub query: String,
+    pub asks: i64,
+    /// Distinct projects that asked. Breadth ranks above raw volume: one chatty
+    /// repo is not an org-wide gap.
+    pub projects: i64,
+    /// Best score anything scored for it — `null` when nothing came back at all,
+    /// which is a different (and sharper) failure than "came back weak".
+    pub best_score: Option<f64>,
+    pub last_asked: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct AnalyticsValueResponse {
+    pub window_days: i32,
+    /// Retrievals served in the window.
+    pub asks: i64,
+    /// Retrievals that cleared `score_floor`.
+    pub answered: i64,
+    /// `answered / asks`, or `null` when nothing was asked — deliberately not
+    /// 0.0, because "no questions" and "every question failed" must not render
+    /// as the same number.
+    pub answered_rate: Option<f64>,
+    /// Asks where governance withheld at least one contested hit. This is
+    /// review debt expressed as demand pressure, not a retrieval failure.
+    pub withheld_asks: i64,
+    /// The bar an ask must clear to count as answered.
+    ///
+    /// Defaults to 0.0 — "we returned at least one result" — and is reported
+    /// here rather than hidden, because retrieval scores are RRF-fused and
+    /// blended, NOT a calibrated 0..1 relevance comparable across queries. A
+    /// hard-coded non-zero default would be an invented number wearing a
+    /// headline's clothes. Set `BRAINIAC_ANSWERED_SCORE_FLOOR` once you have
+    /// measured what a good answer scores on your own corpus.
+    pub score_floor: f64,
+    pub p50_latency_ms: Option<i32>,
+    pub p95_latency_ms: Option<i32>,
+    /// The acquisition backlog: what agents asked and the corpus failed.
+    pub top_unanswered: Vec<UnansweredAsk>,
+}
+
+/// The floor an ask must clear to count as answered. See `score_floor` above
+/// for why the default is 0.0 rather than a plausible-looking constant.
+fn answered_score_floor() -> f64 {
+    std::env::var("BRAINIAC_ANSWERED_SCORE_FLOOR")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0)
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/analytics/value",
+    tag = "analytics",
+    params(
+        ("days" = Option<i32>, Query, description = "Window in days (default 30, max 365)"),
+    ),
+    description = "The demand side, under the caller's RLS view: how many questions agents asked, \
+                   how many the corpus answered, how much governance withheld, and the ranked list \
+                   of questions it could not answer. Populated by the retrieval ledger \
+                   (migration 0043) — empty until agents start asking.",
+    responses((status = 200, description = "Demand and answered-rate", body = AnalyticsValueResponse))
+)]
+pub(crate) async fn analytics_value(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<AnalyticsValueResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let days = q
+        .get("days")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(30)
+        .clamp(1, 365);
+    let floor = answered_score_floor();
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let summary = brainiac_store::retrieval_events::summary(&mut tx, days, floor)
+        .await
+        .map_err(internal)?;
+    let unanswered = brainiac_store::retrieval_events::top_unanswered(&mut tx, days, floor, 20)
+        .await
+        .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(AnalyticsValueResponse {
+        window_days: days,
+        asks: summary.events,
+        answered: summary.answered,
+        answered_rate: summary.answered_rate(),
+        withheld_asks: summary.withheld_events,
+        score_floor: floor,
+        p50_latency_ms: summary.p50_latency_ms,
+        p95_latency_ms: summary.p95_latency_ms,
+        top_unanswered: unanswered
+            .into_iter()
+            .map(|u| UnansweredAsk {
+                query: u.query_norm,
+                asks: u.asks,
+                projects: u.projects,
+                best_score: u.best_score,
+                last_asked: u.last_asked,
+            })
+            .collect(),
+    }))
 }
 
 /// Ingest queue depth — shared by `/v1/analytics` and the observatory.

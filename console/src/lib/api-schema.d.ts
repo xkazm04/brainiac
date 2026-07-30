@@ -133,6 +133,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/analytics/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The demand side, under the caller's RLS view: how many questions agents asked, how many the corpus answered, how much governance withheld, and the ranked list of questions it could not answer. Populated by the retrieval ledger (migration 0043) — empty until agents start asking. */
+        get: operations["analytics_value"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/audit": {
         parameters: {
             query?: never;
@@ -1418,6 +1435,51 @@ export interface components {
              *     proxy. High + a deep backlog = clearing, not reviewing. `null` if none.
              */
             rubber_stamp_rate?: number | null;
+        };
+        AnalyticsValueResponse: {
+            /**
+             * Format: int64
+             * @description Retrievals that cleared `score_floor`.
+             */
+            answered: number;
+            /**
+             * Format: double
+             * @description `answered / asks`, or `null` when nothing was asked — deliberately not
+             *     0.0, because "no questions" and "every question failed" must not render
+             *     as the same number.
+             */
+            answered_rate?: number | null;
+            /**
+             * Format: int64
+             * @description Retrievals served in the window.
+             */
+            asks: number;
+            /** Format: int32 */
+            p50_latency_ms?: number | null;
+            /** Format: int32 */
+            p95_latency_ms?: number | null;
+            /**
+             * Format: double
+             * @description The bar an ask must clear to count as answered.
+             *
+             *     Defaults to 0.0 — "we returned at least one result" — and is reported
+             *     here rather than hidden, because retrieval scores are RRF-fused and
+             *     blended, NOT a calibrated 0..1 relevance comparable across queries. A
+             *     hard-coded non-zero default would be an invented number wearing a
+             *     headline's clothes. Set `BRAINIAC_ANSWERED_SCORE_FLOOR` once you have
+             *     measured what a good answer scores on your own corpus.
+             */
+            score_floor: number;
+            /** @description The acquisition backlog: what agents asked and the corpus failed. */
+            top_unanswered: components["schemas"]["UnansweredAsk"][];
+            /** Format: int32 */
+            window_days: number;
+            /**
+             * Format: int64
+             * @description Asks where governance withheld at least one contested hit. This is
+             *     review debt expressed as demand pressure, not a retrieval failure.
+             */
+            withheld_asks: number;
         };
         /** @description A canonical entity anchoring a hit (id + name). */
         AnchorRef: {
@@ -3415,6 +3477,30 @@ export interface components {
             /** Format: int64 */
             score: number;
         };
+        /** @description A question the corpus could not answer, aggregated over the window. */
+        UnansweredAsk: {
+            /** Format: int64 */
+            asks: number;
+            /**
+             * Format: double
+             * @description Best score anything scored for it — `null` when nothing came back at all,
+             *     which is a different (and sharper) failure than "came back weak".
+             */
+            best_score?: number | null;
+            /** Format: date-time */
+            last_asked: string;
+            /**
+             * Format: int64
+             * @description Distinct projects that asked. Breadth ranks above raw volume: one chatty
+             *     repo is not an org-wide gap.
+             */
+            projects: number;
+            /**
+             * @description The normalized question — lowercased and whitespace-collapsed, with
+             *     identifiers left intact.
+             */
+            query: string;
+        };
         UpdateSweepBody: {
             /**
              * Format: int64
@@ -3621,6 +3707,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PracticeDivergenceResponse"];
+                };
+            };
+        };
+    };
+    analytics_value: {
+        parameters: {
+            query?: {
+                /** @description Window in days (default 30, max 365) */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Demand and answered-rate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsValueResponse"];
                 };
             };
         };

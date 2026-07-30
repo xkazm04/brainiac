@@ -97,6 +97,7 @@ impl Modify for BearerAuth {
         console::graph_canonical,
         // analytics
         console::analytics,
+        console::analytics_value,
         console::observatory,
         console::knowledge_health,
         console::knowledge_health_snapshot,
@@ -243,6 +244,8 @@ impl Modify for BearerAuth {
         console::AnalyticsGraph,
         console::QueueDepth,
         console::AnalyticsResponse,
+        console::UnansweredAsk,
+        console::AnalyticsValueResponse,
         console::WeeklyPoint,
         console::ObservatoryWeekly,
         console::KindTeamCount,

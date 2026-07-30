@@ -3,12 +3,51 @@
 // for a meaningful trend (fresh fixtures land in a single ISO week).
 
 import { INGESTION_WEEKS } from "@/design/demo-data";
-import type { ObservatoryPayload } from "@/lib/types";
+import type { AnalyticsValue, ObservatoryPayload } from "@/lib/types";
 
 export interface WeekPoint {
   week: string;
   captured: number;
   promoted: number;
+}
+
+/** The demand side (migration 0043) — what agents asked, and what missed. */
+export interface DemandView {
+  windowDays: number;
+  asks: number;
+  answered: number;
+  /** null = nothing was asked. Deliberately distinct from 0 (everything missed). */
+  answeredRate: number | null;
+  withheldAsks: number;
+  /** The bar an ask must clear to count answered; surfaced so the tile can say
+   *  what "answered" means instead of implying a calibration that does not
+   *  exist (retrieval scores are RRF-fused, not comparable across queries). */
+  scoreFloor: number;
+  topUnanswered: {
+    query: string;
+    asks: number;
+    projects: number;
+    bestScore: number | null;
+    lastAsked: string;
+  }[];
+}
+
+export function normalizeDemand(p: AnalyticsValue): DemandView {
+  return {
+    windowDays: p.window_days,
+    asks: p.asks,
+    answered: p.answered,
+    answeredRate: p.answered_rate ?? null,
+    withheldAsks: p.withheld_asks,
+    scoreFloor: p.score_floor,
+    topUnanswered: (p.top_unanswered ?? []).map((u) => ({
+      query: u.query,
+      asks: u.asks,
+      projects: u.projects,
+      bestScore: u.best_score ?? null,
+      lastAsked: u.last_asked,
+    })),
+  };
 }
 
 export interface ObservatoryData {
@@ -32,6 +71,9 @@ export interface ObservatoryData {
   contradictions: Record<string, number>;
   queueDepth: number;
   embeddingModel: string;
+  /** Absent when the demand endpoint was unreachable — the tile is then not
+   *  rendered at all rather than showing invented zeros. */
+  demand?: DemandView;
 }
 
 const DEMO_WEEKLY: WeekPoint[] = INGESTION_WEEKS.map((w) => ({ ...w }));
@@ -69,8 +111,24 @@ export function normalizeObservatory(p: ObservatoryPayload): ObservatoryData {
   };
 }
 
+const DEMO_DEMAND: DemandView = {
+  windowDays: 30,
+  asks: 1284,
+  answered: 1132,
+  answeredRate: 1132 / 1284,
+  withheldAsks: 47,
+  scoreFloor: 0,
+  topUnanswered: [
+    { query: "deploy rollback checkout-web", asks: 63, projects: 3, bestScore: 0.31, lastAsked: "2026-07-29T09:12:00Z" },
+    { query: "psp webhook replay window", asks: 41, projects: 2, bestScore: null, lastAsked: "2026-07-28T16:40:00Z" },
+    { query: "feature-store backfill runbook", asks: 27, projects: 2, bestScore: 0.22, lastAsked: "2026-07-27T11:05:00Z" },
+    { query: "settlement retry idempotency", asks: 19, projects: 1, bestScore: 0.4, lastAsked: "2026-07-29T14:22:00Z" },
+  ],
+};
+
 export const DEMO_OBSERVATORY: ObservatoryData = {
   live: false,
+  demand: DEMO_DEMAND,
   weeklyIsDemo: true,
   totals: { canonical: 81, candidate: 7, raw: 12, deprecated: 6, rejected: 3 },
   weekly: DEMO_WEEKLY,

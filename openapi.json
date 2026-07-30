@@ -157,6 +157,39 @@
         }
       }
     },
+    "/v1/analytics/value": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "description": "The demand side, under the caller's RLS view: how many questions agents asked, how many the corpus answered, how much governance withheld, and the ranked list of questions it could not answer. Populated by the retrieval ledger (migration 0043) — empty until agents start asking.",
+        "operationId": "analytics_value",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Window in days (default 30, max 365)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Demand and answered-rate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsValueResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/audit": {
       "get": {
         "tags": [
@@ -3221,6 +3254,72 @@
             ],
             "format": "double",
             "description": "Share of last-30d human reviews decided in under 5s — the rubber-stamp\nproxy. High + a deep backlog = clearing, not reviewing. `null` if none."
+          }
+        }
+      },
+      "AnalyticsValueResponse": {
+        "type": "object",
+        "required": [
+          "window_days",
+          "asks",
+          "answered",
+          "withheld_asks",
+          "score_floor",
+          "top_unanswered"
+        ],
+        "properties": {
+          "answered": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retrievals that cleared `score_floor`."
+          },
+          "answered_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`answered / asks`, or `null` when nothing was asked — deliberately not\n0.0, because \"no questions\" and \"every question failed\" must not render\nas the same number."
+          },
+          "asks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retrievals served in the window."
+          },
+          "p50_latency_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "p95_latency_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "score_floor": {
+            "type": "number",
+            "format": "double",
+            "description": "The bar an ask must clear to count as answered.\n\nDefaults to 0.0 — \"we returned at least one result\" — and is reported\nhere rather than hidden, because retrieval scores are RRF-fused and\nblended, NOT a calibrated 0..1 relevance comparable across queries. A\nhard-coded non-zero default would be an invented number wearing a\nheadline's clothes. Set `BRAINIAC_ANSWERED_SCORE_FLOOR` once you have\nmeasured what a good answer scores on your own corpus."
+          },
+          "top_unanswered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnansweredAsk"
+            },
+            "description": "The acquisition backlog: what agents asked and the corpus failed."
+          },
+          "window_days": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "withheld_asks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Asks where governance withheld at least one contested hit. This is\nreview debt expressed as demand pressure, not a retrieval failure."
           }
         }
       },
@@ -8220,6 +8319,43 @@
           "score": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "UnansweredAsk": {
+        "type": "object",
+        "description": "A question the corpus could not answer, aggregated over the window.",
+        "required": [
+          "query",
+          "asks",
+          "projects",
+          "last_asked"
+        ],
+        "properties": {
+          "asks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "best_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Best score anything scored for it — `null` when nothing came back at all,\nwhich is a different (and sharper) failure than \"came back weak\"."
+          },
+          "last_asked": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "projects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct projects that asked. Breadth ranks above raw volume: one chatty\nrepo is not an org-wide gap."
+          },
+          "query": {
+            "type": "string",
+            "description": "The normalized question — lowercased and whitespace-collapsed, with\nidentifiers left intact."
           }
         }
       },
