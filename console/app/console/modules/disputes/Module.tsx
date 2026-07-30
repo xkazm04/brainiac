@@ -1,6 +1,7 @@
 import DemoBanner from "@/components/DemoBanner";
 import { configFromEnv } from "@/lib/api";
 import { withDemoFallback } from "@/lib/demo-fallback";
+import { int, one } from "@/design/routes";
 import { feedbackQueue, type DecayBand } from "@/lib/governance-api";
 
 import DisputeBench from "./DisputeBench";
@@ -21,10 +22,8 @@ export const metadata = {
 
 type Params = Record<string, string | string[] | undefined>;
 
-const one = (v: string | string[] | undefined): string | undefined =>
-  Array.isArray(v) ? v[0] : v;
-
-const num = (v: string | string[] | undefined): number | undefined => {
+/** These two filters distinguish "unset" from 0, which `int` cannot express. */
+const numOrUndef = (v: string | string[] | undefined): number | undefined => {
   const n = Number(one(v));
   return Number.isFinite(n) ? n : undefined;
 };
@@ -44,10 +43,10 @@ export function parseFilter(params: Params): { filter: DisputeFilter; page: numb
     teamId: one(params.team) || undefined,
     project: one(params.project) || undefined,
     band: asBand(params.band),
-    minClaims: num(params.minClaims),
-    minAgeHours: num(params.minAge),
+    minClaims: numOrUndef(params.minClaims),
+    minAgeHours: numOrUndef(params.minAge),
   };
-  const page = Math.max(0, Math.floor(num(params.page) ?? 0));
+  const page = int(params.page);
   return { filter, page };
 }
 

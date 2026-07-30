@@ -7,6 +7,7 @@
 // disputes/archive convention.
 
 import type { AuditEvent, AuditKind } from "@/lib/governance-api";
+import { int } from "@/design/routes";
 
 export interface AuditData {
   live: boolean;
@@ -39,11 +40,10 @@ export function parseKind(raw: string | string[] | undefined): AuditKind | undef
   return hit && hit.key !== "all" ? hit.key : undefined;
 }
 
-/** `?offset=` — a non-negative integer, or 0 for anything junk/negative. */
+/** `?offset=` — a non-negative integer, or 0 for anything junk/negative.
+ *  The coercion is the console-wide one (design/routes.ts), not a local copy. */
 export function parseOffset(raw: string | string[] | undefined): number {
-  const v = Array.isArray(raw) ? raw[0] : raw;
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return int(raw);
 }
 
 /** Row label for a governance action kind. */

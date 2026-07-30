@@ -1,6 +1,7 @@
 import DemoBanner from "@/components/DemoBanner";
 import { configFromEnv, listMemories, memoryValidity, type ApiConfig } from "@/lib/api";
 import { withDemoFallback } from "@/lib/demo-fallback";
+import { int } from "@/design/routes";
 
 import Archive from "./Archive";
 import {
@@ -67,8 +68,7 @@ export function parseFilter(params: Params): {
     visibility: one(params.visibility) || undefined,
     project: one(params.project) || undefined,
   };
-  const n = Number(one(params.page));
-  const page = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  const page = int(params.page);
   return { filter, page, sort: asSort(params.sort), dir: asDir(params.dir), asOf: one(params.as_of) || null };
 }
 

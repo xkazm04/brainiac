@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { KeyRound, LogOut } from "lucide-react";
 
+import AddressBar from "@/components/AddressBar";
 import NavDashboard from "@/components/NavDashboard";
 import {
   NAV_GROUPS,
@@ -82,7 +83,13 @@ export default function Chrome() {
             </span>
           )}
         </div>
-        <NavDashboard />
+        <div className="flex items-center gap-3">
+          {/* The one clickable thing in an otherwise display-only row, and it
+              earns the exception: with the selection in the URL, this hands
+              someone the exact view — the console's first push direction. */}
+          <AddressBar />
+          <NavDashboard />
+        </div>
       </div>
 
       {/* ── bottom row: navigation only ───────────────────────────────────── */}

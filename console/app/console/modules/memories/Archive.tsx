@@ -133,8 +133,37 @@ export default function Archive({
   );
   const notTrueThen = skeleton.length - trueThen;
 
-  const [selected, setSelected] = useState<string | null>(null);
+  // ── the selection lives in the URL (?sel=), not in useState ───────────
+  //
+  // This is what makes a view shareable. While the open record was component
+  // state, the console could produce a link to a FILTERED LIST but never to a
+  // specific memory — so "look at this one" was un-sendable, and an agent that
+  // found a problem had no way to hand a human the exact thing it meant.
+  //
+  // In demo mode there is no console route underneath, so pushing a URL would
+  // walk the tour away: the tour keeps component state and everything else
+  // reads the address.
+  const [demoSelected, setDemoSelected] = useState<string | null>(null);
+  const urlSelected = searchParams?.get("sel") ?? null;
+  const selected = demo ? demoSelected : urlSelected;
   const { detail, loading, error } = useMemoryDetail(selected, live);
+
+  const setSelected = useCallback(
+    (id: string | null) => {
+      if (demo) {
+        setDemoSelected(id);
+        return;
+      }
+      const p = new URLSearchParams(searchParams?.toString() ?? "");
+      p.set("m", "memories");
+      if (id) p.set("sel", id);
+      else p.delete("sel");
+      // `replace`, not `push`: browsing records inside one list is not a
+      // sequence of pages a Back button should have to walk out of one by one.
+      router.replace(`/console?${p.toString()}`, { scroll: false });
+    },
+    [demo, router, searchParams],
+  );
 
   // ── URL as the single source of truth ─────────────────────────────────
   const setParams = useCallback(

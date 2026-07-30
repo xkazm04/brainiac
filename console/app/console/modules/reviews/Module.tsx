@@ -8,6 +8,7 @@ import {
 
 import ReviewsLive from "./ReviewsLive";
 import { STATUS_TABS } from "./review-surface";
+import { int } from "@/design/routes";
 
 export const dynamic = "force-dynamic";
 
@@ -25,12 +26,9 @@ function asStatus(v: string | string[] | undefined): ContradictionStatus {
  */
 const PAGE = 200;
 
-/** Read `?poffset=` into a page offset. Junk and negatives fall back to page one. */
-function asOffset(v: string | string[] | undefined): number {
-  const raw = Array.isArray(v) ? v[0] : v;
-  const n = Number(raw);
-  return Number.isSafeInteger(n) && n > 0 ? n : 0;
-}
+/** Read `?poffset=` into a page offset. Junk and negatives fall back to page
+ *  one — via the console-wide coercion (design/routes.ts), not a local copy. */
+const asOffset = int;
 
 /*
  * The operator's review queue: the live queues, and the only controls in the

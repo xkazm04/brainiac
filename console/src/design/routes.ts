@@ -166,3 +166,133 @@ const inSubtree = (pathname: string, root: string): boolean =>
 /** Every surface an anonymous visitor may reach. The middleware's allow-list. */
 export const isPublicSurface = (pathname: string): boolean =>
   PUBLIC_PATHS.has(pathname) || PUBLIC_SUBTREES.some((p) => inSubtree(pathname, p));
+
+// ── the console address (the URL grammar) ───────────────────────────────
+//
+// Until this existed the console's only addressing concept was `?m=<segment>`,
+// and the one thing a link most needs to carry — WHICH OBJECT IS OPEN — lived
+// in `useState` inside each module. So no view in the product could be handed
+// to anyone: not "look at this memory", not "this is the dispute I mean", and
+// not an agent saying "a human needs to decide this one". Governance had no
+// push direction at all, only pull.
+//
+// Five private searchParams dialects had grown underneath that (memories,
+// disputes, docs, audit, reviews), each with its own coercion helpers. This is
+// the one grammar they share, declared next to the nav registry that already
+// keeps the module list undriftable.
+//
+// Deliberately NOT a router: Next owns routing. This owns the *vocabulary* —
+// what a legal console URL may say, per module.
+
+/** A specific view in the console: the module, what is open inside it, and how it is filtered. */
+export interface ConsoleAddress {
+  module: ConsoleModuleId;
+  /** Sub-view within a module (e.g. a board's lens). Absent = the module default. */
+  view?: string;
+  /** The object that is open — memory id, dispute id, standard slug, doc slug. */
+  sel?: string;
+  /** Point-in-time view, RFC3339. */
+  asOf?: string;
+  /** Module-declared filters. Keys outside the module's spec are dropped. */
+  filters: Record<string, string>;
+}
+
+/** Reserved keys — the grammar's own, never a module filter. */
+const RESERVED = new Set(["m", "view", "sel", "as_of"]);
+
+/**
+ * What each module's URL may legally say. This is the drift guard: a module
+ * that reads a param not listed here loses it on the next `encodeAddress`
+ * round trip, and the test suite compares this table against the modules'
+ * actual readers.
+ */
+export const ADDRESS_SPECS: Record<ConsoleModuleId, readonly string[]> = {
+  analytics: [],
+  reviews: ["cstatus", "poffset"],
+  disputes: ["kind", "team", "project", "band", "minClaims", "minAge", "page"],
+  graph: [],
+  memories: ["q", "kind", "status", "team", "project", "visibility", "page", "sort", "dir"],
+  ingest: [],
+  health: [],
+  docs: ["q", "topic", "status", "page"],
+  divergence: [],
+  audit: ["kind", "offset"],
+  standards: ["stack", "category", "lifecycle"],
+  skills: [],
+  projects: [],
+  keys: [],
+};
+
+// ── shared coercion (the five dialects' common half) ────────────────────
+
+/** First value of a possibly-repeated query param. */
+export const one = (v: string | string[] | undefined): string | undefined =>
+  (Array.isArray(v) ? v[0] : v) || undefined;
+
+/**
+ * A non-negative integer, or `fallback` for junk/negatives. Never NaN.
+ *
+ * Fractional values FLOOR rather than fall back. The two dialects this replaced
+ * disagreed here — audit floored `?offset=2.5` to 2, reviews rejected it to 0 —
+ * and one grammar has to pick. A URL is hand-editable, so a fraction is a typo,
+ * not an attack: keeping the operator's evident intent beats discarding it.
+ */
+export const int = (v: string | string[] | undefined, fallback = 0): number => {
+  const n = Number(one(v));
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+};
+
+/** A value constrained to a known set — junk falls back rather than 404s. */
+export const oneOf = <T extends string>(
+  v: string | string[] | undefined,
+  allowed: readonly T[],
+  fallback?: T,
+): T | undefined => {
+  const s = one(v);
+  return s && (allowed as readonly string[]).includes(s) ? (s as T) : fallback;
+};
+
+/** Read a query-param bag into a typed address, dropping anything undeclared. */
+export const decodeAddress = (
+  params: Record<string, string | string[] | undefined>,
+): ConsoleAddress => {
+  const module = parseModule(params.m);
+  const allowed = ADDRESS_SPECS[module];
+  const filters: Record<string, string> = {};
+  for (const key of allowed) {
+    const v = one(params[key]);
+    if (v !== undefined) filters[key] = v;
+  }
+  return {
+    module,
+    view: one(params.view),
+    sel: one(params.sel),
+    asOf: one(params.as_of),
+    filters,
+  };
+};
+
+/**
+ * Render an address as a console URL. Key order is stable (module, view, sel,
+ * as_of, then filters in spec order) so the same view always produces the same
+ * string — which is what makes a link comparable, cacheable and diffable.
+ */
+export const encodeAddress = (a: ConsoleAddress): string => {
+  const p = new URLSearchParams();
+  p.set("m", a.module);
+  if (a.view) p.set("view", a.view);
+  if (a.sel) p.set("sel", a.sel);
+  if (a.asOf) p.set("as_of", a.asOf);
+  for (const key of ADDRESS_SPECS[a.module]) {
+    const v = a.filters[key];
+    if (v !== undefined && v !== "") p.set(key, v);
+  }
+  return `/console?${p.toString()}`;
+};
+
+/** Absolute form, for a link that leaves the console (an agent's hand-off). */
+export const absoluteAddress = (origin: string, a: ConsoleAddress): string =>
+  `${origin.replace(/\/$/, "")}${encodeAddress(a)}`;
+
+/** Every key the grammar itself owns — exported so tests can assert no module steals one. */
+export const RESERVED_KEYS: readonly string[] = [...RESERVED];
