@@ -28,7 +28,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "io-std", "io-util"] }
 futures = "0.3"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 axum = "0.8"
@@ -36,6 +36,13 @@ clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 async-trait = "0.1"
 sha2 = "0.10"
+# Signing/crypto for the cloud-native gateway providers (Bedrock SigV4 = HMAC-SHA256;
+# Vertex service-account auth = RS256 JWT → OAuth). All pure-Rust (no ring/OpenSSL/C
+# toolchain) so the gateway still builds identically on Windows, macOS, and the slim
+# Debian release image.
+hmac = "0.12"
+base64 = "0.22"
+rsa = { version = "0.9", features = ["sha2"] }
 regex = "1"
 schemars = { version = "1", features = ["chrono04"] }
 utoipa = { version = "5", features = ["chrono", "uuid"] }

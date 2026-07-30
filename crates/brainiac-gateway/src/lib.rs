@@ -1,25 +1,41 @@
-//! brainiac-gateway — BYOM: one trait, swappable providers.
+//! brainiac-gateway — BYOM: one trait, a spectrum of swappable providers.
 //!
-//! v0 providers:
-//! - [`QwenProvider`]: Alibaba DashScope, OpenAI-compatible chat endpoint.
-//!   The org brings its own key; the gateway records usage per call.
-//! - [`MockProvider`]: deterministic, injectable responder — pipeline tests
-//!   exercise plumbing (parsing, writes, provenance, governance) without a
-//!   network or model variance. Extraction QUALITY is measured separately
-//!   against real providers (EVAL.md pipeline profile, nightly).
+//! Chat providers (all behind [`ChatProvider`], all riding the shared
+//! [`resilience`] + [`lighttrack`] path):
+//! - [`OpenAiCompatProvider`] — the OpenAI `/chat/completions` protocol, which
+//!   also serves Azure OpenAI, Qwen/DashScope, Groq, Together, DeepSeek, Mistral,
+//!   OpenRouter, and local Ollama/vLLM by base-URL + auth swap. [`QwenProvider`]
+//!   is the Qwen preset (the deploy default).
+//! - [`AnthropicProvider`] — Anthropic Messages API.
+//! - [`GeminiProvider`] — Google Gemini `generateContent`.
+//! - [`BedrockProvider`] — AWS Bedrock (SigV4; Claude-on-Bedrock).
+//! - [`VertexProvider`] — Google Vertex AI (service-account OAuth; Gemini).
+//! - [`MockProvider`] — deterministic, injectable responder for pipeline tests.
+//!
+//! Selection is centralized in two functions: [`provider_from_spec`] (a
+//! `provider[:model]` spec string) and [`default_chat_from_env`] (the process
+//! default, keyed on `BRAINIAC_PROVIDER`). Everything downstream holds
+//! `Arc<dyn ChatProvider>` via [`ProviderRouter`], so per-stage overrides
+//! (`BRAINIAC_MODEL_*`) can mix providers freely.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde::Deserialize;
-use serde_json::json;
 
 pub mod resilience;
 
 /// Fire-and-forget LLM-call telemetry (LightTrack). Disabled unless
 /// `LIGHTTRACK_URL` is set; see [`lighttrack`].
-mod lighttrack;
+pub(crate) mod lighttrack;
 
-use resilience::Resilience;
+mod providers;
+
+pub use providers::anthropic::AnthropicProvider;
+pub use providers::bedrock::BedrockProvider;
+pub use providers::google::GeminiProvider;
+pub use providers::openai::{
+    AuthStyle, OpenAiCompatEmbedder, OpenAiCompatProvider, QwenEmbedder, QwenProvider,
+};
+pub use providers::vertex::VertexProvider;
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -49,316 +65,6 @@ pub struct ChatResponse {
 pub trait ChatProvider: Send + Sync {
     fn model_ref(&self) -> String;
     async fn complete(&self, req: &ChatRequest) -> Result<ChatResponse>;
-}
-
-// ── Qwen via DashScope (OpenAI-compatible mode) ─────────────────────────
-
-pub struct QwenProvider {
-    http: reqwest::Client,
-    base_url: String,
-    api_key: String,
-    model: String,
-    resilience: Resilience,
-}
-
-/// The HTTP client every provider call uses. reqwest applies NO default timeout,
-/// so a stalled-but-connected upstream (slow-loris, LB half-close, model overload)
-/// would hang the awaiting future forever — producing neither an error nor a
-/// status, so the retry loop never fires and the circuit breaker never opens. A
-/// connect + total-request timeout turns a stall into a retryable/breaker-
-/// recordable error. reqwest's `.timeout()` is per `send()`, so it bounds each
-/// resilience attempt while the retry loop still governs total attempts. Tunable
-/// via BRAINIAC_GATEWAY_CONNECT_TIMEOUT_SECS / BRAINIAC_GATEWAY_REQUEST_TIMEOUT_SECS.
-fn build_http_client() -> reqwest::Client {
-    fn secs(key: &str, default: u64) -> std::time::Duration {
-        let n = std::env::var(key)
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(default);
-        std::time::Duration::from_secs(n)
-    }
-    reqwest::Client::builder()
-        .connect_timeout(secs("BRAINIAC_GATEWAY_CONNECT_TIMEOUT_SECS", 10))
-        .timeout(secs("BRAINIAC_GATEWAY_REQUEST_TIMEOUT_SECS", 60))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-}
-
-impl QwenProvider {
-    pub const DEFAULT_BASE: &'static str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-    pub const DEFAULT_MODEL: &'static str = "qwen-max";
-
-    pub fn new(api_key: String, model: Option<String>, base_url: Option<String>) -> Self {
-        Self {
-            http: build_http_client(),
-            base_url: base_url.unwrap_or_else(|| Self::DEFAULT_BASE.to_string()),
-            api_key,
-            model: model.unwrap_or_else(|| Self::DEFAULT_MODEL.to_string()),
-            resilience: Resilience::from_env(),
-        }
-    }
-
-    /// Construct from environment (DASHSCOPE_API_KEY or QWEN_API_KEY,
-    /// QWEN_MODEL, QWEN_BASE_URL).
-    pub fn from_env() -> Option<Self> {
-        Some(Self::new(
-            dashscope_key_from_env()?,
-            std::env::var("QWEN_MODEL").ok(),
-            std::env::var("QWEN_BASE_URL").ok(),
-        ))
-    }
-}
-
-fn dashscope_key_from_env() -> Option<String> {
-    std::env::var("DASHSCOPE_API_KEY")
-        .or_else(|_| std::env::var("QWEN_API_KEY"))
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-}
-
-#[derive(Deserialize)]
-struct OpenAiChoice {
-    message: OpenAiMessage,
-}
-#[derive(Deserialize)]
-struct OpenAiMessage {
-    content: String,
-}
-#[derive(Deserialize)]
-struct OpenAiUsage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
-}
-#[derive(Deserialize)]
-struct OpenAiResponse {
-    choices: Vec<OpenAiChoice>,
-    #[serde(default)]
-    usage: Option<OpenAiUsage>,
-}
-
-#[async_trait]
-impl ChatProvider for QwenProvider {
-    fn model_ref(&self) -> String {
-        format!("qwen:{}", self.model)
-    }
-
-    async fn complete(&self, req: &ChatRequest) -> Result<ChatResponse> {
-        // Single telemetry chokepoint: every pipeline stage (extract / resolve /
-        // contradict / compose) AND `divergence` — which bypasses the router and
-        // calls this provider directly — funnels through here, so one wrapper
-        // captures them all without touching a single call site. Best-effort and
-        // fully disabled unless LIGHTTRACK_URL is set (see `lighttrack`).
-        let started = std::time::Instant::now();
-        let result: Result<ChatResponse> = async {
-            let mut body = json!({
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": req.system},
-                    {"role": "user", "content": req.user}
-                ],
-                "max_tokens": req.max_tokens,
-                "temperature": req.temperature,
-            });
-            if req.json_mode {
-                body["response_format"] = json!({"type": "json_object"});
-            }
-            let http_req = self
-                .http
-                .post(format!("{}/chat/completions", self.base_url))
-                .bearer_auth(&self.api_key)
-                .json(&body);
-            let text = self.resilience.send(http_req, "dashscope").await?;
-            let parsed: OpenAiResponse = serde_json::from_str(&text).context("dashscope parse")?;
-            // Empty `choices` (content-filter stub, or an error shaped as 200) is "no
-            // answer", not "empty answer" — returning it as Ok would have the pipeline
-            // extract from "" (0 memories) and nothing goes red. Fail so it retries /
-            // surfaces instead of manufacturing a hollow success.
-            let content = parsed
-                .choices
-                .first()
-                .map(|c| c.message.content.clone())
-                .ok_or_else(|| anyhow::anyhow!("dashscope returned 200 with no choices"))?;
-            // A missing `usage` means "cost unknown", not "cost zero" — never silently
-            // meter a real billed call at 0. Log it so accounting can flag the drift.
-            let usage = parsed.usage.unwrap_or_else(|| {
-                tracing::warn!(
-                    model = %self.model,
-                    "dashscope response omitted usage — recording 0 tokens for a billed call"
-                );
-                OpenAiUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                }
-            });
-            Ok(ChatResponse {
-                text: content,
-                model_ref: self.model_ref(),
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-            })
-        }
-        .await;
-
-        let latency_ms = started.elapsed().as_millis() as u64;
-        let (input_tokens, output_tokens, ok) = match &result {
-            Ok(r) => (r.input_tokens, r.output_tokens, true),
-            Err(_) => (0, 0, false),
-        };
-        // The stage/use-case name is not reachable from the concrete provider
-        // (the router knows the stage, not the provider); left `None` here.
-        lighttrack::record(
-            "qwen",
-            &self.model,
-            None,
-            input_tokens,
-            output_tokens,
-            latency_ms,
-            ok,
-        );
-        result
-    }
-}
-
-// ── Qwen embeddings via DashScope (OpenAI-compatible /embeddings) ───────
-
-/// DashScope `text-embedding-v4` (served Qwen3-Embedding) behind the
-/// [`brainiac_core::embed::Embedder`] seam. Matryoshka dims 64–2048; we pin
-/// 1024 (the model default) unless overridden. DashScope caps this model at
-/// 10 texts per request, so `embed_batch` chunks accordingly.
-///
-/// The API key is an env/vault reference only — never persisted to Postgres.
-pub struct QwenEmbedder {
-    http: reqwest::Client,
-    base_url: String,
-    api_key: String,
-    model: String,
-    dim: usize,
-    resilience: Resilience,
-}
-
-impl QwenEmbedder {
-    pub const DEFAULT_MODEL: &'static str = "text-embedding-v4";
-    pub const DEFAULT_DIM: usize = 1024;
-    const MAX_BATCH: usize = 10;
-
-    pub fn new(api_key: String, base_url: Option<String>, dim: Option<usize>) -> Self {
-        Self {
-            http: build_http_client(),
-            base_url: base_url.unwrap_or_else(|| QwenProvider::DEFAULT_BASE.to_string()),
-            api_key,
-            model: Self::DEFAULT_MODEL.to_string(),
-            dim: dim.unwrap_or(Self::DEFAULT_DIM),
-            resilience: Resilience::from_env(),
-        }
-    }
-
-    /// Construct from environment (DASHSCOPE_API_KEY or QWEN_API_KEY,
-    /// QWEN_BASE_URL, QWEN_EMBED_DIM).
-    pub fn from_env() -> Option<Self> {
-        Some(Self::new(
-            dashscope_key_from_env()?,
-            std::env::var("QWEN_BASE_URL").ok(),
-            std::env::var("QWEN_EMBED_DIM")
-                .ok()
-                .and_then(|d| d.parse().ok()),
-        ))
-    }
-
-    async fn request(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        #[derive(Deserialize)]
-        struct EmbeddingRow {
-            index: usize,
-            embedding: Vec<f32>,
-        }
-        #[derive(Deserialize)]
-        struct EmbeddingResponse {
-            data: Vec<EmbeddingRow>,
-        }
-        let req = self
-            .http
-            .post(format!("{}/embeddings", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&json!({
-                "model": self.model,
-                "input": texts,
-                "dimensions": self.dim,
-                "encoding_format": "float",
-            }));
-        let body = self.resilience.send(req, "dashscope embeddings").await?;
-        let parsed: EmbeddingResponse =
-            serde_json::from_str(&body).context("dashscope embeddings parse")?;
-        anyhow::ensure!(
-            parsed.data.len() == texts.len(),
-            "dashscope returned {} embeddings for {} inputs",
-            parsed.data.len(),
-            texts.len()
-        );
-        let mut rows = parsed.data;
-        rows.sort_by_key(|r| r.index);
-        for r in &rows {
-            anyhow::ensure!(
-                r.embedding.len() == self.dim,
-                "dashscope returned dim {} (expected {})",
-                r.embedding.len(),
-                self.dim
-            );
-        }
-        Ok(rows.into_iter().map(|r| r.embedding).collect())
-    }
-}
-
-#[async_trait]
-impl brainiac_core::embed::Embedder for QwenEmbedder {
-    fn model_name(&self) -> &str {
-        "qwen:text-embedding-v4"
-    }
-
-    fn dim(&self) -> usize {
-        self.dim
-    }
-
-    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        // DashScope rejects empty input — degrade to a zero vector, matching
-        // the deterministic embedder's behavior for blank text.
-        if text.trim().is_empty() {
-            return Ok(vec![0.0; self.dim]);
-        }
-        Ok(self
-            .request(&[text])
-            .await?
-            .into_iter()
-            .next()
-            .expect("length checked"))
-    }
-
-    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
-        for chunk in texts.chunks(Self::MAX_BATCH) {
-            // Blank inputs are filtered per-chunk and re-inserted as zeros.
-            let live: Vec<&str> = chunk
-                .iter()
-                .copied()
-                .filter(|t| !t.trim().is_empty())
-                .collect();
-            let mut embedded = if live.is_empty() {
-                Vec::new()
-            } else {
-                self.request(&live).await?
-            }
-            .into_iter();
-            for t in chunk {
-                if t.trim().is_empty() {
-                    out.push(vec![0.0; self.dim]);
-                } else {
-                    out.push(embedded.next().expect("length checked"));
-                }
-            }
-        }
-        Ok(out)
-    }
 }
 
 // ── provider registry & per-stage routing ───────────────────────────────
@@ -404,30 +110,73 @@ impl Stage {
     }
 }
 
-/// Build a provider from a spec string: `qwen` (default model),
-/// `qwen:<model>` (e.g. `qwen:qwen-turbo`), or `mock`. The single place new
+/// Build a chat provider from a spec string: `<provider>` (that provider's
+/// env-configured default model) or `<provider>:<model>`. The single place new
 /// providers plug into routing.
+///
+/// Providers: `qwen`, `openai`, `azure`, `openai-compat`, `anthropic`,
+/// `google` (alias `gemini`), `bedrock`, `vertex`, `mock`. Each reads its own
+/// credentials from the environment (see [`default_chat_from_env`] for the key
+/// matrix). `split_once(':')` splits only on the FIRST colon, so provider model
+/// ids that themselves contain colons (e.g. Bedrock `…-v2:0`) survive intact.
 pub fn provider_from_spec(spec: &str) -> Result<std::sync::Arc<dyn ChatProvider>> {
     let spec = spec.trim();
     let (provider, model) = match spec.split_once(':') {
-        Some((p, m)) => (p, Some(m.to_string())),
+        Some((p, m)) => (p.trim(), Some(m.trim().to_string())),
         None => (spec, None),
     };
-    match provider {
+    let arc: std::sync::Arc<dyn ChatProvider> = match provider {
         "qwen" => {
-            let key = dashscope_key_from_env()
+            let key = providers::openai::qwen_key_from_env()
                 .context("provider spec `qwen` needs DASHSCOPE_API_KEY or QWEN_API_KEY")?;
-            Ok(std::sync::Arc::new(QwenProvider::new(
+            std::sync::Arc::new(QwenProvider::new(
                 key,
                 model.or_else(|| std::env::var("QWEN_MODEL").ok()),
                 std::env::var("QWEN_BASE_URL").ok(),
-            )))
+            ))
         }
-        "mock" => Ok(std::sync::Arc::new(MockProvider::new(|_| {
-            r#"{"memories":[]}"#.to_string()
-        }))),
-        other => anyhow::bail!("unknown provider `{other}` in spec `{spec}` (qwen|mock)"),
-    }
+        "openai" => std::sync::Arc::new(providers::openai::openai_from_env(model)?),
+        "azure" => std::sync::Arc::new(providers::openai::azure_from_env(model)?),
+        "openai-compat" => std::sync::Arc::new(providers::openai::openai_compat_from_env(model)?),
+        "anthropic" => std::sync::Arc::new(AnthropicProvider::from_env(model)?),
+        "google" | "gemini" => std::sync::Arc::new(GeminiProvider::from_env(model)?),
+        "bedrock" => std::sync::Arc::new(BedrockProvider::from_env(model)?),
+        "vertex" => std::sync::Arc::new(VertexProvider::from_env(model)?),
+        "mock" => std::sync::Arc::new(MockProvider::new(|_| r#"{"memories":[]}"#.to_string())),
+        other => anyhow::bail!(
+            "unknown provider `{other}` in spec `{spec}` \
+             (qwen|openai|azure|openai-compat|anthropic|google|bedrock|vertex|mock)"
+        ),
+    };
+    Ok(arc)
+}
+
+/// The process-default chat provider, selected by `BRAINIAC_PROVIDER`
+/// (default `qwen`, so an unconfigured deploy keeps its previous behavior).
+/// `BRAINIAC_MODEL` optionally pins the default model for that provider; per-stage
+/// `BRAINIAC_MODEL_*` still override individual stages on top of this default.
+///
+/// Credential env by provider: `qwen` → DASHSCOPE_API_KEY|QWEN_API_KEY;
+/// `openai` → OPENAI_API_KEY (+ OPENAI_BASE_URL/OPENAI_MODEL); `azure` →
+/// AZURE_OPENAI_ENDPOINT/_API_KEY/_DEPLOYMENT; `openai-compat` →
+/// BRAINIAC_OPENAI_COMPAT_BASE_URL/_KEY; `anthropic` → ANTHROPIC_API_KEY;
+/// `google` → GEMINI_API_KEY|GOOGLE_API_KEY; `bedrock` → AWS_ACCESS_KEY_ID/
+/// AWS_SECRET_ACCESS_KEY/AWS_REGION; `vertex` → GOOGLE_CLOUD_PROJECT +
+/// VERTEX_ACCESS_TOKEN|VERTEX_SA_JSON|GOOGLE_APPLICATION_CREDENTIALS.
+pub fn default_chat_from_env() -> Result<std::sync::Arc<dyn ChatProvider>> {
+    let provider = std::env::var("BRAINIAC_PROVIDER")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "qwen".to_string());
+    let spec = match std::env::var("BRAINIAC_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+    {
+        Some(model) => format!("{provider}:{}", model.trim()),
+        None => provider.clone(),
+    };
+    provider_from_spec(&spec).with_context(|| format!("BRAINIAC_PROVIDER = `{provider}`"))
 }
 
 /// Routes each pipeline stage to a provider. Defaults to one provider for

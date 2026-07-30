@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use brainiac_core::embed::{DeterministicEmbedder, Embedder};
 use brainiac_core::rerank::{LexicalOverlapReranker, Reranker};
-use brainiac_gateway::QwenEmbedder;
+use brainiac_gateway::{OpenAiCompatEmbedder, QwenEmbedder};
 use brainiac_store::Store;
 use clap::{Parser, Subcommand};
 
@@ -197,7 +197,22 @@ fn embedder_select(name: Option<&str>) -> Result<Arc<dyn Embedder>> {
                 .context("embedder=qwen needs QWEN_API_KEY or DASHSCOPE_API_KEY")?;
             Ok(Arc::new(e))
         }
-        other => anyhow::bail!("unknown embedder `{other}` (deterministic|qwen)"),
+        "openai" => {
+            let key = std::env::var("OPENAI_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+                .context("embedder=openai needs OPENAI_API_KEY")?;
+            let dim = std::env::var("OPENAI_EMBED_DIM")
+                .ok()
+                .and_then(|d| d.parse().ok());
+            Ok(Arc::new(OpenAiCompatEmbedder::openai(
+                key,
+                std::env::var("OPENAI_EMBED_MODEL").ok(),
+                std::env::var("OPENAI_BASE_URL").ok(),
+                dim,
+            )))
+        }
+        other => anyhow::bail!("unknown embedder `{other}` (deterministic|qwen|openai)"),
     }
 }
 
@@ -254,11 +269,24 @@ async fn main() -> Result<()> {
     let sentry_guard = init_sentry();
 
     use tracing_subscriber::prelude::*;
+
+    // Log format follows the same BRAINIAC_ENV switch as Sentry: human-readable
+    // text on a developer's terminal, line-delimited JSON on any deployed host so
+    // the log aggregator can parse fields instead of regexing a rendered string.
+    // Both are the SAME fmt layer with one setting flipped, so the EnvFilter and
+    // the Sentry layer compose identically either way.
+    let json_logs = std::env::var("BRAINIAC_ENV").unwrap_or_else(|_| "local".into()) != "local";
+    let fmt_layer = if json_logs {
+        tracing_subscriber::fmt::layer().json().boxed()
+    } else {
+        tracing_subscriber::fmt::layer().boxed()
+    };
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(fmt_layer)
         // Forwards ERROR-level tracing events to Sentry when it is initialized;
         // an inert layer otherwise (no client ⇒ nothing is sent).
         .with(sentry_tracing::layer())
@@ -504,10 +532,10 @@ async fn scan_divergence() -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let pool = brainiac_store::admin_pool(&url).await?;
-    let default: Arc<dyn brainiac_gateway::ChatProvider> =
-        Arc::new(brainiac_gateway::QwenProvider::from_env().context(
-        "scan-divergence adjudicates with a real provider — set QWEN_API_KEY (or DASHSCOPE_API_KEY)",
-    )?);
+    let default = brainiac_gateway::default_chat_from_env().context(
+        "scan-divergence adjudicates with a real provider — set BRAINIAC_PROVIDER + its key \
+         (default qwen: DASHSCOPE_API_KEY / QWEN_API_KEY)",
+    )?;
     // Route through the Divergence stage so BRAINIAC_MODEL_DIVERGENCE can dial
     // the adjudicator independently of the pipeline's other stages.
     let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
@@ -642,10 +670,10 @@ async fn worker_loop(
             r#"{"memories":[]}"#.to_string()
         }))
     } else {
-        Arc::new(
-            brainiac_gateway::QwenProvider::from_env()
-                .context("set DASHSCOPE_API_KEY (or pass --mock for dev)")?,
-        )
+        brainiac_gateway::default_chat_from_env().context(
+            "worker needs a real provider — set BRAINIAC_PROVIDER + its key \
+             (default qwen: DASHSCOPE_API_KEY), or pass --mock for dev",
+        )?
     };
     // The org-intelligence sweeps (divergence adjudication) adjudicate with the
     // default provider; keep a handle before it's moved into the router.
@@ -907,14 +935,11 @@ async fn eval_docs(
         hard_failures, regression_failures, regression_failures_mean, run, DocsBaseline,
     };
 
-    let default: Arc<dyn brainiac_gateway::ChatProvider> =
-        brainiac_gateway::QwenProvider::from_env()
-            .map(|p| Arc::new(p) as Arc<dyn brainiac_gateway::ChatProvider>)
-            .context(
-                "the `docs` profile measures REAL composition quality and needs a real provider — \
-             set QWEN_API_KEY (or DASHSCOPE_API_KEY). A mock composer cites perfectly by \
-             construction, so scoring one would report a safety it never tested.",
-            )?;
+    let default = brainiac_gateway::default_chat_from_env().context(
+        "the `docs` profile measures REAL composition quality and needs a real provider — \
+         set BRAINIAC_PROVIDER + its key (default qwen: DASHSCOPE_API_KEY). A mock composer \
+         cites perfectly by construction, so scoring one would report a safety it never tested.",
+    )?;
     let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
 
     // Multi-sample: tenant reset between runs (seeding is INSERT-based, so a
@@ -1079,13 +1104,11 @@ async fn eval_extraction(
         aggregate, regression_failures, regression_failures_multi, run, ExtractionBaseline,
     };
 
-    let default: Arc<dyn brainiac_gateway::ChatProvider> = brainiac_gateway::QwenProvider::from_env()
-        .map(|p| Arc::new(p) as Arc<dyn brainiac_gateway::ChatProvider>)
-        .context(
-            "the `extraction` profile measures REAL extraction quality and needs a real provider — \
-             set QWEN_API_KEY (or DASHSCOPE_API_KEY). It is a nightly/on-demand per-provider run, \
-             not a per-commit gate; use the `pipeline` profile for the deterministic plumbing check.",
-        )?;
+    let default = brainiac_gateway::default_chat_from_env().context(
+        "the `extraction` profile measures REAL extraction quality and needs a real provider — \
+         set BRAINIAC_PROVIDER + its key (default qwen: DASHSCOPE_API_KEY). It is a nightly/on-demand \
+         per-provider run, not a per-commit gate; use the `pipeline` profile for the deterministic check.",
+    )?;
     let providers = brainiac_gateway::ProviderRouter::from_env(default)?;
 
     // Multi-sample: tenant reset between runs, because extraction is idempotent

@@ -15,6 +15,15 @@ serde_json = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
+chrono = { workspace = true }
+# Cloud-native provider auth (Bedrock SigV4, Vertex service-account JWT→OAuth).
+# Pure-Rust crypto: no ring, no OpenSSL, no C toolchain — keeps the cross-platform
+# build story the rest of the workspace already relies on.
+# `oid` lets RSASSA-PKCS1-v1_5 (Vertex SA JWT, RS256) pick up the SHA-256 DigestInfo prefix.
+sha2 = { workspace = true, features = ["oid"] }
+hmac = { workspace = true }
+base64 = { workspace = true }
+rsa = { workspace = true }
 
 [dev-dependencies]
 # Mock HTTP upstream for provider + resilience tests. 0.6 targets the hyper-1
