@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-26",
+  "generatedBy": "personas passport-onboard",
+  "dimensions": {
+    "context-coverage": { "level": "full", "tool": "Personas context scan", "skippedByChoice": false, "note": "25 contexts, all mapped file paths resolve on disk; groups/use_cases layer still empty" },
+    "agent-instructions": { "level": "present", "tool": "CLAUDE.md", "skippedByChoice": false, "note": "root CLAUDE.md now carries commands, layering, quality and design standards; .claude/CLAUDE.md is a pointer" },
+    "documentation": { "level": "source-synced", "tool": "feature-doc-map", "skippedByChoice": false, "note": "ARCHITECTURE.md rewritten against the real tree; source-of-truth path headers on 9 coupled docs" },
+    "agent-memory": { "level": "curated", "tool": "MEMORY.md", "skippedByChoice": false, "note": "11 indexed entries mirrored into the repo, one file per durable fact" },
+    "skills": { "level": "present", "tool": "Claude Code skills", "skippedByChoice": false, "note": "11 skills adopted and customized to this repo's commands and paths" },
+    "hosting": { "level": "present", "tool": "Docker Compose", "skippedByChoice": false, "note": "local and test stacks runnable; production stack is documented and buildable but no live host is confirmed" },
+    "database": { "level": "scripted", "tool": "sqlx migrations", "skippedByChoice": false, "note": "41 append-only numbered migrations; backup cron installer, offsite push and restore drill added but never exercised against live infrastructure" },
+    "auth": { "level": "present", "tool": "scoped API tokens + RLS", "skippedByChoice": false, "note": "session secret now required; first boot mints a scoped key and drops the break-glass token" },
+    "ci": { "level": "checks", "tool": "GitHub Actions", "skippedByChoice": false, "note": "fmt, clippy, workspace tests, retrieval eval gate, console typecheck/test/build; release images published on tag; no auto-deploy" },
+    "tests": { "level": "partial", "tool": "cargo test + vitest", "skippedByChoice": false, "note": "310 test functions across all 8 crates plus 16 console suites; publish/export boundary now covered; pg-backed tests self-skip without a database" },
+    "evals": { "level": "partial", "tool": "brainiac eval harness", "skippedByChoice": false, "note": "8 profiles with 8 committed baselines; only the retrieval profile is CI-gated and one LLM call site has no dedicated profile" },
+    "observability": { "level": "errors", "tool": "Sentry", "skippedByChoice": false, "note": "server-side error tracking and JSON logs are live off local; console SDK is compiled out of released images and needs a build-arg fix; no metrics endpoint" },
+    "llm-tracking": { "level": "present", "tool": "LightTrack", "skippedByChoice": false, "note": "single gateway chokepoint, fire-and-forget, events now carry an environment tag; embeddings are not metered" },
+    "security": { "level": "audited", "tool": "cargo-deny + npm audit + Dependabot", "skippedByChoice": false, "note": "scanning wired on PR and weekly; the gate fails today on real unresolved advisories and was deliberately not suppressed" },
+    "app-cost": { "level": "known", "tool": null, "skippedByChoice": false, "note": "maintained privately outside version control" }
+  }
+}
