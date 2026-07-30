@@ -728,7 +728,7 @@ export interface paths {
         };
         /**
          * GET /v1/onboard/requests — the console's approval queue (admin).
-         * @description Pending pairing requests with their whitelist match in the caller's org (admin). A null project_name means approval will be refused until the remote is registered under a project.
+         * @description Pending pairing requests whose remote is registered under a project in the caller's org (admin) — the ones this caller can approve. Pairings for unregistered remotes are reported only as an `unregistered` count: they carry no org (the start endpoint is unauthenticated), so listing their remote and pairing code to every admin on a shared deployment would disclose one tenant's repositories to another.
          */
         get: operations["requests_list"];
         put?: never;
@@ -2526,7 +2526,20 @@ export interface components {
             user_code: string;
         };
         OnboardRequestsResponse: {
+            /**
+             * @description Pending pairings whose remote is registered under a project in the
+             *     caller's org — the ones this caller can actually approve.
+             */
             requests: components["schemas"]["OnboardRequestView"][];
+            /**
+             * @description How many live pairings are waiting on a remote that is registered in NO
+             *     project of this org. Deliberately a bare count: `start` is
+             *     unauthenticated and stamps no org, so these rows belong to nobody yet,
+             *     and their remote URL, machine label and pairing code must not be shown
+             *     to every admin on a shared deployment. The count is the honest signal —
+             *     "someone is trying to pair a repo you have not registered".
+             */
+            unregistered: number;
         };
         OnboardStartBody: {
             /** @description Who is asking — hostname/username, shown to the approver. */

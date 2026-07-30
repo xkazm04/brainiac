@@ -353,6 +353,11 @@ async fn unwhitelisted_remotes_cannot_be_approved_and_denial_mints_nothing() {
     let started: serde_json::Value = r.json().await.expect("json");
     let device_code = started["device_code"].as_str().expect("dc").to_string();
 
+    // The queue does NOT list a pairing for a remote registered in no project of
+    // this org: `start` is unauthenticated and stamps no org_id, so such a row
+    // belongs to nobody, and listing its remote/label/pairing code would show one
+    // tenant's repositories to every admin on a shared deployment. It is reported
+    // as a bare count instead.
     let r = http
         .get(format!("{base}/v1/onboard/requests"))
         .bearer_auth("tok_admin")
@@ -360,9 +365,27 @@ async fn unwhitelisted_remotes_cannot_be_approved_and_denial_mints_nothing() {
         .await
         .expect("requests");
     let queue: serde_json::Value = r.json().await.expect("json");
-    let req = &queue["requests"][0];
-    assert!(req["project_name"].is_null(), "no whitelist match");
-    let request_id = req["id"].as_str().expect("id").to_string();
+    assert_eq!(
+        queue["requests"].as_array().expect("array").len(),
+        0,
+        "an unregistered remote is not listed to any org"
+    );
+    assert_eq!(
+        queue["unregistered"], 1,
+        "but the org is told something is waiting on an unregistered remote"
+    );
+
+    // The id therefore comes from the row itself, not from the queue — the
+    // approve/deny path below is unchanged and must stay refused.
+    let admin_pool = sqlx::PgPool::connect(&url).await.expect("admin pool");
+    let request_id: String = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM onboard_requests WHERE remote = $1",
+    )
+    .bind("https://github.com/meridian/shadow-repo")
+    .fetch_one(&admin_pool)
+    .await
+    .expect("row")
+    .to_string();
 
     // Approval refuses: the remote is registered nowhere.
     let r = http

@@ -158,7 +158,16 @@ pub(crate) struct OnboardRequestView {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct OnboardRequestsResponse {
+    /// Pending pairings whose remote is registered under a project in the
+    /// caller's org — the ones this caller can actually approve.
     pub requests: Vec<OnboardRequestView>,
+    /// How many live pairings are waiting on a remote that is registered in NO
+    /// project of this org. Deliberately a bare count: `start` is
+    /// unauthenticated and stamps no org, so these rows belong to nobody yet,
+    /// and their remote URL, machine label and pairing code must not be shown
+    /// to every admin on a shared deployment. The count is the honest signal —
+    /// "someone is trying to pair a repo you have not registered".
+    pub unregistered: usize,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -372,9 +381,12 @@ pub(crate) async fn onboard_poll(
     get,
     path = "/v1/onboard/requests",
     tag = "onboard",
-    description = "Pending pairing requests with their whitelist match in the caller's org \
-                   (admin). A null project_name means approval will be refused until the \
-                   remote is registered under a project.",
+    description = "Pending pairing requests whose remote is registered under a project in the \
+                   caller's org (admin) — the ones this caller can approve. Pairings for \
+                   unregistered remotes are reported only as an `unregistered` count: they carry \
+                   no org (the start endpoint is unauthenticated), so listing their remote and \
+                   pairing code to every admin on a shared deployment would disclose one \
+                   tenant's repositories to another.",
     responses(
         (status = 200, description = "Pending requests, oldest first", body = OnboardRequestsResponse),
         (status = 401, description = "Missing or unknown bearer token"),
@@ -390,7 +402,14 @@ pub(crate) async fn requests_list(
     let rows = brainiac_store::onboard::list_pending(pool)
         .await
         .map_err(internal)?;
+    // `list_pending` is deployment-wide by construction: `start` is
+    // unauthenticated and stamps no org_id, so a pending row belongs to nobody
+    // until it is approved. Scoping therefore happens HERE, against the caller's
+    // own whitelist — via find_by_remote, which owns the segment-aware
+    // longest-prefix matching (duplicating that in SQL would be a second, and
+    // eventually divergent, matcher).
     let mut requests = Vec::with_capacity(rows.len());
+    let mut unregistered = 0usize;
     for r in rows {
         let matched = brainiac_store::projects::find_by_remote(
             pool,
@@ -400,6 +419,13 @@ pub(crate) async fn requests_list(
         )
         .await
         .map_err(internal)?;
+        // No match in this org = not this caller's request to see. `request_approve`
+        // already 409s on it, so listing it only disclosed another tenant's repo
+        // URL, machine label and pairing code.
+        let Some((project_id, project_name)) = matched else {
+            unregistered += 1;
+            continue;
+        };
         requests.push(OnboardRequestView {
             id: r.id,
             user_code: r.user_code,
@@ -407,11 +433,14 @@ pub(crate) async fn requests_list(
             label: r.label,
             created_at: r.created_at,
             expires_at: r.expires_at,
-            project_id: matched.as_ref().map(|(id, _)| *id),
-            project_name: matched.map(|(_, name)| name),
+            project_id: Some(project_id),
+            project_name: Some(project_name),
         });
     }
-    Ok(Json(OnboardRequestsResponse { requests }))
+    Ok(Json(OnboardRequestsResponse {
+        requests,
+        unregistered,
+    }))
 }
 
 /// POST /v1/onboard/requests/{id}/approve — approve into the whitelist match.

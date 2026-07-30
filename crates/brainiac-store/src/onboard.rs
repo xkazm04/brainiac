@@ -87,7 +87,11 @@ pub async fn pending_count(pool: &PgPool) -> Result<i64> {
     Ok(row.get::<i64, _>("n"))
 }
 
-/// The console's approval queue: pending, unexpired, oldest first.
+/// Live pending pairings, DEPLOYMENT-WIDE, oldest first. `start` is
+/// unauthenticated and stamps no org_id, so these rows belong to nobody until
+/// approval — there is no org column to filter on here. Callers MUST scope the
+/// result to their own org (the server does it with `projects::find_by_remote`,
+/// the canonical whitelist matcher) before showing a row to anyone.
 pub async fn list_pending(pool: &PgPool) -> Result<Vec<OnboardRequestRow>> {
     let rows = sqlx::query(
         "SELECT id, user_code, remote, label, path, status, org_id, project_id,
