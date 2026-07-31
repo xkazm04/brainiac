@@ -378,12 +378,14 @@ async fn unwhitelisted_remotes_cannot_be_approved_and_denial_mints_nothing() {
     // The id therefore comes from the row itself, not from the queue — the
     // approve/deny path below is unchanged and must stay refused.
     let admin_pool = sqlx::PgPool::connect(&url).await.expect("admin pool");
+    // NB: `start` stores the NORMALIZED remote, not the spelling it was called
+    // with — so this looks up `github.com/...`, never the `https://` form above.
     let request_id: String =
         sqlx::query_scalar::<_, Uuid>("SELECT id FROM onboard_requests WHERE remote = $1")
-            .bind("https://github.com/meridian/shadow-repo")
+            .bind("github.com/meridian/shadow-repo")
             .fetch_one(&admin_pool)
             .await
-            .expect("row")
+            .expect("the pending row for the unregistered remote")
             .to_string();
 
     // Approval refuses: the remote is registered nowhere.
