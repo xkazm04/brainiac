@@ -75,7 +75,26 @@ pub struct ComposeOutcome {
 /// The visibility firewall. A memory may enter a page only if the page's
 /// audience is entitled to it — checked in code, on top of RLS, because this is
 /// the invariant we cannot afford to get wrong exactly once.
-fn admits(doc: &Document, m: &Memory) -> bool {
+///
+/// `isolated_projects` is the set of projects that have opted into RLS
+/// isolation (migration 0040). It is passed IN rather than looked up here so
+/// this stays a pure, unit-testable predicate; [`bound_memories`] resolves it
+/// once per section from the projects actually in play.
+fn admits(doc: &Document, m: &Memory, isolated_projects: &HashSet<Uuid>) -> bool {
+    // The isolation cap (migration 0040, PROJECT-PLAN follow-up). RLS alone
+    // cannot carry this one: compose for a TEAM page runs under `worker_tx`,
+    // and 0040 clause 1 grants the worker unconditional row visibility ON
+    // PURPOSE — the extraction/embedding/contradiction stages must be able to
+    // read back rows they just wrote. So an isolated project's memory is
+    // reachable here, and only code can refuse it. An isolated project's claim
+    // may enter EXACTLY the pages stamped with that project; every other page
+    // — org, team, or another project's — is not its audience.
+    if let Some(p) = m.project_id {
+        if isolated_projects.contains(&p) && doc.project_id != Some(p) {
+            return false;
+        }
+    }
+
     // The project cap (PROJECT-PLAN PR4). A project-stamped page composes from
     // its OWN project's memories plus org-shared ones (the inclusive lens);
     // another project's claim on a shared entity must never leak into it. An
@@ -160,6 +179,22 @@ async fn bound_memories(
         out.extend(hits.into_iter().map(|h| h.memory));
     }
 
+    // Which of the projects represented in this candidate set have opted into
+    // isolation? ONE query for the whole section, over the handful of distinct
+    // projects actually present — and none at all when (as in every org that
+    // never touched the feature) no candidate carries a project stamp.
+    let candidate_projects: Vec<Uuid> = {
+        let mut set: HashSet<Uuid> = HashSet::new();
+        for m in &out {
+            if let Some(p) = m.project_id {
+                set.insert(p);
+            }
+        }
+        set.into_iter().collect()
+    };
+    let isolated_projects =
+        brainiac_store::projects::isolated_among(conn, &candidate_projects).await?;
+
     // Filter, dedupe, cap. Order matters: visibility first, so a memory that
     // must not be here cannot survive any later step.
     let mut seen: HashSet<Uuid> = HashSet::new();
@@ -168,7 +203,7 @@ async fn bound_memories(
         if !seen.insert(m.id) {
             continue;
         }
-        if !admits(doc, &m) {
+        if !admits(doc, &m, &isolated_projects) {
             continue;
         }
         if m.status != MemoryStatus::Canonical {
@@ -906,12 +941,19 @@ pub async fn refresh_digests(conn: &mut PgConnection, org_id: Uuid) -> Result<u6
 /// Team pages are composed under the worker scope (org + team tiers) and capped
 /// in code by [`admits`], because RLS resolves team membership from
 /// `team_members`, which a synthetic user is not in.
-pub fn compose_principal(org_id: Uuid) -> brainiac_core::Principal {
+///
+/// `project_id` is the PAGE's own project stamp, so that a page belonging to an
+/// isolated project (migration 0040) can still read its own project's rows —
+/// isolation is a boundary around a project, not a blackout inside it. It only
+/// ever WIDENS what the policy admits (clause 3 is one arm of an OR), and for a
+/// non-isolated project the restrictive policy is already always-true, so an
+/// unstamped or ordinary page composes byte-identically to before.
+pub fn compose_principal(org_id: Uuid, project_id: Option<Uuid>) -> brainiac_core::Principal {
     brainiac_core::Principal {
         org_id,
         user_id: Uuid::from_bytes(*b"brainiac-compose"),
         team_ids: vec![],
-        project_id: None,
+        project_id,
     }
 }
 
@@ -992,20 +1034,28 @@ mod tests {
         }
     }
 
+    /// `admits` as every org that never touched project isolation sees it:
+    /// nothing is isolated, so the new cap is a no-op and the predicate is the
+    /// one that shipped. Every pre-existing case below runs through THIS, which
+    /// is what makes them a back-compat proof rather than a rewrite.
+    fn admits_open(doc: &Document, m: &Memory) -> bool {
+        admits(doc, m, &HashSet::new())
+    }
+
     #[test]
     fn org_page_refuses_team_private_knowledge() {
         // The invariant EVAL §2.6 treats as a build failure, in one assertion.
         let t = Uuid::new_v4();
         let page = doc(Visibility::Org, None);
-        assert!(!admits(
+        assert!(!admits_open(
             &page,
             &mem(Uuid::new_v4(), Visibility::Team, Some(t))
         ));
-        assert!(!admits(
+        assert!(!admits_open(
             &page,
             &mem(Uuid::new_v4(), Visibility::Private, None)
         ));
-        assert!(admits(
+        assert!(admits_open(
             &page,
             &mem(Uuid::new_v4(), Visibility::Org, Some(t))
         ));
@@ -1016,15 +1066,15 @@ mod tests {
         let mine = Uuid::new_v4();
         let theirs = Uuid::new_v4();
         let page = doc(Visibility::Team, Some(mine));
-        assert!(admits(
+        assert!(admits_open(
             &page,
             &mem(Uuid::new_v4(), Visibility::Team, Some(mine))
         ));
-        assert!(!admits(
+        assert!(!admits_open(
             &page,
             &mem(Uuid::new_v4(), Visibility::Team, Some(theirs))
         ));
-        assert!(admits(
+        assert!(admits_open(
             &page,
             &mem(Uuid::new_v4(), Visibility::Org, Some(theirs))
         ));
@@ -1044,17 +1094,65 @@ mod tests {
         };
         let mut page = doc(Visibility::Org, None);
         page.project_id = Some(mine);
-        assert!(admits(&page, &with_project(Some(mine))));
-        assert!(admits(&page, &with_project(None)), "org-shared always enters");
+        assert!(admits_open(&page, &with_project(Some(mine))));
         assert!(
-            !admits(&page, &with_project(Some(theirs))),
+            admits_open(&page, &with_project(None)),
+            "org-shared always enters"
+        );
+        assert!(
+            !admits_open(&page, &with_project(Some(theirs))),
             "a sibling project's claim must not leak into this page"
         );
 
         let unstamped = doc(Visibility::Org, None);
         assert!(
-            admits(&unstamped, &with_project(Some(theirs))),
+            admits_open(&unstamped, &with_project(Some(theirs))),
             "an unstamped page has no project constraint (back-compat)"
+        );
+    }
+
+    /// Migration 0040's isolation, capped where RLS deliberately cannot cap it.
+    /// A team page composes under `worker_tx`, which sees an isolated project's
+    /// rows by design — so this predicate is the only thing standing between an
+    /// isolated client's memory and a page its audience was never entitled to.
+    #[test]
+    fn an_isolated_projects_memory_reaches_only_that_projects_pages() {
+        let isolated = Uuid::new_v4();
+        let open = Uuid::new_v4();
+        let team = Uuid::new_v4();
+        let iso_set: HashSet<Uuid> = [isolated].into_iter().collect();
+        let claim = |project: Option<Uuid>| {
+            let mut m = mem(Uuid::new_v4(), Visibility::Org, Some(team));
+            m.project_id = project;
+            m
+        };
+
+        // The leak, in the exact shape the worker path produced: an unstamped
+        // org/team page pulling an isolated project's org-visible memory.
+        let org_page = doc(Visibility::Org, None);
+        let team_page = doc(Visibility::Team, Some(team));
+        assert!(!admits(&org_page, &claim(Some(isolated)), &iso_set));
+        assert!(!admits(&team_page, &claim(Some(isolated)), &iso_set));
+
+        // Another project's page is just as much "not this audience".
+        let mut sibling_page = doc(Visibility::Org, None);
+        sibling_page.project_id = Some(open);
+        assert!(!admits(&sibling_page, &claim(Some(isolated)), &iso_set));
+
+        // Its OWN project's page still composes — isolation is a boundary, not
+        // a blackout. Requirement 2: the project keeps its own knowledge base.
+        let mut own_page = doc(Visibility::Org, None);
+        own_page.project_id = Some(isolated);
+        assert!(admits(&own_page, &claim(Some(isolated)), &iso_set));
+
+        // And nothing else moves: with a project isolated somewhere in the org,
+        // org-shared and NON-isolated-project memories admit exactly as before.
+        assert!(admits(&org_page, &claim(None), &iso_set));
+        assert!(admits(&org_page, &claim(Some(open)), &iso_set));
+        assert_eq!(
+            admits(&org_page, &claim(Some(open)), &iso_set),
+            admits_open(&org_page, &claim(Some(open))),
+            "a non-isolated project's memory is unaffected by the new cap"
         );
     }
 

@@ -174,8 +174,21 @@ The team-aggregation surfaces get project twins, in value order:
   **SHIPPED 2026-07-18 (opt-in, migration 0040, retrieval-layer):** a
   RESTRICTIVE RLS policy hides an isolated project rows from org-wide and
   other-project principals in direct reads; default stays byte-identical.
-  KNOWN FOLLOW-UP: the KB compose path (compose::admits) does not yet honor
-  isolation — an org page can still project an isolated project memory.
+  **KB compose path SHIPPED 2026-08-03:** `compose::admits` now takes the set
+  of isolated projects and refuses an isolated project's memory on any page not
+  stamped with that project. It has to be code, not RLS: a team page composes
+  under `worker_tx`, and 0040 clause 1 grants the worker unconditional row
+  visibility BY DESIGN (the pipeline stages must read back rows they wrote), so
+  the policy layer cannot close that path. `admits` stays pure — the isolated
+  set is resolved once per section by `projects::isolated_among`. Proven by
+  `crates/brainiac-pipeline/tests/compose_isolation_pg.rs`, which flips one
+  boolean and asserts the claim leaves both the prose and the provenance
+  closure while the org-shared memory beside it is untouched.
+  REMAINING GAP (retrieval, not compose): `retrieval::read_scope` /
+  `scoped_pool_tx` do not propagate `app.project_id` onto the two candidate
+  retrievers' pooled connections, so an isolated project's rows are invisible
+  to its OWN project-scoped principal in any hybrid search. Entity-anchored and
+  window bindings (which run on the caller's own transaction) are unaffected.
 - **Monorepo `path_prefix` on project_repos** — the schema slot exists in the
   design; add when a real monorepo onboards.
 - **Promotion flow project→org-shared** — explicit console action + audit

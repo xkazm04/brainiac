@@ -6,7 +6,8 @@
 //! its SQL to it.
 
 use anyhow::Result;
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -108,6 +109,28 @@ pub async fn set_isolated(
         .execute(pool)
         .await?;
     Ok(res.rows_affected() > 0)
+}
+
+/// Which of `ids` name a project that has opted into isolation (migration
+/// 0040)? Returns only the isolated ones, so an empty result means "nothing
+/// here is isolated" — the overwhelmingly common case, and the one that must
+/// stay behaviourally identical to a world without this function.
+///
+/// Takes a connection rather than the pool because the callers that need it
+/// (the compose stage, notably) are mid-transaction and must see the same
+/// snapshot as the rows they are filtering. `projects` carries no RLS by
+/// design (see the module header), so this is safe to read from the worker
+/// scope — and it is exactly why the worker's unconditional row visibility
+/// (0040 clause 1) has to be capped in code instead.
+pub async fn isolated_among(conn: &mut PgConnection, ids: &[Uuid]) -> Result<HashSet<Uuid>> {
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let rows = sqlx::query("SELECT id FROM projects WHERE id = ANY($1) AND isolated")
+        .bind(ids)
+        .fetch_all(conn)
+        .await?;
+    Ok(rows.iter().map(|r| r.get::<Uuid, _>("id")).collect())
 }
 
 /// Whitelist a (normalized) remote — optionally scoped to a repo-relative

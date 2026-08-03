@@ -264,7 +264,7 @@ pub async fn compose_tick(
         // worker scope to see their own team's memories and are capped in code
         // (compose::admits).
         let principal = match doc.visibility {
-            brainiac_core::Visibility::Org => compose::compose_principal(org_id),
+            brainiac_core::Visibility::Org => compose::compose_principal(org_id, doc.project_id),
             _ => worker.clone(),
         };
         let mut tx = match doc.visibility {
