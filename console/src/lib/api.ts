@@ -45,6 +45,8 @@ import type {
   SourceFeedItem,
   StandardDetail,
   StandardsList,
+  StandardUpdate,
+  StandardUpdated,
   SweepSchedule,
   Sweeps,
   TokenPreview,
@@ -79,7 +81,7 @@ const API_TIMEOUT_MS = Number(process.env.BRAINIAC_API_TIMEOUT_MS ?? "15000") ||
 
 async function call<T>(
   cfg: ApiConfig,
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -372,6 +374,19 @@ export async function listStandards(
 
 export async function getStandard(cfg: ApiConfig, id: string): Promise<StandardDetail> {
   return call(cfg, "GET", `/v1/library/standards/${encodeURIComponent(id)}`);
+}
+
+/** Narrow, re-file, or re-word a rule during triage (lib:publish). Mining
+ *  files every candidate under `general`; this is how a maintainer moves it to
+ *  the stack whose page should carry it. A re-word appends a numbered revision
+ *  and dirty-marks the affected standards page — it is never a silent in-place
+ *  edit. 409 means the rule is deprecated or rejected (terminal). */
+export async function updateStandard(
+  cfg: ApiConfig,
+  id: string,
+  patch: StandardUpdate,
+): Promise<StandardUpdated> {
+  return call(cfg, "PATCH", `/v1/library/standards/${encodeURIComponent(id)}`, patch);
 }
 
 /** Adopt a proposed rule (lib:publish). `decree` signs for an evidence-free

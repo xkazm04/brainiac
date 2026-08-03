@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use brainiac_core::{LibraryArtifactKind, LibraryUsageEvent, Skill, Standard, StandardLifecycle};
+use brainiac_core::{
+    Enforcement, LibraryArtifactKind, LibraryUsageEvent, Skill, Standard, StandardLifecycle,
+};
 use brainiac_store::library;
 
 use crate::http::{auth_of, internal, AppState, HttpError};
@@ -47,7 +49,10 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/library/standards", get(standards_list))
         .route("/v1/library/standards/propose", post(standard_propose))
-        .route("/v1/library/standards/{id}", get(standard_get))
+        .route(
+            "/v1/library/standards/{id}",
+            get(standard_get).patch(standard_update),
+        )
         .route("/v1/library/standards/{id}/adopt", post(standard_adopt))
         .route(
             "/v1/library/standards/{id}/deprecate",
@@ -748,6 +753,123 @@ pub(crate) async fn skill_propose(
 }
 
 // ── the maintainer gate (lib:publish) ────────────────────────────────────
+
+/// A stack or category is a filing token, not prose: `rust`, `typescript`,
+/// `general`, `errors`. Longer than this and it is a sentence in the wrong box.
+const MAX_FILING_TOKEN: usize = 40;
+
+#[derive(Deserialize, ToSchema, Default)]
+pub(crate) struct StandardUpdateRequest {
+    /// Re-file under a real stack. Mining and the ratification bridge file
+    /// every candidate under `general`; this is how a maintainer narrows it to
+    /// `rust` or `typescript` so the stack's own page composes from it.
+    /// Normalised to a slug token (`Rust` → `rust`).
+    pub stack: Option<String>,
+    /// Re-file under a category (`errors`, `testing`, …). Same normalisation.
+    pub category: Option<String>,
+    /// Re-word the rule. Writes a NEW revision — never an in-place edit.
+    pub statement: Option<String>,
+    pub rationale: Option<String>,
+    /// Good/bad examples, verbatim markdown.
+    pub examples_md: Option<String>,
+    /// `mandatory` | `recommended` | `experimental`.
+    pub enforcement: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct StandardUpdateResponse {
+    #[serde(flatten)]
+    pub standard: StandardView,
+    /// The new revision number when the WORDING changed; `null` when only the
+    /// filing (stack/category) moved, or nothing changed at all. Where a rule
+    /// is shelved is not a revision of what the org committed to.
+    pub rev: Option<i32>,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/v1/library/standards/{id}",
+    params(("id" = Uuid, Path,)),
+    request_body = StandardUpdateRequest,
+    description = "Narrow, re-file, or re-word a rule during triage — the edit the gate was missing (mining files everything under `general`, and a maintainer could previously only judge a candidate, never fix where it lives or what it says). Takes lib:publish. A re-word appends a numbered revision and dirty-marks the standards page of an adopted rule (both pages when the stack moved); it is never a silent in-place mutation. Deprecated and rejected rules are terminal — 409, re-propose instead.",
+    responses(
+        (status = 200, body = StandardUpdateResponse),
+        (status = 400),
+        (status = 404),
+        (status = 409, description = "the rule is deprecated or rejected — terminal"),
+    )
+)]
+pub(crate) async fn standard_update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<StandardUpdateRequest>,
+) -> Result<Json<StandardUpdateResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, SCOPE_LIB_PUBLISH)
+        .await?
+        .principal;
+    let bad = |m: String| HttpError::from((StatusCode::BAD_REQUEST, m));
+    let text = |v: Option<String>, max: usize, field: &str| -> Result<Option<String>, HttpError> {
+        match v {
+            None => Ok(None),
+            Some(v) if v.trim().is_empty() => Err(bad(format!("{field} must not be empty"))),
+            Some(v) if v.chars().count() > max => Err(bad(format!("{field} exceeds {max} chars"))),
+            Some(v) => Ok(Some(v.trim().to_string())),
+        }
+    };
+    // A filing token is an identity, so it is normalised the same way a slug
+    // is — otherwise "Rust" and "rust" become two shelves for one stack.
+    let filing = |v: Option<String>, field: &str| -> Result<Option<String>, HttpError> {
+        Ok(text(v, MAX_FILING_TOKEN, field)?.map(|v| library::slugify(&v)))
+    };
+
+    let enforcement = match req.enforcement.as_deref() {
+        None => None,
+        Some(e) => Some(Enforcement::parse(e).ok_or_else(|| {
+            bad("enforcement must be mandatory | recommended | experimental".to_string())
+        })?),
+    };
+    let patch = library::StandardPatch {
+        stack: filing(req.stack, "stack")?,
+        category: filing(req.category, "category")?,
+        statement: text(req.statement, MAX_PROPOSAL_STATEMENT, "statement")?,
+        rationale: text(req.rationale, MAX_PROPOSAL_RATIONALE, "rationale")?,
+        detail_md: text(req.examples_md, MAX_PROPOSAL_EXAMPLES, "examples_md")?,
+        enforcement,
+    };
+
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let rev = match library::update_standard(&mut tx, id, &patch, principal.user_id)
+        .await
+        .map_err(internal)?
+    {
+        library::UpdateOutcome::Updated { rev } => rev,
+        library::UpdateOutcome::NotFound => {
+            return Err((StatusCode::NOT_FOUND, "standard not found".to_string()).into())
+        }
+        library::UpdateOutcome::Terminal { lifecycle } => {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "this rule is {} — terminal. Re-propose it instead of editing history.",
+                    lifecycle.as_str()
+                ),
+            )
+                .into())
+        }
+    };
+    // Read it back inside the same transaction: the maintainer's next render
+    // must show what the database actually holds, not what we hoped to write.
+    let Some(after) = library::get_standard(&mut tx, id).await.map_err(internal)? else {
+        return Err((StatusCode::NOT_FOUND, "standard not found".to_string()).into());
+    };
+    tx.commit().await.map_err(internal)?;
+
+    Ok(Json(StandardUpdateResponse {
+        standard: standard_view(&after),
+        rev,
+    }))
+}
 
 #[derive(Deserialize, ToSchema, Default)]
 pub(crate) struct AdoptRequest {

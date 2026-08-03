@@ -281,6 +281,152 @@ pub async fn versions(
         .collect())
 }
 
+/// What triage may change about a rule. Every field is a patch: `None` means
+/// "leave it alone", so a maintainer narrowing a mined candidate's stack never
+/// has to re-send the statement it already carries.
+#[derive(Default)]
+pub struct StandardPatch {
+    /// Re-file the rule under a real stack. Mining files everything under
+    /// `general`; this is how a maintainer moves it to `rust` before adopting.
+    pub stack: Option<String>,
+    pub category: Option<String>,
+    pub statement: Option<String>,
+    pub rationale: Option<String>,
+    pub detail_md: Option<String>,
+    pub enforcement: Option<Enforcement>,
+}
+
+pub enum UpdateOutcome {
+    /// The rule changed. `rev` is the NEW revision number when the wording
+    /// changed (statement / rationale / examples / enforcement); `None` when
+    /// only the filing moved — where a rule is shelved is not a revision of
+    /// what the org committed to, and minting a version for it would make the
+    /// history lie about how often the rule itself changed.
+    Updated { rev: Option<i32> },
+    /// No such rule under the caller's scope (another org's rule is "missing",
+    /// never "forbidden").
+    NotFound,
+    /// Deprecated or rejected: terminal. The way back is a new proposal, not
+    /// an edit to history.
+    Terminal { lifecycle: StandardLifecycle },
+}
+
+/// Narrow, re-file, or re-word a rule — the triage edit the gate was missing.
+///
+/// Two properties this function exists to guarantee, and which its callers
+/// must not have to remember:
+///
+///  1. **A re-word is a REVISION, never an in-place mutation.** Changing what
+///     an adopted rule says appends `standard_versions` rev N+1 authored by
+///     the maintainer, so "the org changed its mind on 4 August" is readable
+///     off the rule forever.
+///  2. **The page follows.** An adopted rule that moved or changed text makes
+///     its standards page stale, so the page is dirty-marked exactly like any
+///     other document whose source moved — including the page it LEFT when
+///     the stack changed, which would otherwise keep publishing a rule that
+///     no longer lives there.
+///
+/// A `proposed` candidate is on no page yet, so nothing is marked for it; the
+/// adoption that follows does that (see [`adopt_standard`]).
+pub async fn update_standard(
+    conn: &mut PgConnection,
+    id: Uuid,
+    patch: &StandardPatch,
+    author: Uuid,
+) -> Result<UpdateOutcome> {
+    let Some(before) = get_standard(&mut *conn, id).await? else {
+        return Ok(UpdateOutcome::NotFound);
+    };
+    if matches!(
+        before.lifecycle,
+        StandardLifecycle::Deprecated | StandardLifecycle::Rejected
+    ) {
+        return Ok(UpdateOutcome::Terminal {
+            lifecycle: before.lifecycle,
+        });
+    }
+
+    let stack = patch.stack.clone().unwrap_or_else(|| before.stack.clone());
+    let category = patch
+        .category
+        .clone()
+        .unwrap_or_else(|| before.category.clone());
+    let statement = patch
+        .statement
+        .clone()
+        .unwrap_or_else(|| before.statement.clone());
+    let rationale = patch.rationale.clone().or_else(|| before.rationale.clone());
+    let detail_md = patch.detail_md.clone().or_else(|| before.detail_md.clone());
+    let enforcement = patch.enforcement.unwrap_or(before.enforcement);
+
+    let reworded = statement != before.statement
+        || rationale != before.rationale
+        || detail_md != before.detail_md
+        || enforcement != before.enforcement;
+    let refiled = stack != before.stack || category != before.category;
+    if !reworded && !refiled {
+        // Nothing to say: an idempotent no-op, not a fresh revision of
+        // identical prose.
+        return Ok(UpdateOutcome::Updated { rev: None });
+    }
+
+    sqlx::query(
+        "UPDATE standards
+         SET stack = $2, category = $3, statement = $4, rationale = $5,
+             detail_md = $6, enforcement = $7, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&stack)
+    .bind(&category)
+    .bind(&statement)
+    .bind(&rationale)
+    .bind(&detail_md)
+    .bind(enforcement.as_str())
+    .execute(&mut *conn)
+    .await?;
+
+    let rev = if reworded {
+        let next: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(max(rev), 0) + 1 FROM standard_versions WHERE standard_id = $1",
+        )
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await?;
+        sqlx::query(
+            "INSERT INTO standard_versions
+                (standard_id, org_id, rev, statement, rationale, detail_md, enforcement, author)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        )
+        .bind(id)
+        .bind(before.org_id)
+        .bind(next)
+        .bind(&statement)
+        .bind(&rationale)
+        .bind(&detail_md)
+        .bind(enforcement.as_str())
+        .bind(author)
+        .execute(&mut *conn)
+        .await?;
+        Some(next)
+    } else {
+        None
+    };
+
+    if before.lifecycle == StandardLifecycle::Adopted {
+        // The page that publishes this rule is now telling readers something
+        // the org no longer holds — the same anti-rot call every other
+        // lifecycle transition makes.
+        mark_standards_pages_dirty(&mut *conn, &before.stack).await?;
+        if refiled && stack != before.stack {
+            // …and the page it moved TO must pick it up.
+            mark_standards_pages_dirty(&mut *conn, &stack).await?;
+        }
+    }
+
+    Ok(UpdateOutcome::Updated { rev })
+}
+
 /// Retire an `adopted` standard, in the open. The deprecator is recorded as
 /// the last named human on the rule (`adopted_by`), because "who retired
 /// this and when" is the question the next reader asks.

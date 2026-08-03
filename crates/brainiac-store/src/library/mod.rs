@@ -32,6 +32,6 @@ pub use skills::{
 pub use standards::{
     add_provenance, adopt_standard, deprecate_standard, get_standard, get_standard_by_slug,
     insert_standard, list_standards, mark_standards_pages_dirty, provenance, reject_standard,
-    versions, NewStandard, StandardVersionRow,
+    update_standard, versions, NewStandard, StandardPatch, StandardVersionRow, UpdateOutcome,
 };
 pub use usage::{health_signals, record_usage, usage_by_team, usage_named, LibraryHealth};

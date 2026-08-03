@@ -488,7 +488,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** @description Narrow, re-file, or re-word a rule during triage — the edit the gate was missing (mining files everything under `general`, and a maintainer could previously only judge a candidate, never fix where it lives or what it says). Takes lib:publish. A re-word appends a numbered revision and dirty-marks the standards page of an adopted rule (both pages when the stack moved); it is never a silent in-place mutation. Deprecated and rejected rules are terminal — 409, re-propose instead. */
+        patch: operations["standard_update"];
         trace?: never;
     };
     "/v1/library/standards/{id}/adopt": {
@@ -3362,6 +3363,33 @@ export interface components {
             /** @description Version history, newest first. */
             versions: components["schemas"]["StandardVersionView"][];
         };
+        StandardUpdateRequest: {
+            /** @description Re-file under a category (`errors`, `testing`, …). Same normalisation. */
+            category?: string | null;
+            /** @description `mandatory` | `recommended` | `experimental`. */
+            enforcement?: string | null;
+            /** @description Good/bad examples, verbatim markdown. */
+            examples_md?: string | null;
+            rationale?: string | null;
+            /**
+             * @description Re-file under a real stack. Mining and the ratification bridge file
+             *     every candidate under `general`; this is how a maintainer narrows it to
+             *     `rust` or `typescript` so the stack's own page composes from it.
+             *     Normalised to a slug token (`Rust` → `rust`).
+             */
+            stack?: string | null;
+            /** @description Re-word the rule. Writes a NEW revision — never an in-place edit. */
+            statement?: string | null;
+        };
+        StandardUpdateResponse: components["schemas"]["StandardView"] & {
+            /**
+             * Format: int32
+             * @description The new revision number when the WORDING changed; `null` when only the
+             *     filing (stack/category) moved, or nothing changed at all. Where a rule
+             *     is shelved is not a revision of what the org committed to.
+             */
+            rev?: number | null;
+        };
         StandardVersionView: {
             created_at: string;
             enforcement: string;
@@ -4343,6 +4371,50 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    standard_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StandardUpdateRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardUpdateResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the rule is deprecated or rejected — terminal */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

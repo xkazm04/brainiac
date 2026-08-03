@@ -14,7 +14,9 @@ import {
   configFromEnv,
   deprecateStandard,
   rejectStandard,
+  updateStandard,
 } from "@/lib/api";
+import type { StandardUpdate } from "@/lib/types";
 
 export interface ActionResult {
   ok: boolean;
@@ -56,6 +58,32 @@ export async function adoptStandardAction(id: string, decree: boolean): Promise<
       };
     }
     if (e instanceof ApiError && e.status === 404) refresh();
+    return { ok: false, message: describe(e) };
+  }
+}
+
+/**
+ * Narrow, re-file, or re-word a rule before (or after) the gate. The message
+ * is deliberately specific about which of the two happened, because they are
+ * different acts: re-filing moves a shelf, re-wording changes what the org
+ * asks people to do and mints a revision that stays on the rule forever.
+ */
+export async function updateStandardAction(
+  id: string,
+  patch: StandardUpdate,
+): Promise<ActionResult> {
+  try {
+    const out = await updateStandard(configFromEnv(), id, patch);
+    refresh();
+    return {
+      ok: true,
+      message:
+        out.rev != null
+          ? `Re-worded — revision ${out.rev}. The old wording stays in the history, and the ${out.stack} standards page will recompose.`
+          : `Filed under ${out.stack} / ${out.category}.`,
+    };
+  } catch (e) {
+    if (e instanceof ApiError && (e.status === 404 || e.status === 409)) refresh();
     return { ok: false, message: describe(e) };
   }
 }

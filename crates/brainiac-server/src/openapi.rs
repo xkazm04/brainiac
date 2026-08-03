@@ -112,6 +112,7 @@ impl Modify for BearerAuth {
         // library (LIBRARY-PLAN LB1)
         crate::library::standards_list,
         crate::library::standard_get,
+        crate::library::standard_update,
         crate::library::standard_propose,
         crate::library::standard_adopt,
         crate::library::standard_deprecate,
@@ -292,6 +293,8 @@ impl Modify for BearerAuth {
         crate::library::SkillBundleResponse,
         crate::library::UsageRequest,
         crate::library::UsageResponse,
+        crate::library::StandardUpdateRequest,
+        crate::library::StandardUpdateResponse,
         crate::library::AdoptRequest,
         crate::library::AdoptResponse,
         crate::library::RatifyResponse,

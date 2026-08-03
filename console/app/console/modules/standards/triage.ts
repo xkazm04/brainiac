@@ -13,9 +13,46 @@
  * has to.
  */
 
-import type { StandardDetail } from "@/lib/types";
+import type { StandardDetail, StandardUpdate } from "@/lib/types";
 
 export type TriageAction = "adopt" | "reject" | "deprecate";
+
+/** The fields triage may edit. Slug is NOT among them: it is the rule's
+ *  address, and agents hold it. */
+export interface RuleDraft {
+  stack: string;
+  category: string;
+  statement: string;
+}
+
+/**
+ * May this rule be edited at all? Deprecated and rejected are terminal for
+ * the same reason they are terminal for adopt: the way back is a new
+ * proposal, not a quiet edit to what the record says the org decided.
+ */
+export function isEditable(lifecycle: string): boolean {
+  return lifecycle === "proposed" || lifecycle === "adopted";
+}
+
+/**
+ * The MINIMAL patch from a draft — only the fields that actually changed, and
+ * `null` when nothing did. Sending back a field unchanged is not harmless: the
+ * backend mints a revision for a wording change, so re-submitting identical
+ * prose would inflate the rule's history with revisions that revised nothing.
+ */
+export function editablePatch(
+  detail: Pick<StandardDetail, "stack" | "category" | "statement">,
+  draft: RuleDraft,
+): StandardUpdate | null {
+  const patch: StandardUpdate = {};
+  const stack = draft.stack.trim();
+  const category = draft.category.trim();
+  const statement = draft.statement.trim();
+  if (stack && stack !== detail.stack) patch.stack = stack;
+  if (category && category !== detail.category) patch.category = category;
+  if (statement && statement !== detail.statement) patch.statement = statement;
+  return Object.keys(patch).length > 0 ? patch : null;
+}
 
 /** What the gate allows from a lifecycle. Deprecated and rejected are
  *  terminal: un-retiring a rule is re-proposing it, not editing history. */

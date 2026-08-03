@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { LibraryStandard } from "@/lib/types";
 
 import { buildStandardsTree, proposedOf } from "./tree";
-import { adoptPlan, allowedActions } from "./triage";
+import { adoptPlan, allowedActions, editablePatch, isEditable } from "./triage";
 
 const rule = (over: Partial<LibraryStandard>): LibraryStandard => ({
   id: over.slug ?? "id",
@@ -84,6 +84,36 @@ describe("the triage state machine", () => {
     expect(adoptPlan({ lifecycle: "proposed", provenance: [] })).toEqual({
       kind: "needs_decree",
     });
+  });
+
+  it("lets triage edit a live rule and refuses a terminal one", () => {
+    // Narrowing is how a mined `general` candidate reaches the stack whose
+    // page should carry it; a retired rule is history, not a draft.
+    expect(isEditable("proposed")).toBe(true);
+    expect(isEditable("adopted")).toBe(true);
+    expect(isEditable("deprecated")).toBe(false);
+    expect(isEditable("rejected")).toBe(false);
+  });
+
+  it("sends only what the maintainer actually changed", () => {
+    const filed = { stack: "general", category: "practice", statement: "Retry with backoff." };
+    // The narrowing case: the wording is untouched, so no revision is minted.
+    expect(editablePatch(filed, { ...filed, stack: "rust", category: "resilience" })).toEqual({
+      stack: "rust",
+      category: "resilience",
+    });
+    // A re-word travels alone.
+    expect(
+      editablePatch(filed, { ...filed, statement: "Retry with full jitter, capped at 30s." }),
+    ).toEqual({ statement: "Retry with full jitter, capped at 30s." });
+    // Re-submitting the same rule is not a change. It matters: the backend
+    // mints a revision for a wording change, so a no-op save would inflate the
+    // rule's history with revisions that revised nothing.
+    expect(editablePatch(filed, { ...filed })).toBeNull();
+    expect(editablePatch(filed, { ...filed, statement: "  Retry with backoff.  " })).toBeNull();
+    // An emptied field is a slip of the keyboard, not an instruction to blank
+    // the org's rule.
+    expect(editablePatch(filed, { ...filed, stack: "   " })).toBeNull();
   });
 
   it("refuses to plan an adoption for a rule past the gate", () => {

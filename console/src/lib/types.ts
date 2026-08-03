@@ -74,6 +74,9 @@ export type StandardsList = S["StandardsListResponse"];
 export type StandardDetail = S["StandardDetailResponse"];
 export type StandardProvenanceRef = S["ProvenanceView"];
 export type StandardVersion = S["StandardVersionView"];
+/** The triage edit: narrow the stack/category, or re-word the rule. */
+export type StandardUpdate = S["StandardUpdateRequest"];
+export type StandardUpdated = S["StandardUpdateResponse"];
 export type TeamUsage = S["TeamUsageView"];
 export type LibrarySkill = S["SkillView"];
 export type SkillsList = S["SkillsListResponse"];
