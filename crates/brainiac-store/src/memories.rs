@@ -484,12 +484,50 @@ pub async fn recent_canonical(
     Ok(rows.iter().map(row_to_memory).collect())
 }
 
-/// Strongest visible memories anchored to any of `entity_ids` (graph
-/// expansion stage). Bounded; canonical/candidate only.
+/// Strongest visible memories anchored to any of `entity_ids` — unnarrowed.
+/// The browse-style callers (entity lookup, doc composition) want every
+/// anchored memory, so they take this shape; retrieval's graph-expansion stage
+/// uses [`for_entities_filtered`] instead.
 pub async fn for_entities(
     conn: &mut PgConnection,
     entity_ids: &[Uuid],
     limit: i64,
+) -> Result<Vec<Memory>> {
+    for_entities_filtered(
+        conn,
+        entity_ids,
+        limit,
+        &crate::retrieval::RetrievalFilters::default(),
+        None,
+    )
+    .await
+}
+
+/// Strongest visible memories anchored to any of `entity_ids` (graph
+/// expansion stage), narrowed by the caller's retrieval filters and — when
+/// `as_of` is given — by temporal validity at that instant.
+///
+/// The narrowing is pushed INTO the SQL for the same reason the two candidate
+/// retrievers push theirs down ([`search_vector`], [`search_fts`]): graph
+/// expansion fans out over a high-degree entity's whole neighborhood, so a
+/// `LIMIT` taken before the filters costs DB and network work proportional to
+/// the corpus rather than to the caller's request, and can discard 100% of what
+/// it fetched. Filtering first also spends the bounded graph budget on rows the
+/// assembly stage can actually keep, instead of on rows it is about to drop.
+///
+/// The predicates mirror their Rust counterparts exactly — the metadata clauses
+/// are `RetrievalFilters::admits` (including the project lens' org-shared
+/// inclusion), and the temporal clause is `brainiac_core::temporal::valid_at`
+/// (`valid_from <= t`, `valid_to > t`, NULL = unbounded).
+///
+/// `as_of = None` applies no temporal predicate, which is what the unnarrowed
+/// [`for_entities`] wrapper wants.
+pub async fn for_entities_filtered(
+    conn: &mut PgConnection,
+    entity_ids: &[Uuid],
+    limit: i64,
+    filters: &crate::retrieval::RetrievalFilters,
+    as_of: Option<DateTime<Utc>>,
 ) -> Result<Vec<Memory>> {
     if entity_ids.is_empty() {
         return Ok(Vec::new());
@@ -513,6 +551,14 @@ pub async fn for_entities(
              JOIN memory_entities me ON me.memory_id = m.id
              WHERE me.entity_id = ANY($1)
                AND m.status IN ('canonical', 'candidate')
+               AND ($3::text[] IS NULL OR m.kind = ANY($3))
+               AND ($4::text[] IS NULL OR m.status::text = ANY($4))
+               AND ($5::uuid IS NULL OR m.team_id = $5)
+               AND ($6::real IS NULL OR m.confidence >= $6)
+               AND ($7::uuid IS NULL OR m.project_id = $7 OR m.project_id IS NULL)
+               AND ($8::timestamptz IS NULL
+                    OR ((m.valid_from IS NULL OR m.valid_from <= $8)
+                        AND (m.valid_to IS NULL OR m.valid_to > $8)))
              ORDER BY m.id
          ) s
          ORDER BY s.created_at DESC
@@ -525,6 +571,12 @@ pub async fn for_entities(
     ))
     .bind(entity_ids)
     .bind(limit)
+    .bind(filter_kinds(filters))
+    .bind(filters.allowed_statuses())
+    .bind(filters.team_id)
+    .bind(filters.min_confidence)
+    .bind(filters.project_id)
+    .bind(as_of)
     .fetch_all(conn)
     .await?;
     Ok(rows.iter().map(row_to_memory).collect())

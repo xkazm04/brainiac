@@ -361,8 +361,21 @@ async fn engine(
     let anchor_source: Vec<Uuid> = fused_ids.iter().take(GRAPH_ANCHOR_TOP).copied().collect();
     let anchors = entities::anchors_of_memories(tx, &anchor_source).await?;
     let neighbor_entities = entities::neighbors(tx, &anchors, GRAPH_HOPS, 200).await?;
-    let graph_memories =
-        memories::for_entities(tx, &neighbor_entities, GRAPH_EXTRA_MEMORIES).await?;
+    // Filters and temporal validity are pushed INTO this fetch, exactly as the
+    // two candidate retrievers push theirs (memories::search_vector /
+    // search_fts). Graph expansion fans out over a high-degree entity's whole
+    // neighborhood, so a bounded fetch taken BEFORE the narrowing paid DB and
+    // network cost proportional to the corpus, not to the caller's request —
+    // and could discard every row it fetched. Filtering first also spends the
+    // bounded graph budget on rows assembly can keep.
+    let graph_memories = memories::for_entities_filtered(
+        tx,
+        &neighbor_entities,
+        GRAPH_EXTRA_MEMORIES,
+        &req.filters,
+        Some(as_of),
+    )
+    .await?;
 
     // Stage 5: assembly. Fetch direct hits, keep fused order, append graph
     // extras that aren't already present.
@@ -386,8 +399,19 @@ async fn engine(
 
     // Temporal correctness: drop rows outside their validity window at the
     // requested time, then collapse supersession chains to the single member
-    // correct for that time. Metadata filters re-apply here because graph
-    // extras bypass the filtered candidate stage.
+    // correct for that time.
+    //
+    // Two predicates, two different jobs now that graph extras are filtered in
+    // SQL too:
+    // - `valid_at` is LOAD-BEARING for the direct hits. The candidate
+    //   retrievers push metadata filters down but deliberately do NOT bound
+    //   validity (their job is relevance; the as-of view is assembly's), so
+    //   this is the only place a stale direct hit is dropped.
+    // - `filters.admits` is now REDUNDANT — every row reaching here passed the
+    //   equivalent SQL predicate, in the retrievers for direct hits and in
+    //   `for_entities_filtered` for graph extras. Kept as belt-and-braces: it
+    //   is the executable statement of the invariant, and it is what would
+    //   catch a future retriever whose pushdown drifts from `admits`.
     let ordered: Vec<Memory> = ordered
         .into_iter()
         .filter(|m| valid_at(m, as_of) && req.filters.admits(m))
