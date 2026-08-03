@@ -2469,3 +2469,78 @@ async fn project_isolation_hides_only_when_flipped_on() {
         "flipping isolation back OFF restores org-wide visibility"
     );
 }
+
+/// Isolation must be a BOUNDARY around a project, not a BLACKOUT inside it.
+///
+/// The sibling test above proves the own-principal case through a direct read
+/// on the caller's own transaction. Hybrid search does not work that way: the
+/// two candidate retrievers run on separate POOLED connections, re-stamped from
+/// the caller's scope by `scoped_pool_tx`. Migration 0040's restrictive policy
+/// has exactly one clause that lets an isolated project's own principal see its
+/// own rows — `project_id = app.project_id` — so if that GUC does not make it
+/// onto the pooled connections, clause 3 can never match, clause 4 is false
+/// (the row IS isolated), and a project's members silently lose their OWN
+/// memories from every search while a direct read still finds them.
+///
+/// That is precisely the state this repository was in until this test existed.
+#[tokio::test]
+async fn an_isolated_project_still_finds_its_own_memories_through_hybrid_search() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed_isolation(&ctx).await;
+
+    let flipped = projects::set_isolated(&ctx.admin, org(), uuid(ISO_PROJECT_A), true)
+        .await
+        .expect("set_isolated");
+    assert!(flipped, "project A is isolated for this test");
+
+    let embedder = DeterministicEmbedder::default();
+    let mut tx = ctx.store.scoped_tx(&iso_proj_a()).await.expect("tx");
+    let ver = memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    let hits = retrieval::search(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        &retrieval::RetrievalRequest {
+            query: "billing webhook isolation runbook".into(),
+            k: 10,
+            as_of: None,
+            filters: Default::default(),
+        },
+    )
+    .await
+    .expect("search");
+
+    assert!(
+        hits.iter().any(|h| h.memory.id == uuid(ISO_MEMORY)),
+        "an isolated project's OWN principal must still retrieve its own memory \
+         through hybrid search — the candidate retrievers run on pooled \
+         connections, so app.project_id has to travel with the scope"
+    );
+
+    // And the boundary itself still holds on the same path: an org-wide
+    // principal gets nothing, so carrying the GUC widened nothing.
+    let mut tx = ctx.store.scoped_tx(&iso_org_wide()).await.expect("tx");
+    let hits = retrieval::search(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        &retrieval::RetrievalRequest {
+            query: "billing webhook isolation runbook".into(),
+            k: 10,
+            as_of: None,
+            filters: Default::default(),
+        },
+    )
+    .await
+    .expect("search");
+    assert!(
+        !hits.iter().any(|h| h.memory.id == uuid(ISO_MEMORY)),
+        "the isolation boundary still holds against an org-wide principal"
+    );
+}

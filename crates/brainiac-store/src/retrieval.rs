@@ -163,6 +163,15 @@ pub struct RetrievalHit {
 struct RlsScope {
     org_id: String,
     user_id: String,
+    /// The project lens, and the ONLY clause of migration 0040's RESTRICTIVE
+    /// isolation policy that lets an isolated project's own principal see its
+    /// own rows. Carrying it onto the retriever connections is therefore not
+    /// optional: omit it and clause 3 (`project_id = app.project_id`) can never
+    /// match on those connections, the row is isolated so clause 4 is false,
+    /// and the project's members lose their OWN memories from hybrid search —
+    /// isolation degrades from a boundary into a blackout. Empty string for an
+    /// org-wide principal, which `nullif(...,'')` in the policy turns into NULL.
+    project_id: String,
     /// `'on'` for worker transactions; absent otherwise.
     worker: Option<String>,
 }
@@ -174,6 +183,7 @@ async fn read_scope(tx: &mut sqlx::PgConnection) -> Result<RlsScope> {
     let row = sqlx::query(
         "SELECT current_setting('app.org_id', true) AS org_id,
                 current_setting('app.user_id', true) AS user_id,
+                current_setting('app.project_id', true) AS project_id,
                 current_setting('app.worker', true) AS worker",
     )
     .fetch_one(&mut *tx)
@@ -184,6 +194,9 @@ async fn read_scope(tx: &mut sqlx::PgConnection) -> Result<RlsScope> {
             .unwrap_or_default(),
         user_id: row
             .try_get::<Option<String>, _>("user_id")?
+            .unwrap_or_default(),
+        project_id: row
+            .try_get::<Option<String>, _>("project_id")?
             .unwrap_or_default(),
         worker: row.try_get::<Option<String>, _>("worker")?,
     })
@@ -200,10 +213,12 @@ async fn scoped_pool_tx<'a>(pool: &'a PgPool, scope: &RlsScope) -> Result<crate:
     sqlx::query(
         "SELECT set_config('app.org_id', $1, true),
                 set_config('app.user_id', $2, true),
-                set_config('app.worker', $3, true)",
+                set_config('app.project_id', $3, true),
+                set_config('app.worker', $4, true)",
     )
     .bind(&scope.org_id)
     .bind(&scope.user_id)
+    .bind(&scope.project_id)
     .bind(scope.worker.as_deref().unwrap_or("off"))
     .execute(&mut *tx)
     .await?;
