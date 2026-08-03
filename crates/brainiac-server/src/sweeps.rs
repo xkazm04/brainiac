@@ -303,12 +303,18 @@ async fn execute(admin: PgPool, provider: Arc<dyn ChatProvider>, kind: String) {
         // produced (unclaimed drifts, reinforced practices, settled
         // contradictions). A generator, never an authority: everything lands
         // as `proposed`, and rejected signals stay out for the dedup window.
+        //
+        // This org-wide pass is the BACKSTOP, not the primary path: a
+        // contradiction settling `resolved_supersede` and a divergence being
+        // ratified each mine their own cluster inline the moment they happen
+        // (`library_sweep::mine_contradiction_winner`,
+        // `library::ratify_divergence` → `bridge::propose_from_divergence`).
+        // This sweep only needs to run at all to catch reinforced-feedback
+        // candidates (miner (b), which has no settlement event to hook) and
+        // as a safety net if an event-triggered mine was ever missed — the
+        // shared dedup window (`blocked()`) makes a repeat here a no-op.
         "library" => {
-            let window = std::env::var("BRAINIAC_LIBRARY_DEDUP_DAYS")
-                .ok()
-                .and_then(|v| v.trim().parse::<i64>().ok())
-                .filter(|d| *d > 0)
-                .unwrap_or(brainiac_pipeline::library_sweep::DEFAULT_DEDUP_WINDOW_DAYS);
+            let window = brainiac_pipeline::library_sweep::dedup_window_days();
             brainiac_pipeline::library_sweep::mine_all(&admin, window)
                 .await
                 .map(|s| {

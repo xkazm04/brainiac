@@ -664,6 +664,11 @@ pub(crate) async fn resolve_contradiction(
         "contradiction not found or not open".into(),
     ))?;
     let (a, b): (Uuid, Uuid) = (row.get("memory_a"), row.get("memory_b"));
+    // Set only on the supersede branch — the winner a settled contradiction
+    // names, and exactly the cluster the library-mining event trigger below
+    // targets. `None` for coexist/dismiss: neither settles anything a
+    // standard could be mined from.
+    let mut settled_winner: Option<Uuid> = None;
 
     let status = match body.resolution.as_str() {
         "supersede" => {
@@ -744,6 +749,7 @@ pub(crate) async fn resolve_contradiction(
                         .into());
                 }
             }
+            settled_winner = Some(winner);
             "resolved_supersede"
         }
         "coexist" => "resolved_coexist",
@@ -763,27 +769,48 @@ pub(crate) async fn resolve_contradiction(
     // `FOR UPDATE` above this should be unreachable — it is the belt to that
     // lock's braces, and the thing that makes the guarantee hold even if the
     // read is ever refactored.
-    let updated = sqlx::query(
+    let updated_row = sqlx::query(
         "UPDATE contradictions
          SET status = $2, resolution_note = COALESCE($3, resolution_note),
              resolved_by = $4, resolved_at = now()
-         WHERE id = $1 AND status = 'open'",
+         WHERE id = $1 AND status = 'open'
+         RETURNING resolution_note",
     )
     .bind(id)
     .bind(status)
     .bind(body.note.as_deref())
     .bind(principal.user_id)
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(internal)?
-    .rows_affected();
-    if updated == 0 {
+    .map_err(internal)?;
+    let Some(updated_row) = updated_row else {
         return Err((
             StatusCode::CONFLICT,
             "contradiction was already resolved".into(),
         )
             .into());
+    };
+
+    // Event-driven library mining (freshness, not a cron): the moment a
+    // contradiction settles `resolved_supersede`, mine the ONE cluster it
+    // just named — reusing the exact miner + dedup window the weekly
+    // (disabled-by-default) sweep uses, so the org doesn't have to opt into
+    // scheduling for the library to notice what it just decided. Cheap (no
+    // LLM call, one indexed lookup) and scoped to `winner` alone; the weekly
+    // sweep remains the backstop for everything else (see sweeps.rs).
+    if let Some(winner) = settled_winner {
+        let note: Option<String> = updated_row.get("resolution_note");
+        brainiac_pipeline::library_sweep::mine_contradiction_winner(
+            &mut tx,
+            principal.org_id,
+            winner,
+            note.as_deref(),
+            brainiac_pipeline::library_sweep::dedup_window_days(),
+        )
+        .await
+        .map_err(internal)?;
     }
+
     tx.commit().await.map_err(internal)?;
     Ok(Json(ResolveContradictionResponse {
         contradiction_id: id,

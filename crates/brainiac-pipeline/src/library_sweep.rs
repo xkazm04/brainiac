@@ -41,6 +41,18 @@ const REINFORCED_MIN_HELPFUL: i64 = 2;
 /// triage. Overridable per call; the sweep wiring reads BRAINIAC_LIBRARY_DEDUP_DAYS.
 pub const DEFAULT_DEDUP_WINDOW_DAYS: i64 = 90;
 
+/// The dedup window every caller should use — the weekly sweep AND the
+/// event-triggered mine (see [`mine_contradiction_winner`]) read the SAME
+/// env var so a rejection is honored identically regardless of which path
+/// found the signal first.
+pub fn dedup_window_days() -> i64 {
+    std::env::var("BRAINIAC_LIBRARY_DEDUP_DAYS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|d| *d > 0)
+        .unwrap_or(DEFAULT_DEDUP_WINDOW_DAYS)
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MiningStats {
     pub orgs: usize,
@@ -192,6 +204,60 @@ async fn mine_reinforced(
     Ok(())
 }
 
+/// A contradiction's winning memory, as much as the miner needs of it — bundled
+/// so [`propose_contradiction_winner`] takes one argument instead of four.
+struct ContradictionWinner<'a> {
+    memory_id: Uuid,
+    title: Option<&'a str>,
+    content: &'a str,
+    detail_md: Option<String>,
+}
+
+/// Turn one contradiction winner into a `proposed` standard candidate, unless
+/// it is deduped. Shared by the org-wide sweep ([`mine_contradictions`]) and
+/// the event-triggered targeted mine ([`mine_contradiction_winner`]) so the
+/// two paths can never diverge in what counts as a candidate.
+async fn propose_contradiction_winner(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    winner: ContradictionWinner<'_>,
+    resolution_note: Option<&str>,
+    window_days: i64,
+) -> Result<Option<Uuid>> {
+    if blocked(conn, winner.memory_id, window_days).await? {
+        return Ok(None);
+    }
+    let slug = unique_slug(
+        conn,
+        org_id,
+        winner.title.unwrap_or(winner.content),
+        winner.memory_id,
+    )
+    .await?;
+    let standard = library::NewStandard {
+        id: Uuid::new_v4(),
+        org_id,
+        origin: brainiac_core::StandardOrigin::Sweep,
+        stack: "general".into(),
+        category: "convention".into(),
+        slug,
+        statement: winner.content.to_string(),
+        rationale: Some(match resolution_note {
+            Some(n) => format!("Settled a contradiction: {n}"),
+            None => "Settled a contradiction — the org already chose this side.".into(),
+        }),
+        detail_md: winner.detail_md,
+        enforcement: Default::default(),
+        provenance: vec![(
+            brainiac_core::StandardProvenanceKind::Memory,
+            winner.memory_id,
+        )],
+        author: None,
+    };
+    library::insert_standard(conn, &standard).await?;
+    Ok(Some(standard.id))
+}
+
 /// Miner (c): resolved supersessions whose winner states a convention.
 async fn mine_contradictions(
     conn: &mut PgConnection,
@@ -216,44 +282,83 @@ async fn mine_contradictions(
 
     for r in rows {
         let memory_id: Uuid = r.get("id");
-        if blocked(conn, memory_id, window_days).await? {
-            stats.deduped += 1;
-            continue;
-        }
         let title: Option<String> = r.get("title");
         let content: String = r.get("content");
         let note: Option<String> = r.get("resolution_note");
-        let slug = unique_slug(
+        let detail_md: Option<String> = r.get("detail_md");
+        match propose_contradiction_winner(
             conn,
             org_id,
-            title.as_deref().unwrap_or(&content),
-            memory_id,
-        )
-        .await?;
-        library::insert_standard(
-            conn,
-            &library::NewStandard {
-                id: Uuid::new_v4(),
-                org_id,
-                origin: brainiac_core::StandardOrigin::Sweep,
-                stack: "general".into(),
-                category: "convention".into(),
-                slug,
-                statement: content,
-                rationale: Some(match note {
-                    Some(n) => format!("Settled a contradiction: {n}"),
-                    None => "Settled a contradiction — the org already chose this side.".into(),
-                }),
-                detail_md: r.get("detail_md"),
-                enforcement: Default::default(),
-                provenance: vec![(brainiac_core::StandardProvenanceKind::Memory, memory_id)],
-                author: None,
+            ContradictionWinner {
+                memory_id,
+                title: title.as_deref(),
+                content: &content,
+                detail_md,
             },
+            note.as_deref(),
+            window_days,
         )
-        .await?;
-        stats.from_contradiction += 1;
+        .await?
+        {
+            Some(_) => stats.from_contradiction += 1,
+            None => stats.deduped += 1,
+        }
     }
     Ok(())
+}
+
+/// The event-triggered twin of miner (c): mine ONLY the cluster a just-settled
+/// contradiction named, the moment it settles, instead of waiting for the
+/// (disabled-by-default, weekly) sweep to rediscover it. Reuses the exact
+/// same qualification query, dedup window, and insert path as
+/// [`mine_contradictions`] — restricted with `AND w.id = $2` to the one
+/// winner the caller already knows, so this is cheap (one indexed lookup)
+/// and never touches another cluster.
+///
+/// Call this right after flipping a contradiction to `resolved_supersede`
+/// (see `console::resolve_contradiction`), inside the same transaction: the
+/// candidate becomes visible in the SAME commit as the settlement, and if the
+/// winner doesn't qualify (wrong kind, not canonical, already superseded) or
+/// its signal is already spoken for (blocked by the dedup window, e.g. a
+/// human already ratified it, or an earlier settlement of the same memory)
+/// this is a cheap no-op returning `Ok(None)` — never a parallel sweep.
+pub async fn mine_contradiction_winner(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    winner_id: Uuid,
+    resolution_note: Option<&str>,
+    window_days: i64,
+) -> Result<Option<Uuid>> {
+    let Some(r) = sqlx::query(
+        "SELECT title, content, detail_md
+         FROM memories
+         WHERE id = $1 AND org_id = $2
+           AND status = 'canonical' AND superseded_by IS NULL AND deleted_at IS NULL
+           AND kind IN ('decision', 'pattern')",
+    )
+    .bind(winner_id)
+    .bind(org_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let title: Option<String> = r.get("title");
+    let content: String = r.get("content");
+    let detail_md: Option<String> = r.get("detail_md");
+    propose_contradiction_winner(
+        conn,
+        org_id,
+        ContradictionWinner {
+            memory_id: winner_id,
+            title: title.as_deref(),
+            content: &content,
+            detail_md,
+        },
+        resolution_note,
+        window_days,
+    )
+    .await
 }
 
 /// Mine one org. Order matters only for within-run dedup: each insert writes
