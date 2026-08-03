@@ -2181,6 +2181,9 @@ async fn proposing_a_skill_drafts_it_then_dedupes_and_rate_limits() {
         domain: Some("providers".into()),
         content_md: "# Add a data provider\n1. implement the trait\n2. register it".into(),
         manifest: serde_json::json!({"name": "Add a data provider"}),
+        // Body-only, which is what most skills are; the bundle path has its
+        // own coverage in `library_skill_bundles_pg`.
+        resources: serde_json::json!([]),
     };
 
     // 1. First proposal → a fresh draft.
