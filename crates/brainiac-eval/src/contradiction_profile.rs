@@ -30,11 +30,19 @@
 //! the gold winner. So — exactly like the other profiles' gold mocks — the score
 //! numbers are PLUMBING floors, not a quality claim about any real adjudicator.
 //!
-//! What the floor actually measures is the stage's CANDIDATE-DISCOVERY reach: a
-//! gold supersede whose two memories share no entity anchor is never compared
-//! (the anchor filter drops it), so it is honestly recorded as `not_compared`
-//! and counts against recall. That gap is a real property of the pipeline worth
-//! surfacing, not smoothed over.
+//! What the floor actually measures is the stage's CANDIDATE-DISCOVERY reach. A
+//! gold supersede the stage never compares is recorded as `not_compared` and
+//! counts against recall — that gap is a real property of the pipeline, surfaced
+//! rather than smoothed over. It used to be structural: a pair sharing no entity
+//! anchor was dropped before the model at ANY similarity, which pinned recall at
+//! 0.75 (con-003). `run_contradict` now also reaches a bounded number of
+//! anchorless near-duplicates, and the gap closes.
+//!
+//! Be precise about what that proves. The oracle answers every pair it is handed
+//! correctly, so a recall win here is a REACHABILITY win — the pipeline now puts
+//! the pair in front of an adjudicator. Whether a real adjudicator keeps
+//! precision on anchorless pairs, where the entity anchor's corroboration is
+//! exactly what is missing, is NOT measured by this profile and cannot be.
 //!
 //! Visibility is forced to `org` on the seeded memories: like the temporal
 //! suite, this profile measures contradiction LOGIC, not RLS visibility (the

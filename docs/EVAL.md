@@ -139,6 +139,10 @@ negative_pairs:
 
 Detection recall/precision, plus **resolution accuracy** (supersede vs coexist vs dismiss). Coexist cases are the trap: an over-eager detector that flags every tension trains reviewers to ignore the queue.
 
+**Candidate reach (the recall ceiling this profile measures).** `run_contradict` compares a new memory against its nearest vector neighbours. For a long time only neighbours sharing an **entity anchor** reached the model, which made a class of real contradictions structurally unreachable: `con-003` (`mem-plat-0107` anchors on `ent-plat-std-retry`, `mem-pay-0043` on the refund-worker entities — no overlap) was never compared at any similarity, and sat at `not_compared` for a permanent recall ceiling of **0.75**. Discovery now has a second, bounded path: an anchorless neighbour above a similarity bar, at most `ANCHORLESS_BUDGET` per memory, drawn from the same neighbour list — so worst-case model calls per memory are unchanged. Recall is 1.00 on this fixture.
+
+Read that number honestly. The verdict provider here is a gold ORACLE, so a pair that reaches the model always gets the right answer: this measures **reachability**, and proves nothing about how a real adjudicator behaves on anchorless pairs. It is precisely on those pairs that the anchor's corroborating evidence is missing, so a real model's false-positive rate there is *unmeasured by this profile* and is the risk to watch. `BRAINIAC_CONTRADICT_ANCHORLESS_MIN_SIM` sets the bar per deployment (`>= 1.0` disables the path entirely); the default is calibrated on `deterministic-bow-v1`, whose similarity distribution no real embedder shares.
+
 ### 2.4 Temporal QA ("as-of" correctness)
 
 ```yaml

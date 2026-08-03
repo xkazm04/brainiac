@@ -124,7 +124,11 @@ async fn contradiction_profile_end_to_end() {
     assert!(fails[0].contains("embedder mismatch"));
 
     let mut stricter = baseline.clone();
-    stricter.detection_recall = 1.0; // demand perfect recall
+    // A bar ABOVE what the run achieved, expressed relative to the run rather
+    // than as a literal: the stage now reaches every gold pair, so the old
+    // hard-coded 1.0 stopped being "stricter" and the gate machinery went
+    // untested.
+    stricter.detection_recall = report.detection_recall + 0.10;
     assert!(
         regression_failures(&report, &stricter)
             .iter()
