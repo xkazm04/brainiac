@@ -241,6 +241,10 @@ pub struct ExtractStats {
     /// Chunks that produced nothing on the first pass and real memories on a
     /// later one — knowledge the old single-pass path silently dropped.
     pub recovered_from_empty: usize,
+    /// Chunks served from the extraction cache (migration 0048) — model calls
+    /// NOT made. This is the honest denominator for "what did the cache save":
+    /// one hit = one call avoided, counted, not asserted.
+    pub cache_hits: usize,
     /// Actual model calls made for this source. Zero for a `manual` source —
     /// the verbatim path (F-3) never touches the provider, and the log must
     /// say so rather than implying a call happened.
@@ -518,6 +522,102 @@ impl CallBudget {
 struct LlmExtract {
     output: ExtractionOutput,
     model_ref: String,
+    /// The provider's raw response that produced `output`, kept so a successful
+    /// extraction can be cached (see [`cache_store`]). `None` for a path that
+    /// never called a model — the verbatim ingest, and a cache hit itself.
+    text: Option<String>,
+}
+
+// ── extraction call cache (migration 0048) ───────────────────────────────
+//
+// There was no cache or dedupe anywhere on the LLM path; the only dedupe that
+// existed (`memory_exists_for_source`) runs AFTER the call, so a redelivered
+// job or a re-ingested source paid full price to produce rows that were then
+// discarded. The queue makes that routine: 30s backoff, a 300s visibility
+// window, SKIP-LOCKED redelivery. Pass 0 is temperature 0.0, so identical input
+// genuinely should yield identical output.
+//
+// The KEY is the whole design — see migrations/0048_extraction_cache.sql. It
+// binds the prompt (by fingerprint, not by a version string someone must
+// remember to bump), the extract stage's model ref (per-stage overrides exist),
+// and the REDACTED chunk. A prompt edit or a model swap empties the cache by
+// construction rather than by discipline.
+
+/// Fingerprint of the extraction prompt. Derived from the prompt TEXT, so
+/// editing one word invalidates every cached extraction — a version constant
+/// would only invalidate them when someone remembered to change it, and the
+/// failure mode of forgetting is silent stale output.
+fn prompt_fingerprint() -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(EXTRACT_SYSTEM_PROMPT_V1.as_bytes());
+    hex16(&digest)
+}
+
+fn hex16(bytes: &[u8]) -> String {
+    bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// The cache key: prompt fingerprint + model ref + redacted chunk, sha256.
+/// `redacted` must already have passed [`brainiac_core::redact::redact`] — the
+/// secret firewall lives UPSTREAM of the key so no raw credential is ever part
+/// of a cache row, and so two chunks differing only in a secret share a key
+/// (safe, because a secret can never reach a memory body anyway).
+fn cache_key(model_ref: &str, prompt_fp: &str, redacted: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    // Length-prefixed so no two different triples can concatenate to the same
+    // byte string ("ab"+"c" must not collide with "a"+"bc").
+    for part in [prompt_fp, model_ref, redacted] {
+        h.update(part.len().to_le_bytes());
+        h.update(part.as_bytes());
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Look up a cached response and count the hit. RLS-scoped through the caller's
+/// connection like every other query here — a cache row belongs to one org.
+async fn cache_lookup(conn: &mut PgConnection, org_id: Uuid, key: &str) -> Result<Option<String>> {
+    use sqlx::Row;
+    let row = sqlx::query(
+        "UPDATE extraction_cache
+            SET hits = hits + 1, last_used_at = now()
+          WHERE org_id = $1 AND cache_key = $2
+        RETURNING response",
+    )
+    .bind(org_id)
+    .bind(key)
+    .fetch_optional(&mut *conn)
+    .await
+    .context("extraction cache lookup")?;
+    Ok(row.map(|r| r.get::<String, _>("response")))
+}
+
+/// Remember a response. Stores the REDACTED text — the row must not retain a
+/// credential the model echoed out of the transcript, and `content` is redacted
+/// downstream anyway, so nothing downstream can tell the difference.
+async fn cache_store(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    key: &str,
+    model_ref: &str,
+    prompt_fp: &str,
+    response: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO extraction_cache
+            (org_id, cache_key, response, model_ref, prompt_fingerprint)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (org_id, cache_key) DO NOTHING",
+    )
+    .bind(org_id)
+    .bind(key)
+    .bind(brainiac_core::redact::redact(response))
+    .bind(model_ref)
+    .bind(prompt_fp)
+    .execute(&mut *conn)
+    .await
+    .context("extraction cache store")?;
+    Ok(())
 }
 
 /// The verbatim path for `manual` sources (F-3): no model, no parse, no way to
@@ -563,6 +663,7 @@ fn extract_verbatim(raw_text: &str) -> LlmExtract {
             }],
         },
         model_ref: "verbatim:manual".to_string(),
+        text: None,
     }
 }
 
@@ -588,6 +689,7 @@ async fn extract_once(
         return Ok(LlmExtract {
             output,
             model_ref: resp.model_ref,
+            text: Some(resp.text),
         });
     }
     budget.parse_failures += 1;
@@ -629,6 +731,7 @@ async fn extract_once(
                 return Ok(LlmExtract {
                     output,
                     model_ref: repaired.model_ref,
+                    text: Some(repaired.text),
                 });
             }
             Err(e) => {
@@ -776,20 +879,58 @@ pub async fn run_extract(
         let call = if verbatim {
             extract_verbatim(chunk)
         } else {
-            let mut budget = CallBudget::default();
-            let mut resamples = 0usize;
-            let out = extract_chunk(provider, chunk, &mut budget, &mut resamples).await;
-            // Account for what was actually spent even when the chunk failed —
-            // an errored chunk still burned its calls.
-            stats.llm_calls += budget.calls;
-            stats.parse_failures += budget.parse_failures;
-            stats.repairs += budget.repairs;
-            stats.empty_resamples += resamples;
-            let out = out?;
-            if resamples > 0 && !out.output.memories.is_empty() {
-                stats.recovered_from_empty += 1;
+            // Cache first (0048): the redelivered job, the re-ingested source,
+            // and the 800-char overlap every adjacent window re-reads all land
+            // here. Key on the REDACTED chunk so the secret firewall sits
+            // upstream of the cache, never bypassed by it.
+            let redacted = brainiac_core::redact::redact(chunk);
+            let model_ref = provider.model_ref();
+            let prompt_fp = prompt_fingerprint();
+            let key = cache_key(&model_ref, &prompt_fp, &redacted);
+            // A cached response is re-parsed by the SAME parser the live path
+            // uses, so a hit and a miss can never diverge; a row that no longer
+            // parses (or parses to nothing) is ignored rather than trusted.
+            let cached = match cache_lookup(conn, org_id, &key).await? {
+                Some(resp) => parse_extraction(&resp)
+                    .ok()
+                    .filter(|o| !o.memories.is_empty()),
+                None => None,
+            };
+            match cached {
+                Some(output) => {
+                    stats.cache_hits += 1;
+                    LlmExtract {
+                        output,
+                        model_ref,
+                        text: None,
+                    }
+                }
+                None => {
+                    let mut budget = CallBudget::default();
+                    let mut resamples = 0usize;
+                    let out = extract_chunk(provider, chunk, &mut budget, &mut resamples).await;
+                    // Account for what was actually spent even when the chunk
+                    // failed — an errored chunk still burned its calls.
+                    stats.llm_calls += budget.calls;
+                    stats.parse_failures += budget.parse_failures;
+                    stats.repairs += budget.repairs;
+                    stats.empty_resamples += resamples;
+                    let out = out?;
+                    if resamples > 0 && !out.output.memories.is_empty() {
+                        stats.recovered_from_empty += 1;
+                    }
+                    // Only a NON-EMPTY extraction is worth remembering. Caching
+                    // a zero would freeze a stochastic failure into a permanent
+                    // one and defeat the resample floor built to catch it.
+                    if let Some(text) = out.text.as_deref() {
+                        if !out.output.memories.is_empty() {
+                            cache_store(conn, org_id, &key, &out.model_ref, &prompt_fp, text)
+                                .await?;
+                        }
+                    }
+                    out
+                }
             }
-            out
         };
 
         // Lazily create the single provenance row on the first chunk, using
@@ -1220,6 +1361,48 @@ mod tests {
         let e: ExtractedEntity =
             serde_json::from_str(r#"{"name":"kafka","kind":"tech"}"#).expect("parse");
         assert!(e.clean_aliases().is_empty());
+    }
+
+    // ── the extraction cache key (migration 0048) ───────────────────────────
+
+    #[test]
+    fn the_cache_key_binds_the_prompt_the_model_and_the_content() {
+        // A cache that outlives a prompt or a model change is worse than no
+        // cache: it serves last month's extraction under this month's prompt
+        // and nothing in the output ever says so. All three components must
+        // move the key.
+        let base = cache_key("qwen:qwen-max", "fp1", "the transcript");
+        assert_ne!(base, cache_key("qwen:qwen-plus", "fp1", "the transcript"));
+        assert_ne!(base, cache_key("qwen:qwen-max", "fp2", "the transcript"));
+        assert_ne!(
+            base,
+            cache_key("qwen:qwen-max", "fp1", "another transcript")
+        );
+        assert_eq!(base, cache_key("qwen:qwen-max", "fp1", "the transcript"));
+    }
+
+    #[test]
+    fn the_prompt_fingerprint_is_derived_from_the_prompt_itself() {
+        // Not a version constant someone has to remember to bump — the failure
+        // mode of forgetting is silent stale output, which is the one failure a
+        // cache must not have.
+        let fp = prompt_fingerprint();
+        assert_eq!(fp.len(), 16);
+        let other: String = {
+            use sha2::{Digest, Sha256};
+            hex16(&Sha256::digest(
+                format!("{EXTRACT_SYSTEM_PROMPT_V1} one more word").as_bytes(),
+            ))
+        };
+        assert_ne!(fp, other, "editing the prompt must change the fingerprint");
+    }
+
+    #[test]
+    fn the_cache_key_cannot_be_confused_by_concatenation() {
+        // Without length prefixes, ("ab","c",x) and ("a","bc",x) would hash to
+        // the same bytes — a cross-model cache hit produced by nothing more
+        // than a naming coincidence.
+        assert_ne!(cache_key("ab", "c", "t"), cache_key("a", "bc", "t"));
     }
 
     // ── what a partly broken array must NOT do (measured) ───────────

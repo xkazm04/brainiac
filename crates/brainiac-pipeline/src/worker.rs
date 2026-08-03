@@ -598,6 +598,7 @@ async fn process_job(
         parse_failures = extracted.parse_failures,
         empty_resamples = extracted.empty_resamples,
         recovered_from_empty = extracted.recovered_from_empty,
+        cache_hits = extracted.cache_hits,
         "source extracted"
     );
 
