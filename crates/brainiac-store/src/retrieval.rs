@@ -31,7 +31,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::{entities, feedback, memories};
+use crate::{entities, feedback, governance, memories};
 
 const CANDIDATES_PER_RETRIEVER: i64 = 50;
 const FUSED_POOL: usize = 30;
@@ -239,6 +239,69 @@ pub async fn search_reranked(
     embedding_version: i32,
     req: &RetrievalRequest,
 ) -> Result<Vec<RetrievalHit>> {
+    Ok(
+        engine(tx, pool, embedder, reranker, embedding_version, req, false)
+            .await?
+            .hits,
+    )
+}
+
+/// What a governed (agent-surface) retrieval served, and what it refused to.
+#[derive(Debug, Clone, Default)]
+pub struct GovernedRetrieval {
+    /// The served set — never contains a memory in an OPEN contradiction.
+    pub hits: Vec<RetrievalHit>,
+    /// How many contested memories were skipped to fill `hits`. Counts only
+    /// what the caller would otherwise have been served (the ranked prefix
+    /// consumed to reach `k`), never the whole survivor pool — so the number
+    /// stays the honest answer to "what did you withhold from my answer?".
+    pub withheld_contested: usize,
+}
+
+/// Hybrid retrieval for the AGENT surface: identical ranking to
+/// [`search_reranked`] — the same engine, one call — but memories locked in an
+/// OPEN contradiction are dropped BEFORE the top-k cut instead of after it.
+///
+/// Why this must live below the truncation and not above it: an open
+/// contradiction means the org has not determined which side is true, so MCP
+/// withholds those rows. Filtering them out of an already-truncated list meant
+/// contested hits burned top-k slots and the next-best UNCONTESTED memories
+/// were never considered — an agent that asked for 10 silently received 7,
+/// with the 8th–10th best answers sitting unexamined one rank below the cut.
+/// Here the cut is taken over the uncontested candidates, so a served set of
+/// `k` really is `k` whenever `k` uncontested survivors exist.
+///
+/// Contradiction status stays OUT of the scoring math (`blended_score` has no
+/// contradiction term): this is a governance gate applied to the ranking, not
+/// a relevance signal. The lookup is ONE batched, RLS-scoped query over the
+/// survivor set — never per-hit.
+///
+/// REST deliberately does not use this: it surfaces contradictions in the
+/// payload rather than withholding them ([`search_reranked`]).
+pub async fn search_governed(
+    tx: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    embedder: &dyn Embedder,
+    reranker: Option<&dyn Reranker>,
+    embedding_version: i32,
+    req: &RetrievalRequest,
+) -> Result<GovernedRetrieval> {
+    engine(tx, pool, embedder, reranker, embedding_version, req, true).await
+}
+
+/// The one ranking path. Every public entry point above is a thin wrapper over
+/// this, so REST, MCP, the eval harness and the pipeline can never drift onto
+/// differently-ranked results.
+#[allow(clippy::too_many_arguments)]
+async fn engine(
+    tx: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    embedder: &dyn Embedder,
+    reranker: Option<&dyn Reranker>,
+    embedding_version: i32,
+    req: &RetrievalRequest,
+    withhold_contested: bool,
+) -> Result<GovernedRetrieval> {
     let as_of = req.as_of.unwrap_or_else(Utc::now);
 
     // Stage 2: candidate lists (ranked best-first), filters pushed into SQL
@@ -409,7 +472,42 @@ pub async fn search_reranked(
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    ranked.truncate(req.k);
+
+    // Stage 7: governance gate, then the top-k cut — IN THAT ORDER. For the
+    // agent surface a memory in an OPEN contradiction is not servable, so it
+    // must not consume a top-k slot: we walk the ranked survivors, skip the
+    // contested ones (counting them), and stop once `k` servable hits are in
+    // hand. The skipped rows are therefore backfilled by the NEXT-BEST
+    // uncontested memories, which the old post-truncation filter never even
+    // looked at. One batched, RLS-scoped contradiction lookup over the ≤40
+    // survivors — no per-hit query, and no widening of the candidate pool
+    // (the backfill comes from rows retrieval already had in hand).
+    let mut withheld_contested = 0usize;
+    if withhold_contested {
+        let survivor_ids: Vec<Uuid> = ranked.iter().map(|h| h.memory.id).collect();
+        let contested = governance::open_contradictions_for(tx, &survivor_ids).await?;
+        if !contested.is_empty() {
+            let mut kept: Vec<RetrievalHit> = Vec::with_capacity(req.k.min(ranked.len()));
+            for h in ranked {
+                if kept.len() >= req.k {
+                    break;
+                }
+                if contested.contains_key(&h.memory.id) {
+                    // Counted only while we are still filling the answer, so
+                    // the number means "withheld from YOUR result", not
+                    // "contested somewhere in the candidate pool".
+                    withheld_contested += 1;
+                    continue;
+                }
+                kept.push(h);
+            }
+            ranked = kept;
+        } else {
+            ranked.truncate(req.k);
+        }
+    } else {
+        ranked.truncate(req.k);
+    }
 
     // Attach entity anchors to the emitted hits (ARCHITECTURE.md §5.1). Batched
     // over just the final top-k, RLS-scoped like every read.
@@ -418,7 +516,10 @@ pub async fn search_reranked(
     for h in &mut ranked {
         h.anchors = anchors.remove(&h.memory.id).unwrap_or_default();
     }
-    Ok(ranked)
+    Ok(GovernedRetrieval {
+        hits: ranked,
+        withheld_contested,
+    })
 }
 
 /// Age of a memory (in days) at the query's as-of instant, for the recency

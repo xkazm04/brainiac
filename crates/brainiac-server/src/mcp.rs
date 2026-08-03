@@ -940,38 +940,6 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
     let as_of = parse_as_of(args)?;
     let filters = parse_filters(state, args)?;
 
-    let started = std::time::Instant::now();
-    let mut tx = state.store.scoped_tx(&state.principal).await?;
-    // ONE ranking entry point for both surfaces: `search_reranked` is what REST
-    // calls (http.rs), and the reranker threaded here is the same
-    // `reranker_select` choice. Before this, MCP called the reranker-less
-    // `search` wrapper, so an operator-selected reranker was structurally
-    // unreachable from the product's primary consumer. `None` ⇒ identical to
-    // the old wrapper by construction (it is a `reranker: None` delegate).
-    let hits = brainiac_store::retrieval::search_reranked(
-        &mut tx,
-        state.store.pool(),
-        state.embedder.as_ref(),
-        state.reranker.as_deref(),
-        state.embedding_version,
-        &brainiac_store::retrieval::RetrievalRequest {
-            query: query.to_string(),
-            k,
-            as_of,
-            filters,
-        },
-    )
-    .await?;
-    // Trust signals: what previous readers reported about these memories, so
-    // the agent can weigh a disputed memory instead of trusting it blindly.
-    // One batched query for the whole result set — never an N+1.
-    let ids: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
-    let trust = brainiac_store::feedback::trust_for(&mut tx, &ids).await?;
-    // Open contradictions touching the result set: an agent must never be
-    // handed one side of a live conflict without being told the other exists.
-    // One batched, RLS-scoped query (never an N+1) — orthogonal to the
-    // feedback-derived `disputed` signal above.
-    let contradictions = brainiac_store::governance::open_contradictions_for(&mut tx, &ids).await?;
     // An OPEN contradiction means the org has not determined which side is true —
     // so the memory's truth value is UNKNOWN, not merely "flagged". Serving it as
     // an actionable result lets an agent pick a side on surface cues (recency,
@@ -985,24 +953,70 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
         .get("include_contested")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let withheld_contested = if include_contested {
-        0
-    } else {
-        hits.iter()
-            .filter(|h| contradictions.contains_key(&h.memory.id))
-            .count()
+
+    let started = std::time::Instant::now();
+    let mut tx = state.store.scoped_tx(&state.principal).await?;
+    // ONE ranking entry point for both surfaces: `search_governed` and
+    // `search_reranked` are the same engine, and the reranker threaded here is
+    // the same `reranker_select` choice REST gets. Before this, MCP called the
+    // reranker-less `search` wrapper, so an operator-selected reranker was
+    // structurally unreachable from the product's primary consumer.
+    //
+    // WITHHOLDING HAPPENS BELOW THE TRUNCATION, not here. Filtering contested
+    // hits out of an already-truncated top-k let them burn served slots and
+    // hid the next-best uncontested memories entirely — an agent that asked
+    // for 10 got 7. `search_governed` takes the cut over the servable
+    // candidates instead, so `k` means `k`.
+    let request = brainiac_store::retrieval::RetrievalRequest {
+        query: query.to_string(),
+        k,
+        as_of,
+        filters,
     };
+    let (hits, withheld_contested) = if include_contested {
+        // The caller explicitly asked for both sides: nothing is withheld, so
+        // the ungoverned path (what REST serves) is exactly right.
+        let hits = brainiac_store::retrieval::search_reranked(
+            &mut tx,
+            state.store.pool(),
+            state.embedder.as_ref(),
+            state.reranker.as_deref(),
+            state.embedding_version,
+            &request,
+        )
+        .await?;
+        (hits, 0usize)
+    } else {
+        let governed = brainiac_store::retrieval::search_governed(
+            &mut tx,
+            state.store.pool(),
+            state.embedder.as_ref(),
+            state.reranker.as_deref(),
+            state.embedding_version,
+            &request,
+        )
+        .await?;
+        (governed.hits, governed.withheld_contested)
+    };
+    // Trust signals: what previous readers reported about these memories, so
+    // the agent can weigh a disputed memory instead of trusting it blindly.
+    // One batched query for the whole result set — never an N+1.
+    let ids: Vec<Uuid> = hits.iter().map(|h| h.memory.id).collect();
+    let trust = brainiac_store::feedback::trust_for(&mut tx, &ids).await?;
+    // Open contradictions touching the SERVED set, so an `include_contested`
+    // caller sees the conflict inline. One batched, RLS-scoped query (never an
+    // N+1) — orthogonal to the feedback-derived `disputed` signal above. On the
+    // default path the served set is contested-free by construction, so this
+    // annotates nothing.
+    let contradictions = brainiac_store::governance::open_contradictions_for(&mut tx, &ids).await?;
     // The demand ledger (0043). Records what was actually SERVED — the withheld
     // set is counted, not listed as served — plus `withheld_contested`, which
     // until now was computed here and thrown away, losing the one signal that
     // shows governance debt as pressure ("agents needed this 47 times and we
     // refused because nobody has reconciled it"). Fire-and-forget: a ledger
     // write must never fail an agent's answer.
-    let served: Vec<(uuid::Uuid, Option<f64>)> = hits
-        .iter()
-        .filter(|h| include_contested || !contradictions.contains_key(&h.memory.id))
-        .map(|h| (h.memory.id, Some(h.score)))
-        .collect();
+    let served: Vec<(uuid::Uuid, Option<f64>)> =
+        hits.iter().map(|h| (h.memory.id, Some(h.score))).collect();
     crate::demand::record_retrieval_quietly(
         &state.store,
         &state.principal,
@@ -1016,9 +1030,10 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
     )
     .await;
     Ok(json!({
-        "memories": hits.iter().filter(|h| {
-            include_contested || !contradictions.contains_key(&h.memory.id)
-        }).map(|h| {
+        // No filtering here: the served set is already governed — the retrieval
+        // engine dropped contested rows BEFORE the top-k cut (or the caller
+        // asked for them with `include_contested`).
+        "memories": hits.iter().map(|h| {
             let t = trust.get(&h.memory.id).cloned().unwrap_or_default();
             let mut m = json!({
                 "id": h.memory.id,
