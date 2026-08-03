@@ -8102,7 +8102,10 @@
           "statement",
           "enforcement",
           "lifecycle",
-          "decreed"
+          "decreed",
+          "uses",
+          "recent_uses",
+          "dormant"
         ],
         "properties": {
           "adopted_at": {
@@ -8125,12 +8128,22 @@
             ],
             "description": "Good/bad examples — served verbatim, never re-typed by a model."
           },
+          "dormant": {
+            "type": "boolean",
+            "description": "An adopted rule old enough to have been used and untouched for the\nwhole window: a deprecation candidate that surfaced itself. Never set\non a proposal — a rule nobody has adopted cannot be being ignored."
+          },
           "enforcement": {
             "type": "string"
           },
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "lifecycle": {
             "type": "string"
@@ -8145,6 +8158,11 @@
               "null"
             ]
           },
+          "recent_uses": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Uses inside the dormancy window — the same window Knowledge Health uses."
+          },
           "slug": {
             "type": "string"
           },
@@ -8153,6 +8171,11 @@
           },
           "statement": {
             "type": "string"
+          },
+          "uses": {
+            "type": "integer",
+            "format": "int64",
+            "description": "THE PULSE: every recorded use of this rule, all time, across teams.\nOn a `proposed` candidate this is adoption pressure — the org is\nalready reaching for a rule nobody has ratified yet, which makes it the\nhighest-leverage thing on the board."
           }
         }
       },

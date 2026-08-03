@@ -172,6 +172,129 @@ async fn mined_candidate(ctx: &Ctx, slug: &str, statement: &str) -> Uuid {
     id
 }
 
+/// The board ranks by the pressure a rule is under, and the pressure has to
+/// come from the shelf itself — one list call, no N+1 detail fetches and, above
+/// all, NO NEW TELEMETRY. Every number here is already being written by the
+/// serve path; the board simply stopped throwing it away.
+#[tokio::test]
+async fn the_shelf_carries_the_pulse_and_the_dormancy_of_every_rule() {
+    let Some(url) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    let _guard = brainiac_store::test_support::serial_guard(&url).await;
+    let ctx = setup(&url).await;
+    let base = boot_http(&ctx).await;
+    let http = reqwest::Client::new();
+
+    // Three rules that tell the three stories the ordering exists for.
+    let followed = mined_candidate(&ctx, "already-followed", "The org already does this.").await;
+    let live = mined_candidate(&ctx, "live-rule", "Used every week.").await;
+    let quiet = mined_candidate(&ctx, "quiet-rule", "Adopted, then forgotten.").await;
+
+    {
+        let p = ctx.principal();
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        for id in [live, quiet] {
+            assert!(library::adopt_standard(&mut tx, id, ctx.maintainer, false)
+                .await
+                .expect("adopt"));
+        }
+        // `followed` stays PROPOSED — that is the point: the org is already
+        // reaching for a rule nobody has ratified.
+        for (id, n) in [(followed, 3), (live, 2)] {
+            for _ in 0..n {
+                library::record_usage(
+                    &mut tx,
+                    ctx.org,
+                    brainiac_core::LibraryArtifactKind::Standard,
+                    id,
+                    None,
+                    brainiac_core::LibraryUsageEvent::Check,
+                    Some(ctx.team),
+                )
+                .await
+                .expect("usage");
+            }
+        }
+        tx.commit().await.expect("commit");
+    }
+    // The quiet rule has been adopted long enough to have been used.
+    sqlx::query("UPDATE standards SET adopted_at = now() - interval '40 days' WHERE id = $1")
+        .bind(quiet)
+        .execute(&ctx.admin)
+        .await
+        .expect("age");
+
+    let list: serde_json::Value = http
+        .get(format!("{base}/v1/library/standards?lifecycle=all"))
+        .bearer_auth("tok_maint")
+        .send()
+        .await
+        .expect("list")
+        .json()
+        .await
+        .expect("json");
+    let by_slug = |slug: &str| -> serde_json::Value {
+        list["standards"]
+            .as_array()
+            .expect("arr")
+            .iter()
+            .find(|s| s["slug"] == slug)
+            .unwrap_or_else(|| panic!("missing {slug}: {list}"))
+            .clone()
+    };
+
+    let f = by_slug("already-followed");
+    assert_eq!(f["uses"], 3, "the pulse must travel with the shelf: {f}");
+    assert_eq!(
+        f["dormant"], false,
+        "a proposal cannot be dormant — nobody adopted it to ignore: {f}"
+    );
+    assert!(f["last_used_at"].is_string(), "{f}");
+
+    let l = by_slug("live-rule");
+    assert_eq!(l["uses"], 2);
+    assert_eq!(l["dormant"], false, "an adopted rule in use is alive: {l}");
+
+    let q = by_slug("quiet-rule");
+    assert_eq!(q["uses"], 0);
+    assert_eq!(
+        q["dormant"], true,
+        "an adopted rule old enough to have been used, and untouched, is the \
+         retirement shortlist — the board must say so without anyone opening the \
+         health report: {q}"
+    );
+    assert!(q["last_used_at"].is_null(), "{q}");
+
+    // The pressure ordering is only honest if the signal is the SAME one
+    // Knowledge Health already computes — one dormancy rule, not two.
+    let health: serde_json::Value = http
+        .get(format!("{base}/v1/analytics/knowledge-health"))
+        .bearer_auth("tok_maint")
+        .send()
+        .await
+        .expect("health")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(
+        health["signals"]["standards_dormant"], 1,
+        "the board and the leadership report must not disagree about which \
+         rules are dead: {}",
+        health["signals"]
+    );
+
+    // …and nothing here invented a telemetry channel: the only event kinds in
+    // the table are the ones the serve path has always written.
+    let kinds: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT event FROM library_usage_events ORDER BY event")
+            .fetch_all(&ctx.admin)
+            .await
+            .expect("events");
+    assert_eq!(kinds, vec!["check".to_string()], "no new event type");
+}
+
 #[tokio::test]
 async fn triage_narrows_a_mined_candidate_into_a_stack_whose_page_composes_from_it() {
     let Some(url) = std::env::var("DATABASE_URL").ok() else {

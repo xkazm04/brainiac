@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { LibraryStandard } from "@/lib/types";
 
-import { buildStandardsTree, proposedOf } from "./tree";
+import { buildStandardsTree, dormantOf, proposedOf, rankByPressure } from "./tree";
 import { adoptPlan, allowedActions, editablePatch, isEditable } from "./triage";
 
 const rule = (over: Partial<LibraryStandard>): LibraryStandard => ({
@@ -18,6 +18,10 @@ const rule = (over: Partial<LibraryStandard>): LibraryStandard => ({
   lifecycle: "adopted",
   adopted_at: null,
   decreed: false,
+  uses: 0,
+  recent_uses: 0,
+  last_used_at: null,
+  dormant: false,
   ...over,
 });
 
@@ -64,6 +68,55 @@ describe("the standards tree", () => {
   it("handles an empty library without inventing structure", () => {
     expect(buildStandardsTree([])).toEqual([]);
     expect(proposedOf([])).toEqual([]);
+  });
+});
+
+describe("ordering by the pressure a rule is under", () => {
+  it("ranks by pulse, and puts the unratified rule the org already follows on top", () => {
+    // Slugs and categories are deliberately in the OPPOSITE order to the
+    // pulse: a ranking that quietly fell back to the old category/slug shelf
+    // order would produce a-b-c-d and has to fail here.
+    const ranked = rankByPressure([
+      rule({ slug: "a-quiet-adopted", category: "a", uses: 0, lifecycle: "adopted", dormant: true }),
+      rule({ slug: "b-busy-adopted", category: "b", uses: 40, lifecycle: "adopted" }),
+      rule({ slug: "c-already-followed", category: "c", uses: 61, lifecycle: "proposed" }),
+      rule({ slug: "d-fresh-candidate", category: "d", uses: 0, lifecycle: "proposed" }),
+    ]);
+    expect(ranked.map((r) => r.slug)).toEqual([
+      // The org is already doing this and nobody has ratified it: the
+      // cheapest adoption on the board, and invisible in the alphabet.
+      "c-already-followed",
+      "b-busy-adopted",
+      // Zero pulse: the proposal still needs a decision, the adopted rule
+      // has gone quiet. Both belong at the bottom, in that order.
+      "d-fresh-candidate",
+      "a-quiet-adopted",
+    ]);
+  });
+
+  it("breaks a pulse tie toward the rule that still needs a decision", () => {
+    const ranked = rankByPressure([
+      rule({ slug: "a-adopted", uses: 5, lifecycle: "adopted" }),
+      rule({ slug: "z-proposed", uses: 5, lifecycle: "proposed" }),
+    ]);
+    expect(ranked[0].slug).toBe("z-proposed");
+  });
+
+  it("is a total order — equal rules never reshuffle between renders", () => {
+    const rules = [rule({ slug: "b" }), rule({ slug: "a" }), rule({ slug: "c" })];
+    expect(rankByPressure(rules).map((r) => r.slug)).toEqual(["a", "b", "c"]);
+    expect(rankByPressure([...rules].reverse()).map((r) => r.slug)).toEqual(["a", "b", "c"]);
+  });
+
+  it("collects the retirement shortlist without inventing dormancy", () => {
+    // Dormancy is the backend's verdict (core's `rule_is_dormant`), never
+    // re-derived here from a use count the console cannot date correctly.
+    expect(
+      dormantOf([
+        rule({ slug: "dead", dormant: true }),
+        rule({ slug: "unused-but-new", uses: 0, dormant: false }),
+      ]).map((r) => r.slug),
+    ).toEqual(["dead"]);
   });
 });
 

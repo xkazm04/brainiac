@@ -99,6 +99,60 @@ pub async fn health_signals(conn: &mut PgConnection, dormant_days: i64) -> Resul
     })
 }
 
+/// One rule's vital signs, as the standards board ranks them.
+///
+/// This is pure CONSUMPTION of what the serve path already records — there is
+/// no new event type here, and there must not be: the whole point is that the
+/// signal a maintainer needs (which rules the org already leans on, which
+/// adopted ones nobody has touched) was being written all along and thrown
+/// away at the board.
+#[derive(Debug, Clone, Copy)]
+pub struct StandardPulse {
+    pub standard_id: Uuid,
+    /// Every recorded use, all time — the rule's pulse.
+    pub uses: i64,
+    /// Uses inside the dormancy window; what [`brainiac_core::health::rule_is_dormant`]
+    /// weighs. Kept separate from the all-time count because a rule with a
+    /// busy history and a silent month is exactly the interesting case.
+    pub uses_in_window: i64,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Per-rule usage totals under the caller's RLS scope, in one round trip.
+/// `only` narrows to a single rule (the detail view); `None` returns every
+/// rule that has ever been used — rules with no events are simply absent, and
+/// the caller reads that as a pulse of zero.
+pub async fn standards_pulse(
+    conn: &mut PgConnection,
+    window_days: i64,
+    only: Option<Uuid>,
+) -> Result<Vec<StandardPulse>> {
+    let rows = sqlx::query(
+        "SELECT artifact_id,
+                count(*)                                                     AS uses,
+                count(*) FILTER (WHERE occurred_at > now() - make_interval(days => $1::int))
+                                                                             AS recent,
+                max(occurred_at)                                             AS last_used
+         FROM library_usage_events
+         WHERE artifact_kind = 'standard'
+           AND ($2::uuid IS NULL OR artifact_id = $2)
+         GROUP BY artifact_id",
+    )
+    .bind(window_days)
+    .bind(only)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| StandardPulse {
+            standard_id: r.get("artifact_id"),
+            uses: r.get("uses"),
+            uses_in_window: r.get("recent"),
+            last_used_at: r.get("last_used"),
+        })
+        .collect())
+}
+
 /// Usage totals per team WITH team names resolved — what the console renders.
 /// A NULL team (an org-scoped token) groups under `None`; the caller labels it.
 pub async fn usage_named(

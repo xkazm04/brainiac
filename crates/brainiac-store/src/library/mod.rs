@@ -34,4 +34,7 @@ pub use standards::{
     insert_standard, list_standards, mark_standards_pages_dirty, provenance, reject_standard,
     update_standard, versions, NewStandard, StandardPatch, StandardVersionRow, UpdateOutcome,
 };
-pub use usage::{health_signals, record_usage, usage_by_team, usage_named, LibraryHealth};
+pub use usage::{
+    health_signals, record_usage, standards_pulse, usage_by_team, usage_named, LibraryHealth,
+    StandardPulse,
+};

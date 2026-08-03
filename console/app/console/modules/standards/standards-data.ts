@@ -24,6 +24,10 @@ export const DEMO_STANDARDS: LibraryStandard[] = [
     lifecycle: "adopted",
     adopted_at: "2026-07-01T09:12:00Z",
     decreed: false,
+    uses: 107,
+    recent_uses: 61,
+    last_used_at: "2026-07-30T08:11:00Z",
+    dormant: false,
   },
   {
     id: "demo-std-pg-serial",
@@ -40,6 +44,10 @@ export const DEMO_STANDARDS: LibraryStandard[] = [
     lifecycle: "adopted",
     adopted_at: "2026-06-20T14:30:00Z",
     decreed: false,
+    uses: 27,
+    recent_uses: 18,
+    last_used_at: "2026-07-28T15:02:00Z",
+    dormant: false,
   },
   {
     id: "demo-std-retry",
@@ -54,6 +62,10 @@ export const DEMO_STANDARDS: LibraryStandard[] = [
     lifecycle: "proposed",
     adopted_at: null,
     decreed: false,
+    uses: 23,
+    recent_uses: 23,
+    last_used_at: "2026-07-31T09:40:00Z",
+    dormant: false,
   },
   {
     id: "demo-std-barrels",
@@ -70,6 +82,10 @@ export const DEMO_STANDARDS: LibraryStandard[] = [
     lifecycle: "adopted",
     adopted_at: "2026-07-08T10:00:00Z",
     decreed: false,
+    uses: 30,
+    recent_uses: 27,
+    last_used_at: "2026-07-29T12:20:00Z",
+    dormant: false,
   },
   {
     id: "demo-std-interfaces",
@@ -84,6 +100,10 @@ export const DEMO_STANDARDS: LibraryStandard[] = [
     lifecycle: "deprecated",
     adopted_at: "2026-05-02T08:00:00Z",
     decreed: false,
+    uses: 2,
+    recent_uses: 0,
+    last_used_at: "2026-05-20T09:00:00Z",
+    dormant: false,
   },
   {
     id: "demo-std-spaces",
@@ -98,6 +118,10 @@ export const DEMO_STANDARDS: LibraryStandard[] = [
     lifecycle: "adopted",
     adopted_at: "2026-04-15T12:00:00Z",
     decreed: true,
+    uses: 4,
+    recent_uses: 0,
+    last_used_at: "2026-05-01T10:00:00Z",
+    dormant: true,
   },
 ];
 
@@ -155,7 +179,13 @@ export const DEMO_STANDARD_DETAILS: Record<string, StandardDetail> = {
   "demo-std-retry": detail("demo-std-retry", {
     // Fresh off the drift detector: the divergence IS the evidence.
     provenance: [{ kind: "divergence", ref_id: "3f6f2a10-0000-4000-8000-000000000061" }],
-    usage: [],
+    // …and the org is ALREADY following it, unratified. This is the case the
+    // pressure ordering exists to surface: the cheapest adoption on the board,
+    // invisible in any ordering that sorts by name.
+    usage: [
+      { team: "payments", uses: 14 },
+      { team: "data", uses: 9 },
+    ],
     versions: [
       {
         rev: 1,

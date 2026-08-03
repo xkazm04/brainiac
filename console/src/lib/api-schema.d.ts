@@ -3404,9 +3404,16 @@ export interface components {
             decreed: boolean;
             /** @description Good/bad examples — served verbatim, never re-typed by a model. */
             detail_md?: string | null;
+            /**
+             * @description An adopted rule old enough to have been used and untouched for the
+             *     whole window: a deprecation candidate that surfaced itself. Never set
+             *     on a proposal — a rule nobody has adopted cannot be being ignored.
+             */
+            dormant: boolean;
             enforcement: string;
             /** Format: uuid */
             id: string;
+            last_used_at?: string | null;
             lifecycle: string;
             /**
              * @description Who created it: `human` (console/ratify), `sweep` (mining), `agent`
@@ -3414,9 +3421,22 @@ export interface components {
              */
             origin: string;
             rationale?: string | null;
+            /**
+             * Format: int64
+             * @description Uses inside the dormancy window — the same window Knowledge Health uses.
+             */
+            recent_uses: number;
             slug: string;
             stack: string;
             statement: string;
+            /**
+             * Format: int64
+             * @description THE PULSE: every recorded use of this rule, all time, across teams.
+             *     On a `proposed` candidate this is adoption pressure — the org is
+             *     already reaching for a rule nobody has ratified yet, which makes it the
+             *     highest-leverage thing on the board.
+             */
+            uses: number;
         };
         StandardsListResponse: {
             standards: components["schemas"]["StandardView"][];

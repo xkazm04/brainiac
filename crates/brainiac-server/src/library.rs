@@ -90,9 +90,39 @@ pub(crate) struct StandardView {
     pub adopted_at: Option<String>,
     /// Set only for an evidence-free rule a named human signed for.
     pub decreed: bool,
+    /// THE PULSE: every recorded use of this rule, all time, across teams.
+    /// On a `proposed` candidate this is adoption pressure — the org is
+    /// already reaching for a rule nobody has ratified yet, which makes it the
+    /// highest-leverage thing on the board.
+    pub uses: i64,
+    /// Uses inside the dormancy window — the same window Knowledge Health uses.
+    pub recent_uses: i64,
+    pub last_used_at: Option<String>,
+    /// An adopted rule old enough to have been used and untouched for the
+    /// whole window: a deprecation candidate that surfaced itself. Never set
+    /// on a proposal — a rule nobody has adopted cannot be being ignored.
+    pub dormant: bool,
 }
 
-fn standard_view(s: &Standard) -> StandardView {
+/// The dormancy verdict for one rule. The rule itself is `core`'s
+/// (`rule_is_dormant`); all this does is feed it the two numbers, and refuse
+/// to ask the question of a rule that has not passed the gate.
+fn is_dormant(s: &Standard, uses_in_window: i64) -> bool {
+    if s.lifecycle != StandardLifecycle::Adopted {
+        return false;
+    }
+    match s.adopted_at {
+        Some(at) => brainiac_core::health::rule_is_dormant(
+            (chrono::Utc::now() - at).num_seconds(),
+            uses_in_window,
+        ),
+        None => false,
+    }
+}
+
+fn standard_view(s: &Standard, pulse: Option<&library::StandardPulse>) -> StandardView {
+    let uses = pulse.map(|p| p.uses).unwrap_or(0);
+    let recent_uses = pulse.map(|p| p.uses_in_window).unwrap_or(0);
     StandardView {
         id: s.id,
         origin: s.origin.as_str().to_string(),
@@ -106,7 +136,27 @@ fn standard_view(s: &Standard) -> StandardView {
         lifecycle: s.lifecycle.as_str().to_string(),
         adopted_at: s.adopted_at.map(|t| t.to_rfc3339()),
         decreed: s.decreed_by.is_some(),
+        uses,
+        recent_uses,
+        last_used_at: pulse.and_then(|p| p.last_used_at).map(|t| t.to_rfc3339()),
+        dormant: is_dormant(s, recent_uses),
     }
+}
+
+/// Fetch the pulse for one rule (`Some(id)`) or the whole shelf (`None`) and
+/// index it. Rules with no events never appear in the result; the view reads
+/// their absence as a pulse of zero, which is exactly what it is.
+async fn pulse_index(
+    conn: &mut sqlx::PgConnection,
+    only: Option<Uuid>,
+) -> anyhow::Result<std::collections::HashMap<Uuid, library::StandardPulse>> {
+    Ok(
+        library::standards_pulse(conn, brainiac_core::health::LIBRARY_DORMANT_DAYS, only)
+            .await?
+            .into_iter()
+            .map(|p| (p.standard_id, p))
+            .collect(),
+    )
 }
 
 #[derive(Serialize, ToSchema)]
@@ -233,10 +283,17 @@ pub(crate) async fn standards_list(
     let standards = library::list_standards(&mut tx, q.stack.as_deref(), lifecycle)
         .await
         .map_err(internal)?;
+    // The board ranks by pressure, so the pulse travels WITH the shelf: one
+    // grouped read of what the serve path already recorded, not N detail
+    // round-trips and not a second telemetry stream.
+    let pulse = pulse_index(&mut tx, None).await.map_err(internal)?;
     tx.commit().await.map_err(internal)?;
 
     Ok(Json(StandardsListResponse {
-        standards: standards.iter().map(standard_view).collect(),
+        standards: standards
+            .iter()
+            .map(|s| standard_view(s, pulse.get(&s.id)))
+            .collect(),
     }))
 }
 
@@ -263,10 +320,11 @@ pub(crate) async fn standard_get(
         .await
         .map_err(internal)?;
     let versions = library::versions(&mut tx, id).await.map_err(internal)?;
+    let pulse = pulse_index(&mut tx, Some(id)).await.map_err(internal)?;
     tx.commit().await.map_err(internal)?;
 
     Ok(Json(StandardDetailResponse {
-        standard: standard_view(&s),
+        standard: standard_view(&s, pulse.get(&id)),
         provenance: provenance
             .iter()
             .map(|p| ProvenanceView {
@@ -863,10 +921,11 @@ pub(crate) async fn standard_update(
     let Some(after) = library::get_standard(&mut tx, id).await.map_err(internal)? else {
         return Err((StatusCode::NOT_FOUND, "standard not found".to_string()).into());
     };
+    let pulse = pulse_index(&mut tx, Some(id)).await.map_err(internal)?;
     tx.commit().await.map_err(internal)?;
 
     Ok(Json(StandardUpdateResponse {
-        standard: standard_view(&after),
+        standard: standard_view(&after, pulse.get(&id)),
         rev,
     }))
 }

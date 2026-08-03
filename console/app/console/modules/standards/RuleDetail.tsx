@@ -76,6 +76,12 @@ export default function RuleDetail({
           {detail.origin === "sweep" && <Chip text="mined by the sweep" tone={band("theta")} />}
           {detail.origin === "agent" && <Chip text="proposed by an agent" tone={band("alpha")} />}
           {detail.decreed && <Chip text="decreed — signed, no evidence" tone={GOLD} />}
+          {/* The rule went quiet on its own; the board should say so where the
+              maintainer is already looking, not only in the health report. */}
+          {detail.dormant && <Chip text="dormant — nobody has used it" tone={INK_FAINT} />}
+          {detail.lifecycle === "proposed" && detail.uses > 0 && (
+            <Chip text={`already followed ${detail.uses}×`} tone={band("theta")} />
+          )}
           <span className={`${FONT_MONO} ml-auto text-[11px]`} style={{ color: INK_FAINT }}>
             {detail.stack} / {detail.category} / {detail.slug}
           </span>
