@@ -12,6 +12,7 @@ no status that goes stale, nothing personal or machine-specific.
 
 - [Admin vs `brainiac_app` role split](.claude/memory/rls-role-split.md) — RLS works because the runtime pool demotes to a non-owner role; `admin_pool()` bypasses RLS and is only for the derived-data re-embed backfill.
 - [Migration numbering](.claude/memory/migrations-numbering.md) — the `0011` gap is intentional and must not be renumbered; duplicate numbers have bitten twice; new tables carry their own grants + RLS policy.
+- [sqlx migration embed staleness](.claude/memory/sqlx-migrations-embed-staleness.md) — after adding a migration, `touch crates/brainiac-store/src/lib.rs` or stale test binaries fail "missing in the resolved migrations" under `--workspace` while passing standalone.
 - [Pg tests self-skip](.claude/memory/pg-tests-self-skip.md) — without `DATABASE_URL` the `_pg` tests print SKIP and pass; local pgvector is on **5433**, CI on 5432.
 
 ## Standing gates & calibration
