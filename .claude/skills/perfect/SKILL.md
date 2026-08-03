@@ -252,7 +252,18 @@ This skill declares `contexts: tracked` — the Personas app measures per-contex
 {"type":"node","kind":"progress","title":"<=200 chars: what you did in this context","body":"optional detail","context":"<exact context name from context-map.json>","skill":"perfect"}
 ```
 
-**Which name — this is the part that silently fails.** The ingest anchors a node by matching `context` against the names the app actually knows, case-insensitively. A name it does not recognize is NOT an error: the node is stored with a null context and simply never counts toward coverage. Brainiac's repo-root `context-map.json` **is** the app's own export — `version: 2` (integer), no `$schema` key, a flat top-level `contexts` array of 25 kebab-case names (`extraction-pipeline`, `llm-gateway`, `auth-middleware`, …). Those are the names the app knows and the same names this loop's queue in `Perfect.md` uses. If you ever find a `$schema: vibeman.dev` / `version: "2.0.0"` map at that path instead, it is a stale foreign auto-map — do NOT source context names from it.
+**Which name — this is the part that silently fails.** The ingest anchors a node by matching `context` against the names the app actually knows, case-insensitively. A name it does not recognize is NOT an error: the node is stored with a null context and simply never counts toward coverage. Brainiac's repo-root `context-map.json` **is** the app's own export — `version: 2` (integer), no `$schema` key, a flat top-level `contexts` array of 25 kebab-case names (`extraction-pipeline`, `llm-gateway`, `auth-middleware`, …). Those are the names the app knows and the same names this loop's queue in `Perfect.md` uses. If you ever find a `$schema: vibeman.dev` / `version: "2.0.0"` map at that path instead, it is a stale foreign auto-map — do NOT source context names from it; emit nodes without the `context` field until a re-scan, since a wrong name and no name land identically (`unanchored`, excluded from the coverage math).
+
+A re-scan does not need the UI — the running app exposes a loopback bridge:
+
+```bash
+curl -s http://127.0.0.1:17400/dev-tools/projects                       # find the project_id
+curl -s -X POST http://127.0.0.1:17400/dev-tools/scan-codebase \
+  -H 'content-type: application/json' --data-binary @body.json          # {"project_id":"…","delta_mode":true}
+curl -s http://127.0.0.1:17400/dev-tools/scan-status/<scan_id>          # running | completed | failed
+```
+
+Port is 17400 unless taken (the server scans upward from there). Send bodies as `--data-binary @file`, not inline `-d` — a Windows path in a shell-quoted `-d` loses a backslash and the JSON parser rejects it.
 
 Always set both `"skill":"perfect"` and `"context":"<name>"` — together they drive the per-skill context-coverage % (last 30 days). Skip silently when not Personas-managed.
 
