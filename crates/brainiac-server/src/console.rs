@@ -441,7 +441,7 @@ pub(crate) async fn bulk_review(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct ContradictionsQuery {
-    /// open | resolved_supersede | resolved_coexist | dismissed | all (default open)
+    /// open | resolved_supersede | resolved_coexist | dismissed | moot | all (default open)
     status: Option<String>,
     /// Filter by detector (e.g. `embedding_similarity`, `llm`).
     detected_by: Option<String>,
@@ -493,7 +493,7 @@ pub(crate) struct ContradictionQueueResponse {
     tag = "reviews",
     description = "The contradiction queue: oldest first (SLA aging), plus a status histogram that powers the queue's tabs.",
     params(
-        ("status" = Option<String>, Query, description = "open | resolved_supersede | resolved_coexist | dismissed | all (default open)"),
+        ("status" = Option<String>, Query, description = "open | resolved_supersede | resolved_coexist | dismissed | moot | all (default open)"),
         ("detected_by" = Option<String>, Query, description = "Filter by detector (e.g. embedding_similarity, llm)"),
         ("min_age_hours" = Option<i64>, Query, description = "Only rows at least this many hours old"),
         ("limit" = Option<i64>, Query, description = "Page size (default 50, clamped 1..200)"),
@@ -513,11 +513,13 @@ pub(crate) async fn list_contradictions(
     let status = q.status.as_deref().unwrap_or("open");
     if !matches!(
         status,
-        "open" | "resolved_supersede" | "resolved_coexist" | "dismissed" | "all"
+        "open" | "resolved_supersede" | "resolved_coexist" | "dismissed" | "moot" | "all"
     ) {
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("unknown status `{status}` (open|resolved_supersede|resolved_coexist|dismissed|all)"),
+            format!(
+                "unknown status `{status}`                  (open|resolved_supersede|resolved_coexist|dismissed|moot|all)"
+            ),
         )
             .into());
     }
@@ -613,18 +615,30 @@ pub(crate) struct ResolveBody {
 }
 
 /// The contradiction's new terminal status (`resolved_supersede` |
-/// `resolved_coexist` | `dismissed`).
+/// `resolved_coexist` | `dismissed`), plus what the decision did to the OTHER
+/// disputes that argued about the memory it retired.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ResolveContradictionResponse {
     pub contradiction_id: Uuid,
     pub status: String,
+    /// Other open disputes that argued about the now-superseded memory. They
+    /// were closed `moot` — unanswerable as posed, and NOT decided; each row's
+    /// `resolution_note` says so. Empty for `coexist`/`dismiss`, which retire
+    /// nothing.
+    #[serde(default)]
+    pub siblings_settled: Vec<Uuid>,
+    /// Fresh OPEN disputes carrying a settled sibling's live question forward
+    /// against the winner (`detected_by = sibling_carry_forward`). Inherited and
+    /// unverified — a question preserved, never a verdict.
+    #[serde(default)]
+    pub siblings_carried_forward: Vec<Uuid>,
 }
 
 #[utoipa::path(
     post,
     path = "/v1/reviews/contradictions/{id}/resolve",
     tag = "reviews",
-    description = "Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team.",
+    description = "Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team. A supersede also settles every OTHER open dispute about the memory it retired: each is closed `moot` with a note saying it was never decided, and its live question is re-posed against the winner as a fresh open dispute (`detected_by = sibling_carry_forward`). Nothing is auto-decided — a human still resolves the carried-forward disputes.",
     params(("id" = Uuid, Path, description = "Contradiction id")),
     request_body = ResolveBody,
     responses(
@@ -669,6 +683,9 @@ pub(crate) async fn resolve_contradiction(
     // targets. `None` for coexist/dismiss: neither settles anything a
     // standard could be mined from.
     let mut settled_winner: Option<Uuid> = None;
+    // The memory this resolution retired, when it retired one — the anchor for
+    // settling the OTHER open disputes that argued about it.
+    let mut settled_loser: Option<Uuid> = None;
 
     let status = match body.resolution.as_str() {
         "supersede" => {
@@ -750,6 +767,7 @@ pub(crate) async fn resolve_contradiction(
                 }
             }
             settled_winner = Some(winner);
+            settled_loser = Some(loser);
             "resolved_supersede"
         }
         "coexist" => "resolved_coexist",
@@ -791,6 +809,43 @@ pub(crate) async fn resolve_contradiction(
             .into());
     };
 
+    // A memory can be party to more than one open dispute. This resolution just
+    // deprecated one of them, which leaves every OTHER dispute about it both
+    // unanswerable (supersede on a dead memory is refused; the other direction
+    // would retire a live memory in favour of a retired one) and harmful — an
+    // open contradiction withholds BOTH its sides from serving, so a dead row
+    // was suppressing a live memory. Settle them with a reason and re-pose their
+    // live question against the winner. No memory changes standing here, so the
+    // maintainer gate above is neither bypassed nor needed a second time.
+    let mut siblings_settled = Vec::new();
+    let mut siblings_carried_forward = Vec::new();
+    if let (Some(loser), Some(winner)) = (settled_loser, settled_winner) {
+        let settled = brainiac_store::governance::settle_siblings_of_superseded(
+            &mut tx,
+            principal.org_id,
+            loser,
+            winner,
+            id,
+            Some(principal.user_id),
+        )
+        .await
+        .map_err(internal)?;
+        for s in &settled {
+            siblings_settled.push(s.contradiction_id);
+            if let Some(new_id) = s.carried_forward {
+                siblings_carried_forward.push(new_id);
+            }
+        }
+        if !settled.is_empty() {
+            tracing::info!(
+                resolved = %id,
+                settled = settled.len(),
+                carried_forward = siblings_carried_forward.len(),
+                "sibling disputes about the superseded memory settled as moot"
+            );
+        }
+    }
+
     // Event-driven library mining (freshness, not a cron): the moment a
     // contradiction settles `resolved_supersede`, mine the ONE cluster it
     // just named — reusing the exact miner + dedup window the weekly
@@ -815,6 +870,8 @@ pub(crate) async fn resolve_contradiction(
     Ok(Json(ResolveContradictionResponse {
         contradiction_id: id,
         status: status.to_string(),
+        siblings_settled,
+        siblings_carried_forward,
     }))
 }
 
@@ -1991,10 +2048,15 @@ pub(crate) async fn analytics(
     // Dismiss rate over recently-resolved contradictions — visibility for the
     // over-eager-detector footgun the withhold-by-default fix introduced.
     let dismiss = sqlx::query(
+        // `moot` is excluded from BOTH sides: a dispute closed because its
+        // subject was superseded elsewhere was never judged, so counting it
+        // would dilute a metric whose entire job is to report how often the
+        // detector was wrong.
         "SELECT avg(CASE WHEN status = 'dismissed' THEN 1.0 ELSE 0.0 END)::float8 AS rate,
                 count(*) AS resolved_n
          FROM contradictions
-         WHERE status <> 'open' AND resolved_at > now() - interval '30 days'",
+         WHERE status NOT IN ('open', 'moot')
+           AND resolved_at > now() - interval '30 days'",
     )
     .fetch_one(&mut *tx)
     .await

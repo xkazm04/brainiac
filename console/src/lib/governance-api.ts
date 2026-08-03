@@ -144,6 +144,10 @@ export type ContradictionStatus =
   | "resolved_supersede"
   | "resolved_coexist"
   | "dismissed"
+  // Closed because the memory it argued about was superseded elsewhere — the
+  // dispute became unanswerable as posed and was never judged. Distinct from
+  // `dismissed` (a human saying "no conflict") on purpose.
+  | "moot"
   | "all";
 
 export interface ContradictionQueueItem {

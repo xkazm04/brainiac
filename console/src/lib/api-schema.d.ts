@@ -1147,7 +1147,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team. */
+        /** @description Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team. A supersede also settles every OTHER open dispute about the memory it retired: each is closed `moot` with a note saying it was never decided, and its live question is re-posed against the winner as a fresh open dispute (`detected_by = sibling_carry_forward`). Nothing is auto-decided — a human still resolves the carried-forward disputes. */
         post: operations["resolve_contradiction"];
         delete?: never;
         options?: never;
@@ -3065,11 +3065,25 @@ export interface components {
         };
         /**
          * @description The contradiction's new terminal status (`resolved_supersede` |
-         *     `resolved_coexist` | `dismissed`).
+         *     `resolved_coexist` | `dismissed`), plus what the decision did to the OTHER
+         *     disputes that argued about the memory it retired.
          */
         ResolveContradictionResponse: {
             /** Format: uuid */
             contradiction_id: string;
+            /**
+             * @description Fresh OPEN disputes carrying a settled sibling's live question forward
+             *     against the winner (`detected_by = sibling_carry_forward`). Inherited and
+             *     unverified — a question preserved, never a verdict.
+             */
+            siblings_carried_forward?: string[];
+            /**
+             * @description Other open disputes that argued about the now-superseded memory. They
+             *     were closed `moot` — unanswerable as posed, and NOT decided; each row's
+             *     `resolution_note` says so. Empty for `coexist`/`dismiss`, which retire
+             *     nothing.
+             */
+            siblings_settled?: string[];
             status: string;
         };
         ResolveFeedbackBody: {
@@ -5829,7 +5843,7 @@ export interface operations {
     list_contradictions: {
         parameters: {
             query?: {
-                /** @description open | resolved_supersede | resolved_coexist | dismissed | all (default open) */
+                /** @description open | resolved_supersede | resolved_coexist | dismissed | moot | all (default open) */
                 status?: string;
                 /** @description Filter by detector (e.g. embedding_similarity, llm) */
                 detected_by?: string;

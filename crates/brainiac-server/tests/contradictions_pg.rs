@@ -51,13 +51,26 @@ async fn contradiction_resolve_is_serialized_and_honest() {
     let org = stable_uuid(&fx.org.org);
     let team_pay = stable_uuid("team-payments");
 
-    // Three canonical payments memories of our own, so the race is not
-    // entangled with whatever the gold fixtures assert about theirs.
-    let (mem_a, mem_b, mem_c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    // Canonical payments memories of our own, so the race is not entangled
+    // with whatever the gold fixtures assert about theirs.
+    //
+    // Each of the three scenarios below gets its OWN pair. They used to share
+    // `mem_a`, which stopped being viable once resolving a dispute settles the
+    // other open disputes about the memory it retires (the sibling fix): the
+    // race in §1 would have mooted §2's and §3's disputes as a side effect, and
+    // those sections are about something else entirely. Sibling settlement has
+    // its own test — contradiction_siblings_pg.rs.
+    let (mem_a, mem_b) = (Uuid::new_v4(), Uuid::new_v4());
+    let (mem_c, mem_d, mem_e) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let (mem_f, mem_g) = (Uuid::new_v4(), Uuid::new_v4());
     for (id, content) in [
         (mem_a, "settlement recon runs at 07:00 UTC"),
         (mem_b, "settlement recon runs at 09:00 UTC"),
-        (mem_c, "settlement recon runs hourly"),
+        (mem_c, "payout batching window is 15 minutes"),
+        (mem_d, "payout batching window is 5 minutes"),
+        (mem_e, "payout batching window is hourly"),
+        (mem_f, "chargeback SLA is 10 days"),
+        (mem_g, "chargeback SLA is 14 days"),
     ] {
         sqlx::query(
             "INSERT INTO memories (id, org_id, team_id, visibility, status, kind, content)
@@ -93,8 +106,8 @@ async fn contradiction_resolve_is_serialized_and_honest() {
     let stale = Uuid::new_v4();
     let converged = Uuid::new_v4();
     open_contradiction(raced, mem_a, mem_b).await;
-    open_contradiction(stale, mem_a, mem_c).await;
-    open_contradiction(converged, mem_a, mem_b).await;
+    open_contradiction(stale, mem_c, mem_e).await;
+    open_contradiction(converged, mem_f, mem_g).await;
 
     let tok = |user: &str, teams: Vec<Uuid>| serde_json::json!({"org": org, "user": stable_uuid(user), "teams": teams});
     let tokens = serde_json::json!({
@@ -251,27 +264,28 @@ async fn contradiction_resolve_is_serialized_and_honest() {
 
     // ── 2. a supersession that applies nothing is not recorded as one ─────
     //
-    // Force mem_a into a superseded state, then try to supersede it again via
-    // the `stale` dispute. apply_supersession is idempotent → applies nothing →
-    // the handler must refuse rather than stamp `resolved_supersede` over a
-    // corpus change that never happened.
+    // Force mem_c into a superseded state (by mem_d), then try to supersede it
+    // again toward a DIFFERENT winner via the `stale` dispute.
+    // apply_supersession is idempotent → applies nothing → the handler must
+    // refuse rather than stamp `resolved_supersede` over a corpus change that
+    // never happened.
     sqlx::query(
         "UPDATE memories SET superseded_by = $2, status = 'deprecated'::memory_status,
                              valid_to = now()
          WHERE id = $1",
     )
-    .bind(mem_a)
-    .bind(mem_b)
+    .bind(mem_c)
+    .bind(mem_d)
     .execute(&admin)
     .await
-    .expect("pre-supersede mem_a");
+    .expect("pre-supersede mem_c");
 
     let r = http
         .post(format!("{base}/v1/reviews/contradictions/{stale}/resolve"))
         .bearer_auth("tok_pay_lead")
         .json(&serde_json::json!({
             "resolution": "supersede",
-            "winner_memory_id": mem_c,
+            "winner_memory_id": mem_e,
             "note": "hourly wins"
         }))
         .send()
@@ -296,13 +310,13 @@ async fn contradiction_resolve_is_serialized_and_honest() {
         "a refused resolve must not stamp a resolver"
     );
 
-    // mem_a's supersession target is untouched — no second supersession slipped in.
+    // mem_c's supersession target is untouched — no second supersession slipped in.
     let after: Option<Uuid> = sqlx::query_scalar("SELECT superseded_by FROM memories WHERE id=$1")
-        .bind(mem_a)
+        .bind(mem_c)
         .fetch_one(&admin)
         .await
-        .expect("mem_a after");
-    assert_eq!(after, Some(mem_b));
+        .expect("mem_c after");
+    assert_eq!(after, Some(mem_d));
 
     // …but the same dispute IS still resolvable a truthful way.
     let r = http
@@ -330,6 +344,16 @@ async fn contradiction_resolve_is_serialized_and_honest() {
     // This is also the state the gold fixtures seed (mem-pay-0063 ships
     // superseded_by mem-pay-0064), which is why console_pg's supersede asserts
     // held while the handler applied nothing.
+    sqlx::query(
+        "UPDATE memories SET superseded_by = $2, status = 'deprecated'::memory_status,
+                             valid_to = now()
+         WHERE id = $1",
+    )
+    .bind(mem_f)
+    .bind(mem_g)
+    .execute(&admin)
+    .await
+    .expect("pre-supersede mem_f");
     let r = http
         .post(format!(
             "{base}/v1/reviews/contradictions/{converged}/resolve"
@@ -337,7 +361,7 @@ async fn contradiction_resolve_is_serialized_and_honest() {
         .bearer_auth("tok_pay_lead")
         .json(&serde_json::json!({
             "resolution": "supersede",
-            "winner_memory_id": mem_b,
+            "winner_memory_id": mem_g,
             "note": "already superseded — recording the verdict"
         }))
         .send()
@@ -354,10 +378,10 @@ async fn contradiction_resolve_is_serialized_and_honest() {
     // The recorded status is true of the corpus — which is the whole bar.
     let (loser_status, superseded_by): (String, Option<Uuid>) =
         sqlx::query_as("SELECT status::text, superseded_by FROM memories WHERE id=$1")
-            .bind(mem_a)
+            .bind(mem_f)
             .fetch_one(&admin)
             .await
-            .expect("mem_a converged");
+            .expect("mem_f converged");
     assert_eq!(loser_status, "deprecated");
-    assert_eq!(superseded_by, Some(mem_b));
+    assert_eq!(superseded_by, Some(mem_g));
 }

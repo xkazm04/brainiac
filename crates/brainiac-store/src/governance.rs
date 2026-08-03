@@ -560,6 +560,195 @@ pub async fn provenance_refs_for(
         .collect())
 }
 
+/// The terminal status a sibling dispute lands in: closed because the memory it
+/// argued about stopped being a standing belief, NOT because anyone judged it.
+/// Kept distinct from `dismissed` (a human saying "no conflict here") precisely
+/// so the detector-quality metrics that read `dismissed` are not polluted by
+/// disputes nobody decided.
+pub const CONTRADICTION_MOOT: &str = "moot";
+
+/// The detector stamp on a dispute that was inherited rather than found. It is
+/// deliberately NOT one of the pipeline detectors: these rows are questions
+/// carried forward by the governance loop, and an operator filtering by
+/// `detected_by` must be able to tell them apart from anything a model claimed.
+pub const SIBLING_CARRY_FORWARD: &str = "sibling_carry_forward";
+
+/// One sibling dispute that a supersession made unanswerable, and what became
+/// of the live question inside it.
+#[derive(Debug, Clone)]
+pub struct SettledSibling {
+    pub contradiction_id: Uuid,
+    /// The OTHER memory in that dispute — the one whose standing was never
+    /// decided by the resolution that closed this row.
+    pub counterpart_id: Uuid,
+    /// The freshly opened dispute between the counterpart and the winner, when
+    /// the question survived its own framing. `None` when there was nothing
+    /// live left to ask.
+    pub carried_forward: Option<Uuid>,
+}
+
+/// Settle the OTHER open contradictions that argued about a memory a
+/// supersession just deprecated.
+///
+/// The problem this fixes: a memory can be party to two open disputes. Resolving
+/// the first deprecates it; the second stays open, still pointing at it. A
+/// maintainer later opens that dispute and decides it — about a memory that was
+/// already dead. Worse, the dispute is *unanswerable*: `supersede` on the dead
+/// side is refused by [`apply_supersession`] (already superseded), and
+/// `supersede` the other way would deprecate a live memory in favour of a
+/// retired one. And while it sits there open, it WITHHOLDS its live counterpart
+/// from serving. A governance loop whose whole value is that a human decision
+/// means something cannot leave rows like that lying around.
+///
+/// Two moves, and the split between them is the whole design:
+///
+/// 1. **Settle** the sibling as [`CONTRADICTION_MOOT`], with a note that names
+///    the memory that died, what superseded it, and which resolution did it —
+///    and states plainly that nothing was decided about the other side. It
+///    inherits a reason; it does not vanish.
+/// 2. **Carry the live question forward.** The dispute's real content was "does
+///    the counterpart conflict with what this memory claimed?", and the winner
+///    now makes that claim. So a NEW dispute is opened between the counterpart
+///    and the winner, stamped [`SIBLING_CARRY_FORWARD`] and noted as inherited
+///    and unverified. This is DISCOVERY, not adjudication — exactly the line the
+///    pipeline holds when it refuses to auto-apply a supersede verdict. Nothing
+///    is deprecated here; a human still decides.
+///
+/// Guarded so it cannot manufacture noise: no carry-forward when the counterpart
+/// IS the winner, when either side is no longer live, or when the pair already
+/// has an open dispute.
+///
+/// RLS: runs inside the caller's own transaction. `contradictions` is org-scoped
+/// (`contradictions_org`), so this can only ever touch the caller's org. It
+/// mutates NO memory — settling a dispute as moot is not deciding it, so it
+/// needs (and grants) none of the maintainer rights that a supersession does.
+pub async fn settle_siblings_of_superseded(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    deprecated: Uuid,
+    winner: Uuid,
+    resolved_contradiction: Uuid,
+    resolver: Option<Uuid>,
+) -> Result<Vec<SettledSibling>> {
+    let rows = sqlx::query(
+        "UPDATE contradictions
+         SET status = $5,
+             resolved_by = $6,
+             resolved_at = now(),
+             resolution_note = concat(
+                 'closed as moot: memory ', $2::text, ' was superseded by ', $3::text,
+                 ' when contradiction ', $4::text, ' was resolved, so this dispute can no ',
+                 'longer be decided as posed. NOTHING was decided about the other side. ',
+                 'Original note: ', coalesce(resolution_note, '(none)'))
+         WHERE org_id = $1 AND status = 'open' AND id <> $4
+           AND (memory_a = $2 OR memory_b = $2)
+         RETURNING id, memory_a, memory_b",
+    )
+    .bind(org_id)
+    .bind(deprecated)
+    .bind(winner)
+    .bind(resolved_contradiction)
+    .bind(CONTRADICTION_MOOT)
+    .bind(resolver)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        let contradiction_id: Uuid = r.get("id");
+        let a: Uuid = r.get("memory_a");
+        let b: Uuid = r.get("memory_b");
+        let counterpart = if a == deprecated { b } else { a };
+        let carried_forward = carry_forward(
+            &mut *conn,
+            org_id,
+            winner,
+            counterpart,
+            contradiction_id,
+            deprecated,
+        )
+        .await?;
+        out.push(SettledSibling {
+            contradiction_id,
+            counterpart_id: counterpart,
+            carried_forward,
+        });
+    }
+    Ok(out)
+}
+
+/// Re-pose one settled sibling's question against the winner, if there is still
+/// a question. Returns the new contradiction's id, or `None` when a guard
+/// declined — see [`settle_siblings_of_superseded`] for why each guard exists.
+async fn carry_forward(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    winner: Uuid,
+    counterpart: Uuid,
+    from_contradiction: Uuid,
+    deprecated: Uuid,
+) -> Result<Option<Uuid>> {
+    // A memory cannot dispute itself: the counterpart of a sibling MAY be the
+    // winner (X argued with both W and Y; W won), and that question is now
+    // settled, not open.
+    if counterpart == winner {
+        return Ok(None);
+    }
+
+    // Both sides must still be standing beliefs. A retired memory has nothing
+    // to argue for, and re-raising a dispute over one is the exact failure this
+    // whole change exists to remove.
+    let live: i64 = sqlx::query(
+        "SELECT count(*) AS n FROM memories
+         WHERE id = ANY($1) AND superseded_by IS NULL
+           AND status <> 'deprecated'::memory_status AND deleted_at IS NULL",
+    )
+    .bind(vec![winner, counterpart])
+    .fetch_one(&mut *conn)
+    .await?
+    .get("n");
+    if live != 2 {
+        return Ok(None);
+    }
+
+    // Never stack a second open dispute on a pair that already has one — in
+    // either direction. Over-flagging is what kills a review queue.
+    let existing: Option<Uuid> = sqlx::query(
+        "SELECT id FROM contradictions
+         WHERE status = 'open'
+           AND ((memory_a = $1 AND memory_b = $2) OR (memory_a = $2 AND memory_b = $1))",
+    )
+    .bind(winner)
+    .bind(counterpart)
+    .fetch_optional(&mut *conn)
+    .await?
+    .map(|r| r.get("id"));
+    if existing.is_some() {
+        return Ok(None);
+    }
+
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO contradictions
+            (id, org_id, memory_a, memory_b, detected_by, status, resolution_note)
+         VALUES ($1,$2,$3,$4,$5,'open',$6)",
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(winner)
+    .bind(counterpart)
+    .bind(SIBLING_CARRY_FORWARD)
+    .bind(format!(
+        "inherited from contradiction {from_contradiction}: memory {counterpart} was in an \
+         open dispute with {deprecated}, which has since been superseded by {winner}. \
+         UNVERIFIED — no detector and no human has judged this pair; it is carried forward \
+         so the question is not lost, not because a conflict was found."
+    ))
+    .execute(&mut *conn)
+    .await?;
+    Ok(Some(id))
+}
+
 pub async fn insert_contradiction(
     conn: &mut PgConnection,
     org_id: Uuid,

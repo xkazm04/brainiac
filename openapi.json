@@ -2523,7 +2523,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "open | resolved_supersede | resolved_coexist | dismissed | all (default open)",
+            "description": "open | resolved_supersede | resolved_coexist | dismissed | moot | all (default open)",
             "required": false,
             "schema": {
               "type": "string"
@@ -2591,7 +2591,7 @@
         "tags": [
           "reviews"
         ],
-        "description": "Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team.",
+        "description": "Resolve an open contradiction by supersede (deprecates the loser), coexist, or dismiss. Supersede requires a maintainer of the losing memory's team. A supersede also settles every OTHER open dispute about the memory it retired: each is closed `moot` with a note saying it was never decided, and its live question is re-posed against the winner as a fresh open dispute (`detected_by = sibling_carry_forward`). Nothing is auto-decided — a human still resolves the carried-forward disputes.",
         "operationId": "resolve_contradiction",
         "parameters": [
           {
@@ -7224,7 +7224,7 @@
       },
       "ResolveContradictionResponse": {
         "type": "object",
-        "description": "The contradiction's new terminal status (`resolved_supersede` |\n`resolved_coexist` | `dismissed`).",
+        "description": "The contradiction's new terminal status (`resolved_supersede` |\n`resolved_coexist` | `dismissed`), plus what the decision did to the OTHER\ndisputes that argued about the memory it retired.",
         "required": [
           "contradiction_id",
           "status"
@@ -7233,6 +7233,22 @@
           "contradiction_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "siblings_carried_forward": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Fresh OPEN disputes carrying a settled sibling's live question forward\nagainst the winner (`detected_by = sibling_carry_forward`). Inherited and\nunverified — a question preserved, never a verdict."
+          },
+          "siblings_settled": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Other open disputes that argued about the now-superseded memory. They\nwere closed `moot` — unanswerable as posed, and NOT decided; each row's\n`resolution_note` says so. Empty for `coexist`/`dismiss`, which retire\nnothing."
           },
           "status": {
             "type": "string"
