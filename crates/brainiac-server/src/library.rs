@@ -782,9 +782,16 @@ pub(crate) async fn standard_propose(
     }
 }
 
-/// A proposed skill body — a runbook, generously sized but bounded. Anything
-/// longer than a procedure belongs split into several skills.
-const MAX_SKILL_BODY: usize = 20_000;
+/// One auxiliary file in a skill bundle — a reference, a script, a template.
+/// The body is `instructions_md`; these are everything else the skill ships
+/// with, and they are served verbatim by `download` and MCP `skill_fetch`.
+#[derive(Deserialize, Serialize, ToSchema)]
+pub(crate) struct SkillResourceInput {
+    /// Bundle-relative path, e.g. `references/schema.md`.
+    pub path: String,
+    /// The file's contents.
+    pub content: String,
+}
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct SkillProposeRequest {
@@ -796,15 +803,28 @@ pub(crate) struct SkillProposeRequest {
     pub summary: Option<String>,
     /// Task domain for the catalog, e.g. `database`, `testing`.
     pub domain: Option<String>,
+    /// The rest of the bundle. Omit for a body-only skill. The whole bundle —
+    /// body, front-matter and these files — is bounded together, not per file.
+    #[serde(default)]
+    pub resources: Option<Vec<SkillResourceInput>>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SkillProposeResponse {
-    /// `created` (a fresh DRAFT waits for a maintainer to publish it) or
-    /// `duplicate` (collapsed onto an existing skill — see `maturity`).
+    /// `created` (a fresh DRAFT waits for a maintainer to publish it),
+    /// `new_version` (this improved a published skill — the draft waits, the
+    /// published version keeps serving), or `duplicate` (collapsed onto an
+    /// existing skill — see `maturity`).
     pub outcome: String,
     pub skill_id: Uuid,
     pub slug: String,
+    /// The semver of the draft this created, on `created` / `new_version`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semver: Option<String>,
+    /// On `new_version`: the version that keeps serving until the new draft is
+    /// signed. Proof, in the response, that proposing did not disturb agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serving_semver: Option<String>,
     /// Present on a duplicate: the maturity of the skill this collapsed onto.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub maturity: Option<String>,
@@ -814,9 +834,10 @@ pub(crate) struct SkillProposeResponse {
     post,
     path = "/v1/library/skills/propose",
     request_body = SkillProposeRequest,
-    description = "Propose a skill as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. Deduplicated by name (a duplicate collapses onto the existing skill) and rate-limited per author.",
+    description = "Propose a skill bundle as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. A skill that is already published takes the proposal as its NEXT VERSION and keeps serving the signed one meanwhile; a skill with a draft already pending, or a deprecated one, collapses as a duplicate. Rate-limited per author and bounded as a whole bundle (body + front-matter + resources).",
     responses(
         (status = 200, body = SkillProposeResponse),
+        (status = 400, description = "the bundle exceeds the total size bound"),
         (status = 429, description = "per-author hourly proposal budget spent"),
     )
 )]
@@ -839,10 +860,23 @@ pub(crate) async fn skill_propose(
         }
     };
     cap(&req.name, MAX_PROPOSAL_NAME, "name")?;
-    cap(&req.instructions_md, MAX_SKILL_BODY, "instructions_md")?;
+    if req.instructions_md.trim().is_empty() {
+        return Err(bad("instructions_md must not be empty".to_string()));
+    }
     if let Some(s) = &req.summary {
         cap(s, MAX_PROPOSAL_STATEMENT, "summary")?;
     }
+    // The bundle's total weight is the store's rule (one constant, both
+    // surfaces); this handler only checks what the store cannot see — that
+    // every resource is a named file.
+    let resources = req.resources.unwrap_or_default();
+    for r in &resources {
+        if r.path.trim().is_empty() {
+            return Err(bad("every resource needs a path".to_string()));
+        }
+    }
+    let resources =
+        serde_json::to_value(&resources).map_err(|e| internal(anyhow::Error::new(e)))?;
 
     let manifest = serde_json::json!({
         "name": req.name,
@@ -861,6 +895,7 @@ pub(crate) async fn skill_propose(
             domain: req.domain,
             content_md: req.instructions_md,
             manifest,
+            resources,
         },
         propose_per_hour(),
     )
@@ -869,13 +904,35 @@ pub(crate) async fn skill_propose(
 
     match outcome {
         library::SkillProposeOutcome::Created {
-            skill_id, slug, ..
+            skill_id,
+            slug,
+            semver,
+            ..
         } => {
             tx.commit().await.map_err(internal)?;
             Ok(Json(SkillProposeResponse {
                 outcome: "created".into(),
                 skill_id,
                 slug,
+                semver: Some(semver),
+                serving_semver: None,
+                maturity: None,
+            }))
+        }
+        library::SkillProposeOutcome::NewVersion {
+            skill_id,
+            slug,
+            semver,
+            serving_semver,
+            ..
+        } => {
+            tx.commit().await.map_err(internal)?;
+            Ok(Json(SkillProposeResponse {
+                outcome: "new_version".into(),
+                skill_id,
+                slug,
+                semver: Some(semver),
+                serving_semver,
                 maturity: None,
             }))
         }
@@ -887,6 +944,8 @@ pub(crate) async fn skill_propose(
             outcome: "duplicate".into(),
             skill_id,
             slug,
+            semver: None,
+            serving_semver: None,
             maturity: Some(maturity.as_str().into()),
         })),
         library::SkillProposeOutcome::RateLimited { per_hour } => Err((
@@ -894,6 +953,9 @@ pub(crate) async fn skill_propose(
             format!("proposal budget spent: {per_hour} per author per hour — the next skill can wait sixty minutes"),
         )
             .into()),
+        library::SkillProposeOutcome::TooLarge { chars, max } => Err(bad(format!(
+            "the bundle is {chars} chars; the limit is {max} for body, front-matter and resources together — split it into several skills"
+        ))),
     }
 }
 

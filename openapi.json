@@ -709,7 +709,7 @@
         "tags": [
           "crate::library"
         ],
-        "description": "Propose a skill as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. Deduplicated by name (a duplicate collapses onto the existing skill) and rate-limited per author.",
+        "description": "Propose a skill bundle as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. A skill that is already published takes the proposal as its NEXT VERSION and keeps serving the signed one meanwhile; a skill with a draft already pending, or a deprecated one, collapses as a duplicate. Rate-limited per author and bounded as a whole bundle (body + front-matter + resources).",
         "operationId": "skill_propose",
         "requestBody": {
           "content": {
@@ -731,6 +731,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "the bundle exceeds the total size bound"
           },
           "429": {
             "description": "per-author hourly proposal budget spent"
@@ -7663,6 +7666,16 @@
             "type": "string",
             "description": "Short skill name (the dedup key), e.g. \"add a data provider\"."
           },
+          "resources": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SkillResourceInput"
+            },
+            "description": "The rest of the bundle. Omit for a body-only skill. The whole bundle —\nbody, front-matter and these files — is bounded together, not per file."
+          },
           "summary": {
             "type": [
               "string",
@@ -7689,7 +7702,21 @@
           },
           "outcome": {
             "type": "string",
-            "description": "`created` (a fresh DRAFT waits for a maintainer to publish it) or\n`duplicate` (collapsed onto an existing skill — see `maturity`)."
+            "description": "`created` (a fresh DRAFT waits for a maintainer to publish it),\n`new_version` (this improved a published skill — the draft waits, the\npublished version keeps serving), or `duplicate` (collapsed onto an\nexisting skill — see `maturity`)."
+          },
+          "semver": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The semver of the draft this created, on `created` / `new_version`."
+          },
+          "serving_semver": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "On `new_version`: the version that keeps serving until the new draft is\nsigned. Proof, in the response, that proposing did not disturb agents."
           },
           "skill_id": {
             "type": "string",
@@ -7724,6 +7751,24 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "SkillResourceInput": {
+        "type": "object",
+        "description": "One auxiliary file in a skill bundle — a reference, a script, a template.\nThe body is `instructions_md`; these are everything else the skill ships\nwith, and they are served verbatim by `download` and MCP `skill_fetch`.",
+        "required": [
+          "path",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The file's contents."
+          },
+          "path": {
+            "type": "string",
+            "description": "Bundle-relative path, e.g. `references/schema.md`."
           }
         }
       },

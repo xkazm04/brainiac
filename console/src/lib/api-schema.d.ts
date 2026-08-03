@@ -399,7 +399,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Propose a skill as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. Deduplicated by name (a duplicate collapses onto the existing skill) and rate-limited per author. */
+        /** @description Propose a skill bundle as a DRAFT (lib:propose). The counterpart to standards/propose for procedures. The outcome is only ever a draft — never served to agents until a named human publishes a version. A skill that is already published takes the proposal as its NEXT VERSION and keeps serving the signed one meanwhile; a skill with a draft already pending, or a deprecated one, collapses as a duplicate. Rate-limited per author and bounded as a whole bundle (body + front-matter + resources). */
         post: operations["skill_propose"];
         delete?: never;
         options?: never;
@@ -3241,6 +3241,11 @@ export interface components {
             instructions_md: string;
             /** @description Short skill name (the dedup key), e.g. "add a data provider". */
             name: string;
+            /**
+             * @description The rest of the bundle. Omit for a body-only skill. The whole bundle —
+             *     body, front-matter and these files — is bounded together, not per file.
+             */
+            resources?: components["schemas"]["SkillResourceInput"][] | null;
             /** @description One line: what this skill is for and when to reach for it. */
             summary?: string | null;
         };
@@ -3248,10 +3253,19 @@ export interface components {
             /** @description Present on a duplicate: the maturity of the skill this collapsed onto. */
             maturity?: string | null;
             /**
-             * @description `created` (a fresh DRAFT waits for a maintainer to publish it) or
-             *     `duplicate` (collapsed onto an existing skill — see `maturity`).
+             * @description `created` (a fresh DRAFT waits for a maintainer to publish it),
+             *     `new_version` (this improved a published skill — the draft waits, the
+             *     published version keeps serving), or `duplicate` (collapsed onto an
+             *     existing skill — see `maturity`).
              */
             outcome: string;
+            /** @description The semver of the draft this created, on `created` / `new_version`. */
+            semver?: string | null;
+            /**
+             * @description On `new_version`: the version that keeps serving until the new draft is
+             *     signed. Proof, in the response, that proposing did not disturb agents.
+             */
+            serving_semver?: string | null;
             /** Format: uuid */
             skill_id: string;
             slug: string;
@@ -3271,6 +3285,17 @@ export interface components {
              */
             semver: string;
             slug: string;
+        };
+        /**
+         * @description One auxiliary file in a skill bundle — a reference, a script, a template.
+         *     The body is `instructions_md`; these are everything else the skill ships
+         *     with, and they are served verbatim by `download` and MCP `skill_fetch`.
+         */
+        SkillResourceInput: {
+            /** @description The file's contents. */
+            content: string;
+            /** @description Bundle-relative path, e.g. `references/schema.md`. */
+            path: string;
         };
         SkillVersionView: {
             created_at: string;
@@ -4276,6 +4301,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SkillProposeResponse"];
                 };
+            };
+            /** @description the bundle exceeds the total size bound */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description per-author hourly proposal budget spent */
             429: {

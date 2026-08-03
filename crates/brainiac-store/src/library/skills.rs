@@ -219,6 +219,51 @@ pub async fn current_published_version(
 /// publish; until then the number is a placeholder, not a promise.
 const PROPOSED_SKILL_SEMVER: &str = "0.1.0";
 
+/// The size bound on a whole skill BUNDLE — body + manifest + every resource
+/// file — not on a single markdown body.
+///
+/// It lives here, in the store, for two reasons. The bound is a property of
+/// what the database will hold inline, so the layer that writes the row is the
+/// layer that should refuse an oversized one; and it was previously duplicated
+/// as a per-body cap on each of the two surfaces (REST and MCP), which is the
+/// kind of duplication that silently drifts. Both surfaces now consume this
+/// one number by way of [`SkillProposeOutcome::TooLarge`].
+///
+/// 200k characters is ~10x the old single-body cap: a real multi-file skill —
+/// a 25k-character procedure plus its references and scripts — fits without
+/// being condensed into a digest, while the server still never buffers,
+/// stores, or serves an unbounded blob. MCP's 1 MB JSON-RPC frame ceiling
+/// independently bounds ingress on that surface.
+pub const MAX_SKILL_BUNDLE_CHARS: usize = 200_000;
+
+/// The whole bundle's weight: the body, the front-matter, and every resource
+/// file, measured on the serialized form so a caller cannot smuggle bulk
+/// through a shape the cap does not know about.
+pub fn bundle_chars(
+    content_md: &str,
+    manifest: &serde_json::Value,
+    resources: &serde_json::Value,
+) -> usize {
+    content_md.chars().count()
+        + manifest.to_string().chars().count()
+        + resources.to_string().chars().count()
+}
+
+/// The next MINOR of a semver, used when an agent proposes an improvement to a
+/// skill that is already published. Proposals are minor bumps by construction:
+/// the proposer does not get to declare a breaking change or a release number,
+/// only to offer the next iteration. An unparseable existing version falls back
+/// to a `.1`-suffixed successor rather than failing the proposal.
+fn next_minor(current: &str) -> String {
+    let parts: Vec<&str> = current.split('.').collect();
+    if parts.len() == 3 {
+        if let (Ok(major), Ok(minor)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
+            return format!("{major}.{}.0", minor + 1);
+        }
+    }
+    format!("{current}.1")
+}
+
 pub struct SkillProposal {
     pub org_id: Uuid,
     /// The proposing identity (the token's user). Rate-limited and recorded on
@@ -232,6 +277,9 @@ pub struct SkillProposal {
     pub content_md: String,
     /// Bundle front-matter (the surface builds it from name/description/domain).
     pub manifest: serde_json::Value,
+    /// The rest of the bundle: `[{path, content}]`. An empty array is a
+    /// body-only skill, which is what most of them are.
+    pub resources: serde_json::Value,
 }
 
 pub enum SkillProposeOutcome {
@@ -240,10 +288,23 @@ pub enum SkillProposeOutcome {
         skill_id: Uuid,
         version_id: Uuid,
         slug: String,
+        semver: String,
     },
-    /// A skill with this slug already exists — collapsed, no new row. The
-    /// maturity tells the agent whether it is already published (use it),
-    /// still a draft (someone is already on this), or deprecated.
+    /// The skill exists and is already published, so this proposal became the
+    /// NEXT DRAFT VERSION of it rather than being turned away. The published
+    /// version keeps serving until a maintainer signs this one — improving a
+    /// skill and replacing it are different acts.
+    NewVersion {
+        skill_id: Uuid,
+        version_id: Uuid,
+        slug: String,
+        semver: String,
+        /// The version still being served while this draft waits.
+        serving_semver: Option<String>,
+    },
+    /// A skill with this slug already exists and there is nothing to add — it
+    /// already has a draft awaiting a signature (someone is on this), or it was
+    /// deprecated on purpose. Collapsed, no new row.
     Duplicate {
         skill_id: Uuid,
         slug: String,
@@ -251,16 +312,42 @@ pub enum SkillProposeOutcome {
     },
     /// The author spent this hour's budget.
     RateLimited { per_hour: i64 },
+    /// The bundle is over [`MAX_SKILL_BUNDLE_CHARS`]. Carries the numbers so a
+    /// surface can render the refusal without knowing the constant.
+    TooLarge { chars: usize, max: usize },
 }
 
-/// Propose a skill as a draft (F-4). Rate-limited per author, deduplicated on
-/// slug; otherwise inserts a draft skill and its first unpublished version in
-/// one transaction. Publishing stays a separate named-human act.
+/// Propose a skill (F-4). Rate-limited per author; the slug still decides
+/// whether this is a new skill, the next version of an existing one, or a
+/// no-op.
+///
+/// The dedup rule is deliberately three-way rather than the original all-or-
+/// nothing collapse:
+///
+/// - no skill with this slug   → a new DRAFT skill + its first version;
+/// - published, nothing pending → the NEXT DRAFT VERSION (a skill is supposed
+///   to improve; the published version keeps serving until someone signs the
+///   new one);
+/// - a draft already pending, or deprecated → collapsed, as before. One
+///   unsigned draft at a time keeps "publish this skill" unambiguous, and a
+///   skill retired on purpose is not revived by a proposal.
+///
+/// Publishing stays a separate named-human act in every branch.
 pub async fn propose_skill(
     conn: &mut PgConnection,
     p: &SkillProposal,
     per_hour: i64,
 ) -> Result<SkillProposeOutcome> {
+    // 0. The bundle bound, before anything is counted or written: an oversized
+    //    proposal is refused, not charged against the author's hour.
+    let chars = bundle_chars(&p.content_md, &p.manifest, &p.resources);
+    if chars > MAX_SKILL_BUNDLE_CHARS {
+        return Ok(SkillProposeOutcome::TooLarge {
+            chars,
+            max: MAX_SKILL_BUNDLE_CHARS,
+        });
+    }
+
     // 1. The hour budget, counted from the skills the author has proposed.
     let recent: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM skills
@@ -275,9 +362,7 @@ pub async fn propose_skill(
         return Ok(SkillProposeOutcome::RateLimited { per_hour });
     }
 
-    // 2. Collapse onto an existing skill with the same slug, whatever its
-    //    maturity — a second agent proposing the same runbook is told it exists
-    //    rather than minting a duplicate the maintainer must then reconcile.
+    // 2. An existing skill with this slug: improve it, or say it exists.
     let slug = slugify(&p.name);
     if let Some(row) =
         sqlx::query("SELECT id, maturity FROM skills WHERE org_id = $1 AND slug = $2")
@@ -286,11 +371,54 @@ pub async fn propose_skill(
             .fetch_optional(&mut *conn)
             .await?
     {
-        return Ok(SkillProposeOutcome::Duplicate {
-            skill_id: row.get("id"),
+        let skill_id: Uuid = row.get("id");
+        let maturity =
+            SkillMaturity::parse(row.get::<String, _>("maturity").as_str()).unwrap_or_default();
+
+        let pending = pending_draft_version(&mut *conn, skill_id).await?;
+        let serving = current_published_version(&mut *conn, skill_id).await?;
+
+        // Only a published skill with nothing already awaiting a signature
+        // takes a new version. Everything else collapses, as before.
+        if pending.is_some() || serving.is_none() || maturity == SkillMaturity::Deprecated {
+            return Ok(SkillProposeOutcome::Duplicate {
+                skill_id,
+                slug,
+                maturity,
+            });
+        }
+
+        // The successor number is derived from the newest version that exists
+        // — not from the serving one — so a semver is never reused and the
+        // (skill_id, semver) unique constraint cannot be tripped.
+        let newest: Option<String> = sqlx::query_scalar(
+            "SELECT semver FROM skill_versions WHERE skill_id = $1 ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(skill_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let semver = next_minor(newest.as_deref().unwrap_or(PROPOSED_SKILL_SEMVER));
+
+        let version_id = Uuid::new_v4();
+        add_skill_version(
+            conn,
+            &NewSkillVersion {
+                id: version_id,
+                skill_id,
+                org_id: p.org_id,
+                semver: semver.clone(),
+                manifest: p.manifest.clone(),
+                content_md: p.content_md.clone(),
+                resources: p.resources.clone(),
+            },
+        )
+        .await?;
+        return Ok(SkillProposeOutcome::NewVersion {
+            skill_id,
+            version_id,
             slug,
-            maturity: SkillMaturity::parse(row.get::<String, _>("maturity").as_str())
-                .unwrap_or_default(),
+            semver,
+            serving_semver: serving.map(|v| v.semver),
         });
     }
 
@@ -319,7 +447,7 @@ pub async fn propose_skill(
             semver: PROPOSED_SKILL_SEMVER.to_string(),
             manifest: p.manifest.clone(),
             content_md: p.content_md.clone(),
-            resources: serde_json::json!([]),
+            resources: p.resources.clone(),
         },
     )
     .await?;
@@ -327,5 +455,6 @@ pub async fn propose_skill(
         skill_id,
         version_id,
         slug,
+        semver: PROPOSED_SKILL_SEMVER.to_string(),
     })
 }

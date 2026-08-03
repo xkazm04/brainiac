@@ -42,10 +42,13 @@ const MAX_QUERY_CHARS: usize = 2_000;
 const MAX_NAME_CHARS: usize = 200;
 /// `memory_feedback` note — a short human explanation.
 const MAX_NOTE_CHARS: usize = 2_000;
-/// `skill_propose` instructions body — a whole runbook, not a one-liner, so it
-/// is generously sized; still bounded so a caller cannot make the server buffer
-/// an unbounded blob.
-const MAX_SKILL_BODY_CHARS: usize = 20_000;
+// `skill_propose` is bounded as a whole BUNDLE — body + front-matter +
+// resources — by `brainiac_store::library::MAX_SKILL_BUNDLE_CHARS`. The number
+// deliberately does not appear here: it used to be duplicated as a per-body cap
+// on this surface and on the REST one, and two copies of a limit drift. The
+// store enforces it and reports it back, so both surfaces render the same
+// refusal. `MAX_FRAME_BYTES` below independently bounds ingress on this
+// transport.
 /// Bounded excerpt of a source's raw text returned by `memory_provenance` — a
 /// citation handle, never the whole (possibly huge) transcript.
 const SOURCE_EXCERPT_CHARS: usize = 500;
@@ -640,14 +643,26 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "skill_propose",
-            "description": "Propose a SKILL — a packaged, reusable procedure (a runbook, review checklist, or codified workflow) you found yourself repeating or wish had existed. The outcome is ONLY ever a DRAFT: a named human reviews and publishes it, never you, and it is never served to agents until they do. Deduplicated by name: if the org already has a skill by this name — draft, published, or deprecated — you get that one back instead of a duplicate. Rate-limited per session identity; propose a genuine procedure, not a passing note (that is a memory). Put the whole procedure in `instructions_md` as you would want to READ it.",
+            "description": "Propose a SKILL — a packaged, reusable procedure (a runbook, review checklist, or codified workflow) you found yourself repeating or wish had existed. The outcome is ONLY ever a DRAFT: a named human reviews and publishes it, never you, and it is never served to agents until they do. A skill may ship as a multi-file bundle: the body in `instructions_md` plus any references, templates or scripts in `resources`. Deduplicated by name — but if the org's skill by that name is already PUBLISHED, your proposal becomes its next draft VERSION (an improvement), and agents keep receiving the published one until a human signs yours. Rate-limited per session identity; propose a genuine procedure, not a passing note (that is a memory). Put the whole procedure in `instructions_md` as you would want to READ it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "Short skill name, e.g. `add a data provider` (the dedup key; the slug is derived from it)" },
                     "instructions_md": { "type": "string", "description": "The whole procedure as markdown — steps, checks, gotchas. Written to be followed." },
                     "summary": { "type": "string", "description": "One line: what this skill is for and when to reach for it" },
-                    "domain": { "type": "string", "description": "Task domain for the catalog, e.g. `database`, `testing`, `providers`" }
+                    "domain": { "type": "string", "description": "Task domain for the catalog, e.g. `database`, `testing`, `providers`" },
+                    "resources": {
+                        "type": "array",
+                        "description": "The rest of the bundle — references, templates, scripts. Omit for a body-only skill. Body, front-matter and resources are bounded TOGETHER, so split a very large skill into several rather than condensing it.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string", "description": "Bundle-relative path, e.g. `references/schema.md`" },
+                                "content": { "type": "string", "description": "The file's contents" }
+                            },
+                            "required": ["path", "content"]
+                        }
+                    }
                 },
                 "required": ["name", "instructions_md"]
             }
@@ -1971,11 +1986,34 @@ async fn standard_propose(state: &McpState, args: &Value) -> Result<Value, ToolE
 /// cannot drift; the outcome is only ever a draft awaiting a human signature.
 async fn skill_propose(state: &McpState, args: &Value) -> Result<Value, ToolError> {
     let name = within_cap(required_str(args, "name")?, MAX_NAME_CHARS, "name")?;
-    let content_md = within_cap(
-        required_str(args, "instructions_md")?,
-        MAX_SKILL_BODY_CHARS,
-        "instructions_md",
-    )?;
+    let content_md = required_str(args, "instructions_md")?;
+    // The rest of the bundle, if the agent authored one. Shape is checked here;
+    // the size bound is the store's, so REST and MCP cannot disagree about it.
+    let resources = match args.get("resources") {
+        None | Some(Value::Null) => json!([]),
+        Some(Value::Array(items)) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                let path = it
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .filter(|p| !p.trim().is_empty())
+                    .ok_or_else(|| {
+                        invalid("every resource needs a non-empty `path`".to_string())
+                    })?;
+                let content = it.get("content").and_then(Value::as_str).ok_or_else(|| {
+                    invalid("every resource needs a string `content`".to_string())
+                })?;
+                out.push(json!({ "path": path, "content": content }));
+            }
+            Value::Array(out)
+        }
+        Some(_) => {
+            return Err(invalid(
+                "`resources` must be an array of {path, content}".to_string(),
+            ))
+        }
+    };
     let opt = |key: &str, cap: usize| -> Result<Option<String>, ToolError> {
         match args.get(key) {
             None | Some(Value::Null) => Ok(None),
@@ -2019,6 +2057,7 @@ async fn skill_propose(state: &McpState, args: &Value) -> Result<Value, ToolErro
             domain,
             content_md: content_md.to_string(),
             manifest,
+            resources,
         },
         per_hour,
     )
@@ -2035,6 +2074,25 @@ async fn skill_propose(state: &McpState, args: &Value) -> Result<Value, ToolErro
                 "note": "your skill is a DRAFT waiting for a maintainer to publish it — it is not served to agents (skill_fetch returns not-found) until a named human signs a version. Do not treat it as available yet."
             })
         }
+        SkillProposeOutcome::NewVersion {
+            skill_id,
+            slug,
+            semver,
+            serving_semver,
+            ..
+        } => {
+            tx.commit().await?;
+            json!({
+                "outcome": "new_version",
+                "skill_id": skill_id,
+                "slug": slug,
+                "semver": semver,
+                "serving_semver": serving_semver,
+                "note": format!(
+                    "this skill already exists and is published, so your bundle became its next DRAFT version ({semver}) — a maintainer signs it. Until then agents keep getting the published version, so do not assume your changes are live."
+                )
+            })
+        }
         SkillProposeOutcome::Duplicate {
             skill_id,
             slug,
@@ -2045,14 +2103,17 @@ async fn skill_propose(state: &McpState, args: &Value) -> Result<Value, ToolErro
             "slug": slug,
             "maturity": maturity.as_str(),
             "note": match maturity.as_str() {
-                "published" => "a skill by this name is already published — skill_fetch it and use it rather than re-authoring",
                 "deprecated" => "a skill by this name exists but was deprecated — respect that rather than reviving it as a new draft",
-                _ => "a draft by this name already exists — someone is already on this; no second draft was created",
+                _ => "a draft by this name is already waiting for a signature — someone is already on this; no second draft was created",
             }
         }),
         SkillProposeOutcome::RateLimited { per_hour } => json!({
             "outcome": "rate_limited",
             "note": format!("proposal budget spent ({per_hour}/hour) — keep the remaining ideas for the session summary, or record the strongest one as a memory instead")
+        }),
+        SkillProposeOutcome::TooLarge { chars, max } => json!({
+            "outcome": "too_large",
+            "note": format!("the bundle is {chars} characters; the limit is {max} for the body, front-matter and resources together — split it into several skills rather than condensing it into a digest")
         }),
     })
 }

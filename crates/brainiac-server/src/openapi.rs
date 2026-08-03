@@ -301,6 +301,7 @@ impl Modify for BearerAuth {
         crate::library::RatifyResponse,
         crate::library::ProposeRequest,
         crate::library::ProposeResponse,
+        crate::library::SkillResourceInput,
         crate::library::SkillProposeRequest,
         crate::library::SkillProposeResponse,
         crate::library::SkillPublishResponse,
