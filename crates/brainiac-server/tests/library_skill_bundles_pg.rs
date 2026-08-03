@@ -145,6 +145,7 @@ fn mcp_state(ctx: &Ctx) -> McpState {
     McpState {
         store: ctx.store.clone(),
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: brainiac_core::Principal {
             org_id: ctx.org,

@@ -47,7 +47,13 @@ enum Command {
         reranker: Option<String>,
     },
     /// Run the MCP server on stdio (agent surface).
-    Mcp,
+    Mcp {
+        /// Stage-5 reranker (ARCHITECTURE.md §4), identical to `serve`:
+        /// `none` (default) or `lexical`. The agent surface takes the same
+        /// ranking path REST does, so this must be selectable here too.
+        #[arg(long)]
+        reranker: Option<String>,
+    },
     /// Backfill embeddings for a swapped embedder (ARCHITECTURE.md §3 stage 8).
     /// Ensures the target version (auto-creating its HNSW index) and re-embeds
     /// every memory + canonical entity that lacks an embedding in it — a
@@ -307,7 +313,7 @@ async fn main() -> Result<()> {
             mock,
             reranker,
         } => serve(&bind, with_worker, mock, reranker.as_deref()).await,
-        Command::Mcp => mcp().await,
+        Command::Mcp { reranker } => mcp(reranker.as_deref()).await,
         Command::Reembed { embedder } => reembed(embedder.as_deref()).await,
         Command::Worker { mock } => worker(mock).await,
         Command::ScanDivergence => scan_divergence().await,
@@ -516,12 +522,16 @@ async fn serve(
     Ok(())
 }
 
-async fn mcp() -> Result<()> {
+async fn mcp(reranker_name: Option<&str>) -> Result<()> {
     let url = database_url()?;
     brainiac_store::migrate(&url).await?;
     let store = Store::connect(&url).await?;
     let embedder = embedder_select(None)?;
-    let state = brainiac_server::mcp::McpState::from_env(store, embedder).await?;
+    let reranker = reranker_select(reranker_name)?;
+    if let Some(r) = &reranker {
+        tracing::info!(reranker = r.model_name(), "stage-5 reranker enabled");
+    }
+    let state = brainiac_server::mcp::McpState::from_env(store, embedder, reranker).await?;
     brainiac_server::mcp::serve_stdio(std::sync::Arc::new(state)).await
 }
 

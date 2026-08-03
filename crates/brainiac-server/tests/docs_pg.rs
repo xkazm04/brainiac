@@ -586,6 +586,7 @@ async fn mcp_state(ctx: &Ctx, user: Uuid) -> std::sync::Arc<brainiac_server::mcp
     std::sync::Arc::new(brainiac_server::mcp::McpState {
         store: ctx.store.clone(),
         embedder: std::sync::Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: version,
         principal: principal(ctx.org_id, user),
         scopes: None,

@@ -612,6 +612,7 @@ async fn mcp_serves_only_adopted_rules_and_published_skills() {
     let state = Arc::new(McpState {
         store: ctx.store.clone(),
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: Principal {
             org_id: ctx.org_a,
@@ -1058,6 +1059,7 @@ async fn agent_proposals_are_gated_deduped_and_rate_limited() {
     let state = Arc::new(McpState {
         store: ctx.store.clone(),
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: Principal {
             org_id: ctx.org_a,
@@ -1294,6 +1296,7 @@ async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
     let state = Arc::new(McpState {
         store: ctx.store.clone(),
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: resolved.principal,
         scopes: resolved.scopes,
@@ -1351,6 +1354,7 @@ async fn mcp_managed_key_resolves_and_its_scopes_gate_the_tools() {
     let ro_state = Arc::new(McpState {
         store: ctx.store.clone(),
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: ro_ctx.principal,
         scopes: ro_ctx.scopes,

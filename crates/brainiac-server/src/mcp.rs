@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use brainiac_core::embed::Embedder;
+use brainiac_core::rerank::Reranker;
 use brainiac_core::{MemoryKind, MemoryStatus, Principal};
 use brainiac_store::retrieval::RetrievalFilters;
 use brainiac_store::Store;
@@ -191,6 +192,13 @@ fn tool_error(message: &str) -> Value {
 pub struct McpState {
     pub store: Store,
     pub embedder: Arc<dyn Embedder>,
+    /// Optional stage-5 reranker (ARCHITECTURE.md §4), mirroring
+    /// [`crate::http::AppState::reranker`]. MCP is where coding agents actually
+    /// retrieve, so it takes the SAME ranking path REST does: whatever the
+    /// operator selected once in `main::reranker_select` reaches both surfaces
+    /// through the single `retrieval::search_reranked` entry point. `None`
+    /// (the default) ⇒ the byte-identical pre-stage-5 path.
+    pub reranker: Option<Arc<dyn Reranker>>,
     pub embedding_version: i32,
     pub principal: Principal,
     /// The token's scopes; `None` for an env bootstrap token (unrestricted),
@@ -250,7 +258,15 @@ impl McpState {
     /// free-tier onboarding→agent loop was broken end to end (load/README.md
     /// F-2). An env token still resolves (unrestricted); a device key now
     /// resolves too, carrying its scopes.
-    pub async fn from_env(store: Store, embedder: Arc<dyn Embedder>) -> Result<Self> {
+    ///
+    /// `reranker` comes from the process-wide `main::reranker_select` — the
+    /// same selector `serve` feeds into [`crate::http::AppState`] — so an
+    /// operator who turns a reranker on gets it on the agent surface too.
+    pub async fn from_env(
+        store: Store,
+        embedder: Arc<dyn Embedder>,
+        reranker: Option<Arc<dyn Reranker>>,
+    ) -> Result<Self> {
         let tokens = crate::auth::TokenMap::from_env()?;
         let token = std::env::var("BRAINIAC_MCP_TOKEN")
             .context("BRAINIAC_MCP_TOKEN must be set for the MCP surface")?;
@@ -286,6 +302,7 @@ impl McpState {
         Ok(Self {
             store,
             embedder,
+            reranker,
             embedding_version,
             principal,
             scopes,
@@ -925,10 +942,17 @@ async fn memory_search(state: &McpState, args: &Value) -> Result<Value, ToolErro
 
     let started = std::time::Instant::now();
     let mut tx = state.store.scoped_tx(&state.principal).await?;
-    let hits = brainiac_store::retrieval::search(
+    // ONE ranking entry point for both surfaces: `search_reranked` is what REST
+    // calls (http.rs), and the reranker threaded here is the same
+    // `reranker_select` choice. Before this, MCP called the reranker-less
+    // `search` wrapper, so an operator-selected reranker was structurally
+    // unreachable from the product's primary consumer. `None` ⇒ identical to
+    // the old wrapper by construction (it is a `reranker: None` delegate).
+    let hits = brainiac_store::retrieval::search_reranked(
         &mut tx,
         state.store.pool(),
         state.embedder.as_ref(),
+        state.reranker.as_deref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
             query: query.to_string(),
@@ -1206,10 +1230,13 @@ async fn memory_context(state: &McpState, args: &Value) -> Result<Value, ToolErr
     // longer yields a thin (or empty) bundle. Graph-expansion extras re-apply the
     // same floor in `RetrievalFilters::admits`, so every returned hit is
     // canonical and there is nothing left to filter here.
-    let hits = brainiac_store::retrieval::search(
+    // Same single ranking entry point as `memory_search` and REST — the
+    // operator's reranker reaches the context bundle too.
+    let hits = brainiac_store::retrieval::search_reranked(
         &mut tx,
         state.store.pool(),
         state.embedder.as_ref(),
+        state.reranker.as_deref(),
         state.embedding_version,
         &brainiac_store::retrieval::RetrievalRequest {
             query: hint.to_string(),

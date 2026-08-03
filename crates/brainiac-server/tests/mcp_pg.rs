@@ -53,6 +53,7 @@ async fn mcp_handshake_and_tools() {
     let state = Arc::new(McpState {
         store,
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: seeded.embedding_version,
         principal: Principal {
             org_id: stable_uuid(&fx.org.org),
@@ -1507,6 +1508,7 @@ async fn memory_add_auto_attributes_via_resolved_session_remote() {
     let state = Arc::new(McpState {
         store,
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: Principal {
             org_id,
@@ -1566,6 +1568,7 @@ async fn memory_add_unresolvable_session_remote_stays_org_shared() {
     let state = Arc::new(McpState {
         store,
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: Principal {
             org_id,
@@ -1668,6 +1671,7 @@ async fn memory_add_project_scoped_key_ignores_session_remote() {
     let state = Arc::new(McpState {
         store,
         embedder: Arc::new(DeterministicEmbedder::default()),
+        reranker: None,
         embedding_version: 1,
         principal: Principal {
             org_id,
