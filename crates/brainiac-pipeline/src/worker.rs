@@ -117,6 +117,11 @@ struct RunStats {
     entities_created: usize,
     entities_resolved: usize,
     chunks: usize,
+    /// Model calls actually made, reported by the extract stage rather than
+    /// inferred. `chunks + repairs` stopped being the truth once a chunk that
+    /// extracted nothing could be re-sampled (and it was never the truth for a
+    /// verbatim `manual` ingest, which makes zero calls for one chunk).
+    llm_calls: usize,
     parse_failures: usize,
     repairs: usize,
     deduped: usize,
@@ -520,7 +525,7 @@ async fn write_pipeline_run(
     .bind(run.auto_promoted as i32)
     .bind(run.needs_review as i32)
     .bind(run.chunks as i32)
-    .bind((run.chunks + run.repairs) as i32)
+    .bind(run.llm_calls as i32)
     .bind(run.repairs as i32)
     .bind(run.parse_failures as i32)
     .bind(run.deduped as i32)
@@ -574,6 +579,7 @@ async fn process_job(
     run.memories += extracted.memories_written;
     run.entities_created += extracted.entities_created.len();
     run.chunks += extracted.chunks;
+    run.llm_calls += extracted.llm_calls;
     run.parse_failures += extracted.parse_failures;
     run.repairs += extracted.repairs;
     run.deduped += extracted.deduped;
@@ -590,6 +596,8 @@ async fn process_job(
         memories = extracted.memories_written,
         deduped = extracted.deduped,
         parse_failures = extracted.parse_failures,
+        empty_resamples = extracted.empty_resamples,
+        recovered_from_empty = extracted.recovered_from_empty,
         "source extracted"
     );
 

@@ -63,6 +63,19 @@ served the claim without the row it was listed in.";
 /// in the UAT flywheel run, 2026-07-13; MockProvider never exercised it). Accept
 /// a native array, a JSON-string-encoded array, or null; anything else still
 /// errors so genuine garbage is not silently swallowed.
+///
+/// Deliberately STRICT per ELEMENT, and that strictness is load-bearing —
+/// measured, not assumed. Salvaging broken elements (keep the good ones, drop
+/// the bad) sounds like free recall and is the opposite. Both forms were built
+/// and run against the `extraction` eval on real qwen-max, and both lost:
+/// salvaging here scored recall 0.095 / precision 0.500, and salvaging as a
+/// post-repair last resort scored 0.333 / 0.819, against 0.349 / 0.897 for
+/// leaving the array strict. The mechanism is that a partial parse
+/// SHORT-CIRCUITS the repair loop — a rejected array fires the repair
+/// re-prompt and the re-ask comes back COMPLETE, while a fragment banks the one
+/// element that happened to deserialize and discards the rest. See the
+/// regression test `a_partly_broken_array_drives_a_repair_instead_of_settling_
+/// for_a_fragment`, which exists so the idea is not re-implemented on intuition.
 fn de_lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -222,6 +235,12 @@ pub struct ExtractStats {
     pub parse_failures: usize,
     /// Repair re-prompts that recovered a parseable response.
     pub repairs: usize,
+    /// Extra sampling passes spent on a chunk that had resolved to ZERO
+    /// memories (see [`PASS_TEMPERATURES`]). Cost of the recall floor.
+    pub empty_resamples: usize,
+    /// Chunks that produced nothing on the first pass and real memories on a
+    /// later one — knowledge the old single-pass path silently dropped.
+    pub recovered_from_empty: usize,
     /// Actual model calls made for this source. Zero for a `manual` source —
     /// the verbatim path (F-3) never touches the provider, and the log must
     /// say so rather than implying a call happened.
@@ -430,11 +449,75 @@ fn parse_extraction(text: &str) -> std::result::Result<ExtractionOutput, String>
 /// attempt-aware path (dead-letter after MAX_ATTEMPTS, never infinite retry).
 const MAX_REPAIR_ATTEMPTS: usize = 2;
 
+// ── the empty-extraction floor (recall) ──────────────────────────────────
+//
+// The measured recall failure is NOT mostly "the model wrote a worse memory
+// than gold" — it is "the model returned NOTHING for a transcript that plainly
+// contains knowledge". The `extraction` eval saw the zero-extraction count
+// swing 3/5/6 across identical runs of 9 transcripts (see the V1 prompt note):
+// a third to two thirds of the corpus recalled 0.0, at random, per run.
+//
+// The single-pass path treats every route to zero as final:
+//   * a clean `{"memories":[]}` parses fine, so no repair fires;
+//   * the LAST repair attempt actively OFFERS `{"memories":[]}` as the escape
+//     hatch, so a model that was merely being lazy is handed a way out;
+//   * three prose responses in a row return Err and lose the whole SOURCE.
+// All three are indistinguishable from a genuinely contentless chunk, and all
+// three are stochastic — which is exactly what makes re-sampling the right
+// lever (the repo's own conclusion: robustness/retry, not prompt wording).
+//
+// So: a substantive chunk that resolves to zero memories is treated as a
+// FAILURE and re-sampled, at a rising temperature so the second draw is
+// actually a different draw (qwen-max is a MoE model whose routing already
+// varies at temperature 0, but a nudge makes the resample meaningful rather
+// than hopeful). The first non-empty result wins.
+//
+// Precision safety — the reason this is not a recall-for-precision trade:
+// a resample only ever REPLACES an empty result. It never appends to a
+// successful extraction, so it cannot pad output with near-duplicate
+// paraphrases of an already-extracted fact (which is how multi-pass schemes
+// normally buy recall and lose precision). What it adds are ordinary
+// first-class extractions on chunks whose previous contribution was zero
+// memories AND zero matches — the only region of the corpus where precision
+// has no downside to give.
+
+/// Sampling temperatures, in order, for the passes over one chunk. Pass 0 stays
+/// at 0.0 — unchanged behavior for the overwhelmingly common case where the
+/// first call yields memories. Later passes only run when the previous one
+/// produced nothing at all.
+const PASS_TEMPERATURES: [f32; 3] = [0.0, 0.3, 0.6];
+
+/// Hard ceiling on model calls per chunk, across all passes and their repairs.
+/// Bounds the worst case explicitly instead of letting passes × repairs
+/// multiply: today's worst case is 3 (1 + 2 repairs), this one is 6.
+const MAX_LLM_CALLS_PER_CHUNK: usize = 6;
+
+/// A chunk shorter than this is allowed to extract nothing without argument —
+/// "ok, thanks" genuinely has no durable knowledge in it, and re-sampling it
+/// would spend real tokens to re-confirm an obvious zero. Meridian transcripts
+/// run ~1.5–2.5k chars, so this only exempts the trivially short.
+const MIN_CHARS_FOR_RESAMPLE: usize = 300;
+
+/// Call accounting for one chunk, threaded through the passes so the numbers
+/// survive a pass that ends in `Err` (a pass that burned three calls and failed
+/// still cost three calls, and the run log must say so).
+#[derive(Debug, Default)]
+struct CallBudget {
+    calls: usize,
+    parse_failures: usize,
+    repairs: usize,
+}
+
+impl CallBudget {
+    fn exhausted(&self) -> bool {
+        self.calls >= MAX_LLM_CALLS_PER_CHUNK
+    }
+}
+
+#[derive(Debug)]
 struct LlmExtract {
     output: ExtractionOutput,
     model_ref: String,
-    /// The first parse failed and a repair recovered it.
-    repaired: bool,
 }
 
 /// The verbatim path for `manual` sources (F-3): no model, no parse, no way to
@@ -480,18 +563,23 @@ fn extract_verbatim(raw_text: &str) -> LlmExtract {
             }],
         },
         model_ref: "verbatim:manual".to_string(),
-        repaired: false,
     }
 }
 
-async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtract> {
+async fn extract_once(
+    provider: &dyn ChatProvider,
+    user: &str,
+    temperature: f32,
+    budget: &mut CallBudget,
+) -> Result<LlmExtract> {
+    budget.calls += 1;
     let resp = provider
         .complete(&ChatRequest {
             system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
             user: user.to_string(),
             json_mode: true,
             max_tokens: MAX_EXTRACT_TOKENS,
-            temperature: 0.0,
+            temperature,
         })
         .await
         .context("extract LLM call")?;
@@ -500,15 +588,18 @@ async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtr
         return Ok(LlmExtract {
             output,
             model_ref: resp.model_ref,
-            repaired: false,
         });
     }
+    budget.parse_failures += 1;
 
     // Retry loop: re-ask up to MAX_REPAIR_ATTEMPTS times, each echoing the parse
     // error and the bad output. A fresh sample clears most stochastic failures.
     let mut last_err = parse_extraction(&resp.text).err().unwrap_or_default();
     let mut last_text = resp.text;
     for attempt in 1..=MAX_REPAIR_ATTEMPTS {
+        if budget.exhausted() {
+            break;
+        }
         let escape_hatch = if attempt == MAX_REPAIR_ATTEMPTS {
             " If there is genuinely no durable knowledge to extract, respond with \
              exactly {\"memories\":[]} — but NEVER respond with prose or an explanation."
@@ -521,22 +612,23 @@ async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtr
              Return ONLY the corrected JSON object matching the required schema — \
              no prose, no code fences, nothing else.{escape_hatch}"
         );
+        budget.calls += 1;
         let repaired = provider
             .complete(&ChatRequest {
                 system: EXTRACT_SYSTEM_PROMPT_V1.to_string(),
                 user: repair_user,
                 json_mode: true,
                 max_tokens: MAX_EXTRACT_TOKENS,
-                temperature: 0.0,
+                temperature,
             })
             .await
             .context("extract repair LLM call")?;
         match parse_extraction(&repaired.text) {
             Ok(output) => {
+                budget.repairs += 1;
                 return Ok(LlmExtract {
                     output,
                     model_ref: repaired.model_ref,
-                    repaired: true,
                 });
             }
             Err(e) => {
@@ -545,9 +637,69 @@ async fn extract_once(provider: &dyn ChatProvider, user: &str) -> Result<LlmExtr
             }
         }
     }
+    // The error alone is not actionable — "not an array of the expected shape"
+    // names a schema, not the thing the model actually said. Log a REDACTED,
+    // bounded snippet of the last bad response (same firewall as `content`; the
+    // response quotes the transcript and could carry a credential) so the next
+    // parse gap is diagnosable without re-running a paid eval to reproduce it.
+    tracing::warn!(
+        reason = %last_err,
+        snippet = %brainiac_core::redact::redact(&last_text.chars().take(400).collect::<String>()),
+        "extractor response unparseable after repairs"
+    );
     Err(anyhow::anyhow!(
         "extractor output unparseable after {MAX_REPAIR_ATTEMPTS} repairs: {last_err}"
     ))
+}
+
+/// Should a zero-memory result on this chunk be believed, or re-sampled?
+/// Only substantive chunks earn a resample; see [`MIN_CHARS_FOR_RESAMPLE`].
+fn worth_resampling(chunk: &str) -> bool {
+    chunk.trim().chars().count() >= MIN_CHARS_FOR_RESAMPLE
+}
+
+/// One chunk → memories, with the empty result treated as a retryable failure.
+///
+/// Pass 0 is exactly today's call. Later passes run ONLY when everything so far
+/// produced zero memories — whether by a clean `{"memories":[]}`, by the final
+/// repair's escape hatch, or by a pass that exhausted its repairs and errored
+/// (a hard failure used to lose the entire source; here it is just a pass that
+/// did not work, and the next temperature gets a turn).
+///
+/// Returns the first NON-EMPTY extraction. If every pass came back empty, the
+/// empty result is returned as a success — a genuinely contentless chunk must
+/// resolve cleanly, never fail the job and clog the queue. Only a chunk where
+/// every pass ERRORED propagates the error, preserving the worker's
+/// attempt-aware dead-letter path.
+async fn extract_chunk(
+    provider: &dyn ChatProvider,
+    chunk: &str,
+    budget: &mut CallBudget,
+    resamples: &mut usize,
+) -> Result<LlmExtract> {
+    let mut empty: Option<LlmExtract> = None;
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for (pass, &temperature) in PASS_TEMPERATURES.iter().enumerate() {
+        if pass > 0 {
+            *resamples += 1;
+        }
+        match extract_once(provider, chunk, temperature, budget).await {
+            Ok(call) if !call.output.memories.is_empty() => return Ok(call),
+            // Empty but well-formed: keep it as the fallback, keep looking.
+            Ok(call) => empty = Some(call),
+            Err(e) => last_err = Some(e),
+        }
+        if !worth_resampling(chunk) || budget.exhausted() {
+            break;
+        }
+    }
+    match (empty, last_err) {
+        (Some(call), _) => Ok(call),
+        (None, Some(e)) => Err(e),
+        // Unreachable: PASS_TEMPERATURES is non-empty, so one arm always sets.
+        (None, None) => Err(anyhow::anyhow!("extractor made no attempt")),
+    }
 }
 
 /// Idempotency guard: has a memory with this exact content already been
@@ -624,16 +776,21 @@ pub async fn run_extract(
         let call = if verbatim {
             extract_verbatim(chunk)
         } else {
-            extract_once(provider, chunk).await?
+            let mut budget = CallBudget::default();
+            let mut resamples = 0usize;
+            let out = extract_chunk(provider, chunk, &mut budget, &mut resamples).await;
+            // Account for what was actually spent even when the chunk failed —
+            // an errored chunk still burned its calls.
+            stats.llm_calls += budget.calls;
+            stats.parse_failures += budget.parse_failures;
+            stats.repairs += budget.repairs;
+            stats.empty_resamples += resamples;
+            let out = out?;
+            if resamples > 0 && !out.output.memories.is_empty() {
+                stats.recovered_from_empty += 1;
+            }
+            out
         };
-        if !verbatim {
-            stats.llm_calls += 1;
-        }
-        if call.repaired {
-            stats.parse_failures += 1;
-            stats.repairs += 1;
-            stats.llm_calls += 1;
-        }
 
         // Lazily create the single provenance row on the first chunk, using
         // the model ref the provider actually reported, and stamp the run id so
@@ -1063,5 +1220,182 @@ mod tests {
         let e: ExtractedEntity =
             serde_json::from_str(r#"{"name":"kafka","kind":"tech"}"#).expect("parse");
         assert!(e.clean_aliases().is_empty());
+    }
+
+    // ── what a partly broken array must NOT do (measured) ───────────
+
+    #[test]
+    fn a_partly_broken_array_drives_a_repair_instead_of_settling_for_a_fragment() {
+        // The tempting "fix" for the biggest observed parse failure (~2 of 9
+        // transcripts per run died on "`memories` was not an array of the
+        // expected shape") is to keep the elements that DO deserialize. Both
+        // forms of that were built and measured on real qwen-max, and both
+        // LOST: salvaging inside the deserializer scored recall 0.095 /
+        // precision 0.500, and salvaging as a post-repair last resort scored
+        // 0.333 / 0.819 — against 0.349 / 0.897 for leaving the array strict.
+        // The reason is mechanical: a rejected array fires the repair
+        // re-prompt, and the RE-ASK comes back complete, while a fragment banks
+        // one fact and discards the other three. This assertion guards that
+        // finding so the idea is not re-implemented on intuition.
+        let partly_broken = r#"{"memories":[
+            {"kind":"decision","content":"psp-gateway caps retries at three"},
+            {"kind":"fact","title":"no content field at all"},
+            {"kind":"pitfall","content":"a per-request idempotency key double-charges"}
+        ]}"#;
+        assert!(
+            parse_extraction(partly_broken).is_err(),
+            "a partly broken array must drive a repair, not settle for a fragment"
+        );
+    }
+
+    // ── the empty-extraction floor (recall robustness) ──────────────────────
+
+    use brainiac_gateway::MockProvider;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A chunk long enough to earn a resample (Meridian transcripts are ~1.5–2.5k).
+    fn substantive_chunk() -> String {
+        "engineer: we capped psp-gateway retries at three and moved the idempotency \
+         key onto the charge id, because the double-charge incident traced back to \
+         a retry storm with a per-request key. "
+            .repeat(4)
+    }
+
+    /// Scripted provider: hands back `replies[i]` for the i-th call, then the
+    /// last reply forever. Counts calls so the cost bound is testable.
+    fn scripted(replies: Vec<&'static str>) -> (MockProvider, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let p = MockProvider::new(move |_| {
+            let i = seen.fetch_add(1, Ordering::SeqCst);
+            replies[i.min(replies.len() - 1)].to_string()
+        });
+        (p, calls)
+    }
+
+    const EMPTY: &str = r#"{"memories":[]}"#;
+    const ONE: &str = r#"{"memories":[{"kind":"pitfall","content":"a per-request idempotency key retries into a double charge"}]}"#;
+
+    #[tokio::test]
+    async fn a_clean_empty_on_a_substantive_chunk_is_resampled_not_believed() {
+        // THE recall bug: `{"memories":[]}` parses perfectly, so the repair loop
+        // never fires and a transcript full of knowledge scores 0.0 recall. The
+        // eval saw this on 3–6 of 9 transcripts per run, at random.
+        let (p, calls) = scripted(vec![EMPTY, ONE]);
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        let got = extract_chunk(&p, &substantive_chunk(), &mut budget, &mut resamples)
+            .await
+            .expect("chunk extracts");
+        assert_eq!(got.output.memories.len(), 1, "resample must recover it");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(resamples, 1);
+        assert_eq!(budget.parse_failures, 0, "an empty is not a parse failure");
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_exhausts_its_repairs_hands_the_chunk_to_the_next_pass() {
+        // Three prose responses used to return Err and lose the WHOLE SOURCE
+        // (every chunk of it). Here it is just a pass that did not work.
+        let (p, calls) = scripted(vec![
+            "I'm sorry, I can't help.",
+            "still prose",
+            "more prose",
+            ONE,
+        ]);
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        let got = extract_chunk(&p, &substantive_chunk(), &mut budget, &mut resamples)
+            .await
+            .expect("the failed pass must not fail the source");
+        assert_eq!(got.output.memories.len(), 1);
+        // pass 0 burned 1 + 2 repairs; pass 1's first call succeeded.
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(budget.parse_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn a_short_chunk_is_allowed_to_extract_nothing() {
+        // "ok, thanks" genuinely has no durable knowledge. Re-sampling it would
+        // spend real tokens to re-confirm an obvious zero.
+        let (p, calls) = scripted(vec![EMPTY, ONE]);
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        let got = extract_chunk(&p, "ok thanks, ship it", &mut budget, &mut resamples)
+            .await
+            .expect("empty is a success, never a job failure");
+        assert!(got.output.memories.is_empty());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "no resample for a short chunk"
+        );
+        assert_eq!(resamples, 0);
+    }
+
+    #[tokio::test]
+    async fn a_persistent_empty_resolves_clean_within_the_call_budget() {
+        // A chunk that really has nothing must not fail the job and clog the
+        // queue — and must not burn calls without end.
+        let (p, calls) = scripted(vec![EMPTY]);
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        let got = extract_chunk(&p, &substantive_chunk(), &mut budget, &mut resamples)
+            .await
+            .expect("a genuine zero resolves cleanly");
+        assert!(got.output.memories.is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), PASS_TEMPERATURES.len());
+        assert!(calls.load(Ordering::SeqCst) <= MAX_LLM_CALLS_PER_CHUNK);
+    }
+
+    #[tokio::test]
+    async fn the_per_chunk_call_budget_is_hard() {
+        // Worst case: every pass burns its full repair allowance. The budget —
+        // not passes × repairs — is what bounds the bill.
+        let (p, calls) = scripted(vec!["prose, forever"]);
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        let err = extract_chunk(&p, &substantive_chunk(), &mut budget, &mut resamples)
+            .await
+            .expect_err("nothing ever parsed");
+        assert!(err.to_string().contains("unparseable"), "{err}");
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_LLM_CALLS_PER_CHUNK);
+        assert_eq!(budget.calls, MAX_LLM_CALLS_PER_CHUNK);
+    }
+
+    #[tokio::test]
+    async fn a_successful_first_pass_costs_exactly_one_call() {
+        // The common case must be untouched: no extra token is spent on a chunk
+        // that extracted something, and no second pass can pad it with
+        // near-duplicate paraphrases (the usual multi-pass precision leak).
+        let (p, calls) = scripted(vec![ONE, ONE]);
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        let got = extract_chunk(&p, &substantive_chunk(), &mut budget, &mut resamples)
+            .await
+            .expect("extracts");
+        assert_eq!(got.output.memories.len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(resamples, 0);
+    }
+
+    #[tokio::test]
+    async fn resample_passes_raise_the_temperature_so_the_draw_is_a_new_draw() {
+        // Re-asking at temperature 0.0 mostly re-draws the same answer. The
+        // escalation is what makes the retry a retry.
+        let temps: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = temps.clone();
+        let p = MockProvider::new(move |req| {
+            seen.lock().expect("lock").push(req.temperature);
+            EMPTY.to_string()
+        });
+        let mut budget = CallBudget::default();
+        let mut resamples = 0;
+        extract_chunk(&p, &substantive_chunk(), &mut budget, &mut resamples)
+            .await
+            .expect("resolves empty");
+        assert_eq!(*temps.lock().expect("lock"), PASS_TEMPERATURES.to_vec());
+        assert_eq!(PASS_TEMPERATURES[0], 0.0, "pass 0 stays deterministic");
     }
 }

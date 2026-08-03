@@ -442,7 +442,15 @@ pub async fn run(
             .or_default()
             .push((
                 r.get::<String, _>("content"),
-                r.get::<Option<f64>, _>("confidence"),
+                // `memories.confidence` is `real` (0001_init.sql:82) — FLOAT4.
+                // Decoding it as f64 panics the whole profile the moment any
+                // extracted memory carries a confidence, which the V1 prompt
+                // asks for on every one. That made the profile UNRUNNABLE on a
+                // real provider from the moment the calibration table landed:
+                // `ColumnDecode { … Option<f64> (as FLOAT8) is not compatible
+                // with FLOAT4 }`, thrown after every token had been paid for.
+                // Decode the column's actual width and widen in Rust.
+                r.get::<Option<f32>, _>("confidence").map(f64::from),
             ));
     }
 
