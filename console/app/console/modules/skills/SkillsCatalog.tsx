@@ -8,7 +8,7 @@
  * marked unservable — the shelf never pretends a signature exists.
  */
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import {
   band,
@@ -25,7 +25,54 @@ import {
 } from "@/design/theme";
 import type { LibrarySkill, SkillDetail } from "@/lib/types";
 
+import { publishSkillAction, type SkillActionResult } from "./actions";
+
 const BETA = band("beta");
+
+/*
+ * The gate, on the shelf. A draft is marked unservable everywhere else in
+ * this view; without a control here the only way to fix that was raw SQL.
+ * The button is deliberately explicit about what a click means — publishing
+ * is a named-human act, not a toggle.
+ */
+function PublishControl({ skill, detail }: { skill: LibrarySkill; detail?: SkillDetail }) {
+  const [pending, start] = useTransition();
+  const [result, setResult] = useState<SkillActionResult | null>(null);
+
+  // Only a version awaiting a signature can be published. Absent a prefetched
+  // detail we trust the catalog's own `downloadable` flag.
+  const hasDraft = detail ? detail.versions.some((v) => !v.published) : !skill.downloadable;
+  if (!hasDraft && !result) return null;
+
+  const draft = detail?.versions.find((v) => !v.published);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className={LABEL} style={{ color: INK_FAINT }}>
+        the gate · an agent proposes, a human publishes
+      </span>
+      <div className="flex flex-wrap items-center gap-3">
+        {hasDraft && (
+          <button
+            onClick={() => start(async () => setResult(await publishSkillAction(skill.slug)))}
+            disabled={pending}
+            className={`${FONT_MONO} rounded-full border px-4 py-2 text-xs uppercase tracking-[0.14em] transition hover:scale-[1.02] disabled:opacity-40`}
+            style={{ borderColor: GOLD, color: GOLD }}
+          >
+            {pending
+              ? "publishing…"
+              : `publish ${draft ? `v${draft.semver}` : "the draft"} — sign it by name`}
+          </button>
+        )}
+        {result && (
+          <span className={`${FONT_MONO} text-[11px]`} style={{ color: result.ok ? BETA : GOLD }}>
+            {result.message}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const totalUses = (d: SkillDetail | undefined): number =>
   d?.usage.reduce((n, u) => n + u.uses, 0) ?? 0;
@@ -93,6 +140,9 @@ function SkillCard({
 
       {open && detail && (
         <div className="flex flex-col gap-5 border-t px-6 py-5" style={{ borderColor: BORDER }}>
+          {/* the gate — the only way a draft becomes servable */}
+          <PublishControl skill={skill} detail={detail} />
+
           {/* the pulse */}
           {detail.usage.length > 0 && (
             <div className="flex flex-col gap-1.5">

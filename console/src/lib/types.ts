@@ -83,6 +83,7 @@ export type SkillsList = S["SkillsListResponse"];
 export type SkillDetail = S["SkillDetailResponse"];
 export type SkillVersionInfo = S["SkillVersionView"];
 export type SkillBundle = S["SkillBundleResponse"];
+export type SkillPublishResult = S["SkillPublishResponse"];
 
 // ── ops (sweeps) ────────────────────────────────────────────────────────
 export type Sweeps = S["SweepsResponse"];

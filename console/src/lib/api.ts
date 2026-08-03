@@ -41,6 +41,7 @@ import type {
   ReviewedPromotion,
   SearchHit,
   SkillDetail,
+  SkillPublishResult,
   SkillsList,
   SourceFeedItem,
   StandardDetail,
@@ -424,6 +425,17 @@ export async function listSkills(cfg: ApiConfig): Promise<LibrarySkill[]> {
 
 export async function getSkillDetail(cfg: ApiConfig, slug: string): Promise<SkillDetail> {
   return call(cfg, "GET", `/v1/library/skills/${encodeURIComponent(slug)}`);
+}
+
+/** Sign a skill's pending draft so agents can pull it (lib:publish). The last
+ *  step of the contribution loop: agents propose, a named human publishes.
+ *  Idempotent — a replay reports the serving version with
+ *  `newly_published: false` rather than failing. */
+export async function publishSkill(
+  cfg: ApiConfig,
+  slug: string,
+): Promise<SkillPublishResult> {
+  return call(cfg, "POST", `/v1/library/skills/${encodeURIComponent(slug)}/publish`);
 }
 
 // ── documents (KB2) ─────────────────────────────────────────────────────

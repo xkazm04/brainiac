@@ -67,6 +67,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/library/skills/propose", post(skill_propose))
         .route("/v1/library/skills/{slug}", get(skill_get))
         .route("/v1/library/skills/{slug}/download", get(skill_download))
+        .route("/v1/library/skills/{slug}/publish", post(skill_publish))
         .route("/v1/library/usage", post(usage_record))
 }
 
@@ -485,6 +486,92 @@ pub(crate) async fn skill_download(
         content_md: version.content_md,
         resources: version.resources,
         published_at: version.published_at.map(|t| t.to_rfc3339()),
+    }))
+}
+
+/// The result of signing a draft. `newly_published` distinguishes the act from
+/// its replay: a second call is deliberately NOT an error (a console double
+/// click, a retried request), it just reports the version that is already
+/// serving and mints nothing new.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SkillPublishResponse {
+    pub slug: String,
+    /// The version now serving — the draft this call signed, or the one
+    /// already published when the call was a replay.
+    pub semver: String,
+    pub newly_published: bool,
+    pub published_at: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/library/skills/{slug}/publish",
+    params(("slug" = String, Path,)),
+    description = "Publish a skill's pending draft version — the named-human gate that makes a proposed bundle servable. Takes lib:publish; agents propose, humans publish, and there is deliberately no MCP tool for this. Idempotent: publishing a skill whose draft is already signed reports the serving version and creates nothing. 404 when the skill has no version awaiting a signature.",
+    responses((status = 200, body = SkillPublishResponse), (status = 404))
+)]
+pub(crate) async fn skill_publish(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<Json<SkillPublishResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, SCOPE_LIB_PUBLISH)
+        .await?
+        .principal;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+
+    let Some(skill) = library::get_skill_by_slug(&mut tx, &slug)
+        .await
+        .map_err(internal)?
+    else {
+        return Err((StatusCode::NOT_FOUND, "skill not found".to_string()).into());
+    };
+
+    // A draft waiting for a name is the normal case; without one, the only
+    // non-error outcome is the idempotent replay — a version that is already
+    // serving. Anything else is a 404, same shape as the standards gate.
+    if let Some(draft) = library::pending_draft_version(&mut tx, skill.id)
+        .await
+        .map_err(internal)?
+    {
+        let published = library::publish_skill_version(&mut tx, draft.id, principal.user_id)
+            .await
+            .map_err(internal)?;
+        if !published {
+            return Err(internal(anyhow::anyhow!(
+                "draft version {} was signed concurrently",
+                draft.id
+            )));
+        }
+        // Re-read so the timestamp reported is the one the database stamped.
+        let current = library::current_published_version(&mut tx, skill.id)
+            .await
+            .map_err(internal)?;
+        tx.commit().await.map_err(internal)?;
+        return Ok(Json(SkillPublishResponse {
+            slug: skill.slug,
+            semver: draft.semver,
+            newly_published: true,
+            published_at: current.and_then(|v| v.published_at).map(|t| t.to_rfc3339()),
+        }));
+    }
+
+    let Some(current) = library::current_published_version(&mut tx, skill.id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "no draft version of this skill to publish".to_string(),
+        )
+            .into());
+    };
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(SkillPublishResponse {
+        slug: skill.slug,
+        semver: current.semver,
+        newly_published: false,
+        published_at: current.published_at.map(|t| t.to_rfc3339()),
     }))
 }
 

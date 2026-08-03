@@ -440,6 +440,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/library/skills/{slug}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Publish a skill's pending draft version — the named-human gate that makes a proposed bundle servable. Takes lib:publish; agents propose, humans publish, and there is deliberately no MCP tool for this. Idempotent: publishing a skill whose draft is already signed reports the serving version and creates nothing. 404 when the skill has no version awaiting a signature. */
+        post: operations["skill_publish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/library/standards": {
         parameters: {
             query?: never;
@@ -3239,6 +3256,22 @@ export interface components {
             skill_id: string;
             slug: string;
         };
+        /**
+         * @description The result of signing a draft. `newly_published` distinguishes the act from
+         *     its replay: a second call is deliberately NOT an error (a console double
+         *     click, a retried request), it just reports the version that is already
+         *     serving and mints nothing new.
+         */
+        SkillPublishResponse: {
+            newly_published: boolean;
+            published_at?: string | null;
+            /**
+             * @description The version now serving — the draft this call signed, or the one
+             *     already published when the call was a replay.
+             */
+            semver: string;
+            slug: string;
+        };
         SkillVersionView: {
             created_at: string;
             /**
@@ -4297,6 +4330,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillBundleResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skill_publish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPublishResponse"];
                 };
             };
             404: {

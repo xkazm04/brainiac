@@ -122,6 +122,7 @@ impl Modify for BearerAuth {
         crate::library::skill_propose,
         crate::library::skill_get,
         crate::library::skill_download,
+        crate::library::skill_publish,
         crate::library::usage_record,
         // ops (admin)
         crate::sweeps::sweeps_list,
@@ -302,6 +303,7 @@ impl Modify for BearerAuth {
         crate::library::ProposeResponse,
         crate::library::SkillProposeRequest,
         crate::library::SkillProposeResponse,
+        crate::library::SkillPublishResponse,
         // ops
         crate::sweeps::SweepSchedule,
         crate::sweeps::SweepsResponse,

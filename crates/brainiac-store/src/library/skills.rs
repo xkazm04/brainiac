@@ -165,6 +165,28 @@ pub async fn versions_of(conn: &mut PgConnection, skill_id: Uuid) -> Result<Vec<
     Ok(rows.iter().map(row_to_skill_version).collect())
 }
 
+/// The version a maintainer would publish next: the newest UNSIGNED version of
+/// a skill, or `None` when every version already carries a name. Picking the
+/// draft lives here rather than in a handler so the REST route, the console and
+/// any later surface cannot drift on *which* version "publish" means.
+pub async fn pending_draft_version(
+    conn: &mut PgConnection,
+    skill_id: Uuid,
+) -> Result<Option<SkillVersion>> {
+    let row = sqlx::query(
+        "SELECT id, skill_id, semver, manifest, content_md, resources,
+                published_by, published_at, created_at
+         FROM skill_versions
+         WHERE skill_id = $1 AND published_by IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(skill_id)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.as_ref().map(row_to_skill_version))
+}
+
 /// The serve path: a skill's current PUBLISHED version. A draft nobody signed
 /// returns nothing — same refusal the document layer makes for unsigned pages.
 pub async fn current_published_version(

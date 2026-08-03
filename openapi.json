@@ -805,6 +805,40 @@
         }
       }
     },
+    "/v1/library/skills/{slug}/publish": {
+      "post": {
+        "tags": [
+          "crate::library"
+        ],
+        "description": "Publish a skill's pending draft version — the named-human gate that makes a proposed bundle servable. Takes lib:publish; agents propose, humans publish, and there is deliberately no MCP tool for this. Idempotent: publishing a skill whose draft is already signed reports the serving version and creates nothing. 404 when the skill has no version awaiting a signature.",
+        "operationId": "skill_publish",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillPublishResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/library/standards": {
       "get": {
         "tags": [
@@ -7660,6 +7694,33 @@
           "skill_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillPublishResponse": {
+        "type": "object",
+        "description": "The result of signing a draft. `newly_published` distinguishes the act from\nits replay: a second call is deliberately NOT an error (a console double\nclick, a retried request), it just reports the version that is already\nserving and mints nothing new.",
+        "required": [
+          "slug",
+          "semver",
+          "newly_published"
+        ],
+        "properties": {
+          "newly_published": {
+            "type": "boolean"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "semver": {
+            "type": "string",
+            "description": "The version now serving — the draft this call signed, or the one\nalready published when the call was a replay."
           },
           "slug": {
             "type": "string"
