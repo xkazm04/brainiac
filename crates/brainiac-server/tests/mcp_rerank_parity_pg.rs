@@ -123,7 +123,7 @@ async fn mcp_honors_the_selected_reranker_and_matches_rest() {
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+        "TRUNCATE embedding_versions, memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
                   team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
          CASCADE",

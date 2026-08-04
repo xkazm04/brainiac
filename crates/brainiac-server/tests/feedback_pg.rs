@@ -95,7 +95,7 @@ async fn dispute_resolution_gates_and_no_ops() {
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+        "TRUNCATE embedding_versions, memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   memory_feedback, promotions, memories, canonical_entities, entities,
                   provenance, sources, team_members, users, teams, orgs, pipeline_runs,
                   queue.jobs, queue.archive, knowledge_health_snapshots

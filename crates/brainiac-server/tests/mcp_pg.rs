@@ -33,7 +33,7 @@ async fn mcp_handshake_and_tools() {
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+        "TRUNCATE embedding_versions, memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
                   team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive
          CASCADE",
@@ -1448,7 +1448,7 @@ async fn attr_setup() -> Option<(Store, sqlx::PgPool, tokio::sync::MutexGuard<'s
     brainiac_store::migrate(&url).await.expect("migrate");
     let admin = sqlx::PgPool::connect(&url).await.expect("admin");
     sqlx::query(
-        "TRUNCATE memory_entities, memory_embeddings, entity_links, edges, contradictions,
+        "TRUNCATE embedding_versions, memory_entities, memory_embeddings, entity_links, edges, contradictions,
                   promotions, memories, canonical_entities, entities, provenance, sources,
                   team_members, users, teams, orgs, pipeline_runs, queue.jobs, queue.archive,
                   project_repos, projects
