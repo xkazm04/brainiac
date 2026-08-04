@@ -174,6 +174,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/demand/gaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The acquisition backlog as WORK, not a statistic: one row per question the corpus could not answer, each with its own state. Open gaps first, ranked breadth (distinct projects) then volume. Minted and closed by POST /v1/demand/gaps/scan. */
+        get: operations["gaps_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/demand/gaps/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Sweep the retrieval ledger's miss list into the backlog, and close the gaps the corpus has since learned to answer. Idempotent: gaps are identified by their normalized question, so re-running refreshes evidence instead of minting duplicates, and a question the corpus can already answer never becomes a gap. Requires the `write` scope. */
+        post: operations["gaps_scan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/demand/gaps/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Retire a gap the org will not acquire — a malformed one-off, a question that is not the corpus' job. Terminal: the scan never re-mints a dismissed gap, so asking it again does not resurrect it. This is the one judgement the scan does not make for itself. Requires the `write` scope. */
+        post: operations["gap_dismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/docs": {
         parameters: {
             query?: never;
@@ -1810,6 +1861,13 @@ export interface components {
              */
             total: number;
         };
+        DismissGapBody: {
+            /**
+             * @description Why this question is not worth acquiring. Optional, and worth writing:
+             *     a dismissal is terminal, so the note is the only record of the reason.
+             */
+            note?: string | null;
+        };
         DocApproveResponse: {
             /** Format: uuid */
             document_id: string;
@@ -2128,6 +2186,30 @@ export interface components {
             /** Format: date-time */
             valid_to?: string | null;
         };
+        /**
+         * @description What one scan did. The buckets are disjoint and deliberately reported
+         *     separately: "nothing opened" and "everything was already answerable" are
+         *     different facts about the corpus.
+         */
+        GapScanResponse: {
+            /** @description Open gaps the corpus can now answer — closed as `answered`. */
+            closed: number;
+            /** @description Gaps minted for the first time. */
+            opened: number;
+            /** @description Open gaps whose evidence moved. */
+            refreshed: number;
+            /** Format: double */
+            score_floor: number;
+            /**
+             * @description Misses NOT minted because the corpus already answers them: the ledger
+             *     recorded the failure before the memory that answers it existed.
+             */
+            skipped_answerable: number;
+            /** @description Misses NOT minted because they are already dismissed or answered. */
+            suppressed: number;
+            /** Format: int32 */
+            window_days: number;
+        };
         GraphCanonical: {
             /** Format: uuid */
             id: string;
@@ -2382,6 +2464,48 @@ export interface components {
             count: number;
             kind: string;
             team: string;
+        };
+        /** @description One question the org cannot answer, as a piece of work. */
+        KnowledgeGapView: {
+            /** Format: int64 */
+            asks: number;
+            /**
+             * Format: double
+             * @description Best anything scored while it was failing; `null` when nothing came back
+             *     at all, which is a sharper failure than "came back weak".
+             */
+            best_score?: number | null;
+            /** Format: date-time */
+            first_seen_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_asked_at: string;
+            /**
+             * Format: int64
+             * @description Distinct projects that asked. Breadth ranks above raw volume.
+             */
+            projects: number;
+            /**
+             * @description The aggregate form of the question (lowercased, whitespace-collapsed,
+             *     identifiers intact) — the gap's identity within the org.
+             */
+            query: string;
+            /** @description One verbatim sample of how it was actually typed. */
+            query_sample: string;
+            resolution_note?: string | null;
+            /** Format: date-time */
+            resolved_at?: string | null;
+            /**
+             * Format: uuid
+             * @description The memory that closed it — the observable proof the loop closed.
+             */
+            resolved_memory_id?: string | null;
+            /** @description `open` | `answered` | `dismissed`. */
+            status: string;
+        };
+        KnowledgeGapsResponse: {
+            gaps: components["schemas"]["KnowledgeGapView"][];
         };
         KnowledgeHealthResponse: {
             /** @description Ranked, most-urgent-first — the whole point: turn the score into action. */
@@ -3952,6 +4076,90 @@ export interface operations {
             };
             /** @description Unknown kind filter */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    gaps_list: {
+        parameters: {
+            query?: {
+                /** @description open | answered | dismissed (default: all) */
+                status?: string;
+                /** @description Max rows (default 50, max 200) */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Knowledge gaps */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGapsResponse"];
+                };
+            };
+        };
+    };
+    gaps_scan: {
+        parameters: {
+            query?: {
+                /** @description Ledger window in days (default 30, max 365) */
+                days?: number;
+                /** @description Misses considered per scan (default 50, max 200) */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GapScanResponse"];
+                };
+            };
+        };
+    };
+    gap_dismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Knowledge gap id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DismissGapBody"];
+            };
+        };
+        responses: {
+            /** @description Gap dismissed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGapView"];
+                };
+            };
+            /** @description Gap not found, not visible, or no longer open */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

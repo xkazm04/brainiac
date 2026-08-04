@@ -246,6 +246,137 @@
         }
       }
     },
+    "/v1/demand/gaps": {
+      "get": {
+        "tags": [
+          "demand"
+        ],
+        "description": "The acquisition backlog as WORK, not a statistic: one row per question the corpus could not answer, each with its own state. Open gaps first, ranked breadth (distinct projects) then volume. Minted and closed by POST /v1/demand/gaps/scan.",
+        "operationId": "gaps_list",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "open | answered | dismissed (default: all)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max rows (default 50, max 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Knowledge gaps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGapsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/demand/gaps/scan": {
+      "post": {
+        "tags": [
+          "demand"
+        ],
+        "description": "Sweep the retrieval ledger's miss list into the backlog, and close the gaps the corpus has since learned to answer. Idempotent: gaps are identified by their normalized question, so re-running refreshes evidence instead of minting duplicates, and a question the corpus can already answer never becomes a gap. Requires the `write` scope.",
+        "operationId": "gaps_scan",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Ledger window in days (default 30, max 365)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Misses considered per scan (default 50, max 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scan outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapScanResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/demand/gaps/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "demand"
+        ],
+        "description": "Retire a gap the org will not acquire — a malformed one-off, a question that is not the corpus' job. Terminal: the scan never re-mints a dismissed gap, so asking it again does not resurrect it. This is the one judgement the scan does not make for itself. Requires the `write` scope.",
+        "operationId": "gap_dismiss",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Knowledge gap id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DismissGapBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Gap dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGapView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Gap not found, not visible, or no longer open"
+          }
+        }
+      }
+    },
     "/v1/docs": {
       "get": {
         "tags": [
@@ -4213,6 +4344,18 @@
           }
         }
       },
+      "DismissGapBody": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why this question is not worth acquiring. Optional, and worth writing:\na dismissal is terminal, so the note is the only record of the reason."
+          }
+        }
+      },
       "DocApproveResponse": {
         "type": "object",
         "required": [
@@ -4988,6 +5131,54 @@
           }
         }
       },
+      "GapScanResponse": {
+        "type": "object",
+        "description": "What one scan did. The buckets are disjoint and deliberately reported\nseparately: \"nothing opened\" and \"everything was already answerable\" are\ndifferent facts about the corpus.",
+        "required": [
+          "window_days",
+          "score_floor",
+          "opened",
+          "refreshed",
+          "closed",
+          "skipped_answerable",
+          "suppressed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "integer",
+            "description": "Open gaps the corpus can now answer — closed as `answered`.",
+            "minimum": 0
+          },
+          "opened": {
+            "type": "integer",
+            "description": "Gaps minted for the first time.",
+            "minimum": 0
+          },
+          "refreshed": {
+            "type": "integer",
+            "description": "Open gaps whose evidence moved.",
+            "minimum": 0
+          },
+          "score_floor": {
+            "type": "number",
+            "format": "double"
+          },
+          "skipped_answerable": {
+            "type": "integer",
+            "description": "Misses NOT minted because the corpus already answers them: the ledger\nrecorded the failure before the memory that answers it existed.",
+            "minimum": 0
+          },
+          "suppressed": {
+            "type": "integer",
+            "description": "Misses NOT minted because they are already dismissed or answered.",
+            "minimum": 0
+          },
+          "window_days": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "GraphCanonical": {
         "type": "object",
         "required": [
@@ -5464,6 +5655,98 @@
           },
           "team": {
             "type": "string"
+          }
+        }
+      },
+      "KnowledgeGapView": {
+        "type": "object",
+        "description": "One question the org cannot answer, as a piece of work.",
+        "required": [
+          "id",
+          "query",
+          "query_sample",
+          "status",
+          "asks",
+          "projects",
+          "first_seen_at",
+          "last_asked_at"
+        ],
+        "properties": {
+          "asks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "best_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Best anything scored while it was failing; `null` when nothing came back\nat all, which is a sharper failure than \"came back weak\"."
+          },
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_asked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "projects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct projects that asked. Breadth ranks above raw volume."
+          },
+          "query": {
+            "type": "string",
+            "description": "The aggregate form of the question (lowercased, whitespace-collapsed,\nidentifiers intact) — the gap's identity within the org."
+          },
+          "query_sample": {
+            "type": "string",
+            "description": "One verbatim sample of how it was actually typed."
+          },
+          "resolution_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "resolved_memory_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The memory that closed it — the observable proof the loop closed."
+          },
+          "status": {
+            "type": "string",
+            "description": "`open` | `answered` | `dismissed`."
+          }
+        }
+      },
+      "KnowledgeGapsResponse": {
+        "type": "object",
+        "required": [
+          "gaps"
+        ],
+        "properties": {
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeGapView"
+            }
           }
         }
       },
@@ -8936,6 +9219,10 @@
     {
       "name": "analytics",
       "description": "Governance health counters and the observatory."
+    },
+    {
+      "name": "demand",
+      "description": "The demand backlog: questions agents asked that memory could not answer, as work with a lifecycle."
     },
     {
       "name": "ops",

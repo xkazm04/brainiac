@@ -49,6 +49,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/analytics", get(analytics))
         .route("/v1/analytics/value", get(analytics_value))
         .route("/v1/analytics/observatory", get(observatory))
+        // ── the demand backlog (migration 0049): misses become work ──
+        .route("/v1/demand/gaps", get(gaps_list))
+        .route("/v1/demand/gaps/scan", post(gaps_scan))
+        .route("/v1/demand/gaps/{id}/dismiss", post(gap_dismiss))
         .route("/v1/analytics/knowledge-health", get(knowledge_health))
         .route(
             "/v1/analytics/practice-divergence",
@@ -1963,6 +1967,237 @@ pub(crate) async fn analytics_value(
             })
             .collect(),
     }))
+}
+
+// ── the demand backlog (migration 0049) ─────────────────────────────────
+//
+// `/v1/analytics/value` renders the miss list as a statistic. These three
+// endpoints are the same demand as WORK: a gap has a state, it closes itself
+// when the corpus learns the answer, and a maintainer can retire one that is
+// just noise. The scan is the only writer; nothing here mutates the ledger.
+
+/// One question the org cannot answer, as a piece of work.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KnowledgeGapView {
+    pub id: Uuid,
+    /// The aggregate form of the question (lowercased, whitespace-collapsed,
+    /// identifiers intact) — the gap's identity within the org.
+    pub query: String,
+    /// One verbatim sample of how it was actually typed.
+    pub query_sample: String,
+    /// `open` | `answered` | `dismissed`.
+    pub status: String,
+    pub asks: i64,
+    /// Distinct projects that asked. Breadth ranks above raw volume.
+    pub projects: i64,
+    /// Best anything scored while it was failing; `null` when nothing came back
+    /// at all, which is a sharper failure than "came back weak".
+    pub best_score: Option<f64>,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_asked_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    /// The memory that closed it — the observable proof the loop closed.
+    pub resolved_memory_id: Option<Uuid>,
+    pub resolution_note: Option<String>,
+}
+
+impl From<brainiac_store::retrieval_events::gaps::KnowledgeGap> for KnowledgeGapView {
+    fn from(g: brainiac_store::retrieval_events::gaps::KnowledgeGap) -> Self {
+        Self {
+            id: g.id,
+            query: g.query_norm,
+            query_sample: g.query_sample,
+            status: g.status,
+            asks: g.asks,
+            projects: g.projects,
+            best_score: g.best_score,
+            first_seen_at: g.first_seen_at,
+            last_asked_at: g.last_asked_at,
+            resolved_at: g.resolved_at,
+            resolved_memory_id: g.resolved_memory_id,
+            resolution_note: g.resolution_note,
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct KnowledgeGapsResponse {
+    pub gaps: Vec<KnowledgeGapView>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/demand/gaps",
+    tag = "demand",
+    params(
+        ("status" = Option<String>, Query, description = "open | answered | dismissed (default: all)"),
+        ("limit" = Option<i64>, Query, description = "Max rows (default 50, max 200)"),
+    ),
+    description = "The acquisition backlog as WORK, not a statistic: one row per question the corpus \
+                   could not answer, each with its own state. Open gaps first, ranked breadth \
+                   (distinct projects) then volume. Minted and closed by POST /v1/demand/gaps/scan.",
+    responses((status = 200, description = "Knowledge gaps", body = KnowledgeGapsResponse))
+)]
+pub(crate) async fn gaps_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<KnowledgeGapsResponse>, HttpError> {
+    let principal = principal_of(&state, &headers).await?;
+    let status = match q.get("status").map(String::as_str) {
+        None => None,
+        Some(s @ ("open" | "answered" | "dismissed")) => Some(s.to_string()),
+        Some(other) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unknown status `{other}` (open|answered|dismissed)"),
+            )
+                .into())
+        }
+    };
+    let limit = q
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let gaps = brainiac_store::retrieval_events::gaps::list(&mut tx, status.as_deref(), limit)
+        .await
+        .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(KnowledgeGapsResponse {
+        gaps: gaps.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// What one scan did. The buckets are disjoint and deliberately reported
+/// separately: "nothing opened" and "everything was already answerable" are
+/// different facts about the corpus.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct GapScanResponse {
+    pub window_days: i32,
+    pub score_floor: f64,
+    /// Gaps minted for the first time.
+    pub opened: usize,
+    /// Open gaps whose evidence moved.
+    pub refreshed: usize,
+    /// Open gaps the corpus can now answer — closed as `answered`.
+    pub closed: usize,
+    /// Misses NOT minted because the corpus already answers them: the ledger
+    /// recorded the failure before the memory that answers it existed.
+    pub skipped_answerable: usize,
+    /// Misses NOT minted because they are already dismissed or answered.
+    pub suppressed: usize,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/demand/gaps/scan",
+    tag = "demand",
+    params(
+        ("days" = Option<i32>, Query, description = "Ledger window in days (default 30, max 365)"),
+        ("limit" = Option<i64>, Query, description = "Misses considered per scan (default 50, max 200)"),
+    ),
+    description = "Sweep the retrieval ledger's miss list into the backlog, and close the gaps the \
+                   corpus has since learned to answer. Idempotent: gaps are identified by their \
+                   normalized question, so re-running refreshes evidence instead of minting \
+                   duplicates, and a question the corpus can already answer never becomes a gap. \
+                   Requires the `write` scope.",
+    responses((status = 200, description = "Scan outcome", body = GapScanResponse))
+)]
+pub(crate) async fn gaps_scan(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<GapScanResponse>, HttpError> {
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let days = q
+        .get("days")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(30)
+        .clamp(1, 365);
+    let limit = q
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let floor = answered_score_floor();
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let out = brainiac_store::retrieval_events::gaps::scan(
+        &mut tx,
+        state.store.pool(),
+        state.embedder.as_ref(),
+        state.embedding_version,
+        principal.org_id,
+        days,
+        floor,
+        limit,
+    )
+    .await
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(GapScanResponse {
+        window_days: days,
+        score_floor: floor,
+        opened: out.opened,
+        refreshed: out.refreshed,
+        closed: out.closed,
+        skipped_answerable: out.skipped_answerable,
+        suppressed: out.suppressed,
+    }))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct DismissGapBody {
+    /// Why this question is not worth acquiring. Optional, and worth writing:
+    /// a dismissal is terminal, so the note is the only record of the reason.
+    pub note: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/demand/gaps/{id}/dismiss",
+    tag = "demand",
+    params(("id" = Uuid, Path, description = "Knowledge gap id")),
+    request_body = DismissGapBody,
+    description = "Retire a gap the org will not acquire — a malformed one-off, a question that is \
+                   not the corpus' job. Terminal: the scan never re-mints a dismissed gap, so \
+                   asking it again does not resurrect it. This is the one judgement the scan does \
+                   not make for itself. Requires the `write` scope.",
+    responses(
+        (status = 200, description = "Gap dismissed", body = KnowledgeGapView),
+        (status = 404, description = "Gap not found, not visible, or no longer open"),
+    )
+)]
+pub(crate) async fn gap_dismiss(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DismissGapBody>,
+) -> Result<Json<KnowledgeGapView>, HttpError> {
+    let principal = auth_of(&state, &headers, "write").await?.principal;
+    let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
+    let ok = brainiac_store::retrieval_events::gaps::dismiss(
+        &mut tx,
+        id,
+        principal.user_id,
+        body.note.as_deref(),
+    )
+    .await
+    .map_err(internal)?;
+    if !ok {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "gap not found, not visible, or no longer open".to_string(),
+        )
+            .into());
+    }
+    let gap = brainiac_store::retrieval_events::gaps::get(&mut tx, id)
+        .await
+        .map_err(internal)?
+        .ok_or((StatusCode::NOT_FOUND, "gap not found".to_string()))?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(gap.into()))
 }
 
 /// Ingest queue depth — shared by `/v1/analytics` and the observatory.

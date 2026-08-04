@@ -1996,6 +1996,358 @@ async fn project_affinity_lifts_own_project_rows_without_demoting_org_shared() {
     }
 }
 
+// ── the demand backlog (migration 0049) ─────────────────────────────────
+
+/// A genuinely unanswered question becomes exactly ONE piece of work, and
+/// answering it closes the loop.
+///
+/// The four properties that make this an artifact rather than a statistic:
+///
+///   1. a question the corpus cannot answer produces exactly one gap, whatever
+///      the ask count;
+///   2. re-scanning refreshes that row's evidence — it never mints a twin
+///      (the `(org_id, query_norm)` identity, the lesson 0042 learned the hard
+///      way for divergences);
+///   3. a miss the corpus can ALREADY answer never becomes work at all — the
+///      ledger records failures at the time they happened, and the corpus has
+///      moved since;
+///   4. writing the missing memory closes the gap by itself on the next scan,
+///      naming the memory that closed it. Nobody reports it resolved.
+#[tokio::test]
+async fn unanswered_demand_becomes_exactly_one_gap_and_answering_it_closes_the_loop() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    use brainiac_store::retrieval_events::gaps;
+    use brainiac_store::retrieval_events::{record, NewRetrievalEvent};
+
+    let embedder = DeterministicEmbedder::default();
+    let p = pay_dev();
+    let alpha = uuid(81);
+    let beta = uuid(82);
+    projects::create(&ctx.admin, alpha, org(), "alpha")
+        .await
+        .expect("alpha");
+    projects::create(&ctx.admin, beta, org(), "beta")
+        .await
+        .expect("beta");
+
+    // The question nobody can answer, asked three times from two projects…
+    // Two tokens the corpus has never seen, and one it has. The FTS side of
+    // the candidate stage ANDs a query's content words, so the phrasing is
+    // chosen to be a real lexical match for the answer once it exists — and
+    // for nothing at all before it does.
+    let gap_q = "quorbin retry backoff";
+    // …and a question that ALSO failed when it was asked, but which the corpus
+    // has since learned to answer. It must never become work.
+    let stale_q = "vorlex settlement window";
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    // The memory that already answers `stale_q` — written AFTER the miss was
+    // logged, which is exactly the situation the dedupe exists for.
+    let settled = "the vorlex settlement window closes nightly at 23:00 UTC";
+    memories::insert(
+        c,
+        &memories::NewMemory {
+            id: uuid(190),
+            org_id: org(),
+            team_id: Some(uuid(21)),
+            owner_user_id: None,
+            visibility: Visibility::Org,
+            status: MemoryStatus::Canonical,
+            kind: MemoryKind::Fact,
+            title: None,
+            lifecycle: Default::default(),
+            detail_md: None,
+            content: settled.to_string(),
+            language: "en".into(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
+            confidence: None,
+            provenance_id: None,
+            project_id: None,
+        },
+    )
+    .await
+    .expect("m190");
+    memories::upsert_embedding(c, uuid(190), ver, &embedder.embed_sync(settled))
+        .await
+        .expect("e190");
+
+    let miss = |project: Uuid, query: &str| NewRetrievalEvent {
+        id: Uuid::new_v4(),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        project_id: Some(project),
+        token_id: None,
+        surface: "mcp",
+        tool: "memory_search",
+        query_text: query.to_string(),
+        returned_n: 0,
+        top_score: None,
+        withheld_contested: 0,
+        latency_ms: Some(12),
+        served: vec![],
+    };
+    for (project, q) in [
+        (alpha, gap_q),
+        (alpha, gap_q),
+        (beta, gap_q),
+        (alpha, stale_q),
+    ] {
+        record(c, &miss(project, q)).await.expect("ledger");
+    }
+    tx.commit().await.expect("commit");
+
+    // The answered-floor, chosen from the RRF arithmetic rather than by feel:
+    // a hit that leads ONE candidate list scores 1/61 ≈ 0.0164; a hit that leads
+    // BOTH (lexical AND semantic) scores 2/61 ≈ 0.0328. A floor between them
+    // makes "answerable" mean "the corpus actually matched this question",
+    // instead of "ANN handed back its nearest neighbour, as it always does".
+    // This is the calibration the product ships as BRAINIAC_ANSWERED_SCORE_FLOOR
+    // with a deliberate 0.0 default — at 0.0 nothing is ever a miss.
+    const FLOOR: f64 = 0.025;
+
+    let scan = async || {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let out = gaps::scan(
+            &mut tx,
+            ctx.store.pool(),
+            &embedder,
+            ver,
+            org(),
+            30,
+            FLOOR,
+            50,
+        )
+        .await
+        .expect("scan");
+        tx.commit().await.expect("commit");
+        out
+    };
+    let all_gaps = async || {
+        let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+        let g = gaps::list(&mut tx, None, 100).await.expect("list");
+        tx.commit().await.expect("commit");
+        g
+    };
+
+    // (1) + (3): one gap for the real miss; the already-answerable one is
+    // skipped rather than filed.
+    let first = scan().await;
+    assert_eq!(first.opened, 1, "exactly one gap minted: {first:?}");
+    assert_eq!(
+        first.skipped_answerable, 1,
+        "the miss the corpus can already answer is not work: {first:?}"
+    );
+    let g = all_gaps().await;
+    assert_eq!(g.len(), 1, "exactly one gap row exists");
+    assert_eq!(g[0].query_norm, gap_q);
+    assert_eq!(g[0].status, "open");
+    assert_eq!(g[0].asks, 3, "three asks folded into one gap");
+    assert_eq!(g[0].projects, 2, "breadth across two projects");
+    assert!(g[0].resolved_memory_id.is_none());
+
+    // (2) Re-scanning is idempotent: the row is refreshed, never twinned.
+    let second = scan().await;
+    assert_eq!(second.opened, 0, "no second gap for the same question");
+    assert_eq!(second.refreshed, 1, "the existing row was refreshed");
+    let g = all_gaps().await;
+    assert_eq!(g.len(), 1, "still exactly one gap row");
+    let gap_id = g[0].id;
+
+    // (4) Someone writes the missing memory. Nobody re-asks the question, and
+    // nobody reports the gap resolved — the next scan closes it and names the
+    // memory that did it.
+    let answer = "quorbin retries use exponential backoff with jitter and a five-attempt cap";
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    memories::insert(
+        c,
+        &memories::NewMemory {
+            id: uuid(191),
+            org_id: org(),
+            team_id: Some(uuid(21)),
+            owner_user_id: None,
+            visibility: Visibility::Org,
+            status: MemoryStatus::Canonical,
+            kind: MemoryKind::Decision,
+            title: None,
+            lifecycle: Default::default(),
+            detail_md: None,
+            content: answer.to_string(),
+            language: "en".into(),
+            valid_from: None,
+            valid_to: None,
+            superseded_by: None,
+            confidence: None,
+            provenance_id: None,
+            project_id: None,
+        },
+    )
+    .await
+    .expect("m191");
+    memories::upsert_embedding(c, uuid(191), ver, &embedder.embed_sync(answer))
+        .await
+        .expect("e191");
+    tx.commit().await.expect("commit");
+
+    let third = scan().await;
+    assert_eq!(third.closed, 1, "the gap closed itself: {third:?}");
+    assert_eq!(
+        third.opened, 0,
+        "and was not re-minted in the same pass: {third:?}"
+    );
+    let g = all_gaps().await;
+    assert_eq!(g.len(), 1, "closing a gap does not create a new row");
+    assert_eq!(g[0].id, gap_id, "the SAME artifact changed state");
+    assert_eq!(g[0].status, "answered");
+    assert_eq!(
+        g[0].resolved_memory_id,
+        Some(uuid(191)),
+        "the gap names the memory that answered it"
+    );
+    assert!(g[0].resolved_at.is_some());
+
+    // A closed gap stays closed: asking again refreshes nothing and re-mints
+    // nothing (`suppressed`, not `opened`).
+    let fourth = scan().await;
+    assert_eq!(fourth.opened, 0);
+    assert_eq!(fourth.closed, 0);
+    assert_eq!(all_gaps().await.len(), 1);
+}
+
+/// A maintainer's dismissal is terminal: the scan never re-mints it, however
+/// many times the malformed one-off is asked again. This is the guard on the
+/// stated risk — gap spam from junk queries.
+#[tokio::test]
+async fn a_dismissed_gap_is_never_re_minted() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    use brainiac_store::retrieval_events::gaps;
+    use brainiac_store::retrieval_events::{record, NewRetrievalEvent};
+
+    let embedder = DeterministicEmbedder::default();
+    let p = pay_dev();
+    let junk = "asdfqwer zzzz";
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    record(
+        c,
+        &NewRetrievalEvent {
+            id: Uuid::new_v4(),
+            org_id: org(),
+            team_id: Some(uuid(21)),
+            project_id: None,
+            token_id: None,
+            surface: "mcp",
+            tool: "memory_search",
+            query_text: junk.to_string(),
+            returned_n: 0,
+            top_score: None,
+            withheld_contested: 0,
+            latency_ms: None,
+            served: vec![],
+        },
+    )
+    .await
+    .expect("ledger");
+    tx.commit().await.expect("commit");
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let out = gaps::scan(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        org(),
+        30,
+        0.0,
+        50,
+    )
+    .await
+    .expect("scan");
+    assert_eq!(out.opened, 1);
+    let g = gaps::list(&mut tx, Some("open"), 10).await.expect("list");
+    assert_eq!(g.len(), 1);
+    let id = g[0].id;
+    assert!(
+        gaps::dismiss(&mut tx, id, p.user_id, Some("malformed one-off"))
+            .await
+            .expect("dismiss"),
+        "a maintainer can retire a gap"
+    );
+    assert!(
+        !gaps::dismiss(&mut tx, id, p.user_id, None)
+            .await
+            .expect("second dismiss"),
+        "dismissing twice is a no-op, not a second decision"
+    );
+    tx.commit().await.expect("commit");
+
+    // The question keeps being asked. It must not come back as work.
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    for _ in 0..3 {
+        record(
+            c,
+            &NewRetrievalEvent {
+                id: Uuid::new_v4(),
+                org_id: org(),
+                team_id: Some(uuid(21)),
+                project_id: None,
+                token_id: None,
+                surface: "mcp",
+                tool: "memory_search",
+                query_text: junk.to_string(),
+                returned_n: 0,
+                top_score: None,
+                withheld_contested: 0,
+                latency_ms: None,
+                served: vec![],
+            },
+        )
+        .await
+        .expect("ledger");
+    }
+    tx.commit().await.expect("commit");
+
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let again = gaps::scan(
+        &mut tx,
+        ctx.store.pool(),
+        &embedder,
+        ver,
+        org(),
+        30,
+        0.0,
+        50,
+    )
+    .await
+    .expect("rescan");
+    assert_eq!(again.opened, 0, "a dismissed question is not re-minted");
+    assert_eq!(again.refreshed, 0, "and its evidence is not refreshed");
+    assert_eq!(again.suppressed, 1, "it is explicitly suppressed");
+    let all = gaps::list(&mut tx, None, 10).await.expect("list");
+    assert_eq!(all.len(), 1, "still exactly one row");
+    assert_eq!(all[0].status, "dismissed");
+    tx.commit().await.expect("commit");
+}
+
 // ── LB0: the Library substrate (migration 0028) ─────────────────────────────
 
 /// A principal from a DIFFERENT org. No seeding needed: the point is that the
