@@ -143,8 +143,13 @@ Loop while `pool < 10` and the user hasn't said stop:
 2. **Worktree per builder** — prepared by the Director, NOT via Agent-tool isolation (those worktrees lack `node_modules`):
    ```bash
    git worktree add .claude/worktrees/perfect-<ctx> -b worktree-perfect-<ctx>
-   # Console builders need node_modules — junction, NOT copy:
-   cmd //c mklink //J ".claude\\worktrees\\perfect-<ctx>\\console\\node_modules" "..\\..\\..\\..\\console\\node_modules"
+   # Console builders need node_modules — junction, NOT copy. Create it from POWERSHELL with
+   # ABSOLUTE paths, then ASSERT it resolved (see the warning below the block):
+   #   $root = "<abs repo root>"
+   #   $link = "$root\.claude\worktrees\perfect-<ctx>\console\node_modules"
+   #   if (Test-Path $link) { Remove-Item $link -Force -Recurse -Confirm:$false }
+   #   New-Item -ItemType Junction -Path $link -Target "$root\console\node_modules" | Out-Null
+   #   Test-Path "$link\.bin\tsc"     # MUST be True before briefing anyone
    # Rust builders get a PRIVATE target dir (CARGO_TARGET_DIR=<worktree>/target-build).
    #   Cold first build, but it avoids two hazards this repo has actually hit: cache poisoning
    #   under concurrent cross-branch builds, AND a hard file LOCK when a server is running off
@@ -155,6 +160,14 @@ Loop while `pool < 10` and the user hasn't said stop:
    #   skill draft / un-truncated rows make handshake/propose tests fail duplicate-vs-created
    #   on reuse (bit round 5, wave 2). One fresh DB per builder, dropped at cleanup.
    ```
+   **Never create the junction with `cmd //c mklink //J … "..\..\..\..\console\node_modules"`**
+   (the recipe this skill shipped until 2026-08-04). `mklink` resolves a RELATIVE target against
+   the **current** directory, not the link's — run from the repo root it silently points
+   somewhere useless and still prints "Junction created". The failure surfaces much later as a
+   builder that cannot find `tsc`; retrying with an absolute target through `cmd` then fails with
+   "The system cannot find the path specified". **"Junction created" is not evidence — the
+   `Test-Path …\.bin\tsc` assertion is.** Also write any `CARGO_TARGET_DIR` with forward slashes:
+   Bash mangles the backslash form into a literal `Usersmkdol…` directory inside the worktree.
 3. **Model selection (per brief, Director's judgment):** default from the SIZE of the largest direction in the brief — all S/M → `model: "sonnet"`; any L → `model: "opus"`. Escalate an S/M brief to Opus when the Director judges the risk profile warrants it: RLS/permission-touching query paths, concurrency/locking semantics, schema migrations with subtle invariants, or work that must integrate against signatures that moved on master mid-wave. Never de-escalate an L brief. Record the chosen model in the direction notes' build record; if a Sonnet builder's diff fails review on capability grounds (not spec ambiguity), redo that direction with Opus and log it in the skill-improvement log — repeated capability failures recalibrate the default.
    **For a high-risk / core-invariant direction (RLS policy, a locking protocol, a migration with subtle semantics), the Director designs the DANGEROUS PART in the brief** — the exact policy SQL, the exact predicate, the exact ordering — and the builder's job is verified execution, not invention. This is not micromanagement; it is where "Opus directs, the model executes" is load-bearing. Round 5's RLS-isolation direction shipped safely because the RESTRICTIVE policy was designed up front and the builder implemented + tested it exactly; the Director then reviewed the implementation against its own design.
 4. **Brief** each builder (see template below); launch with the selected model, `subagent_type: "general-purpose"`, all briefs in one message so they run concurrently.
@@ -252,7 +265,26 @@ This skill declares `contexts: tracked` — the Personas app measures per-contex
 {"type":"node","kind":"progress","title":"<=200 chars: what you did in this context","body":"optional detail","context":"<exact context name from context-map.json>","skill":"perfect"}
 ```
 
-**Which name — this is the part that silently fails.** The ingest anchors a node by matching `context` against the names the app actually knows, case-insensitively. A name it does not recognize is NOT an error: the node is stored with a null context and simply never counts toward coverage. Brainiac's repo-root `context-map.json` **is** the app's own export — `version: 2` (integer), no `$schema` key, a flat top-level `contexts` array of 25 kebab-case names (`extraction-pipeline`, `llm-gateway`, `auth-middleware`, …). Those are the names the app knows and the same names this loop's queue in `Perfect.md` uses. If you ever find a `$schema: vibeman.dev` / `version: "2.0.0"` map at that path instead, it is a stale foreign auto-map — do NOT source context names from it; emit nodes without the `context` field until a re-scan, since a wrong name and no name land identically (`unanchored`, excluded from the coverage math).
+**Which name — this is the part that silently fails.** The ingest anchors a node by matching `context` against the names the app actually knows, case-insensitively. A name it does not recognize is NOT an error: the node is stored with a null context and simply never counts toward coverage. Brainiac's repo-root `context-map.json` is the app's own export — a flat top-level `contexts` array of 25 kebab-case names (`extraction-pipeline`, `llm-gateway`, `auth-middleware`, …), the same names this loop's queue in `Perfect.md` uses.
+
+**Verify PROVENANCE before trusting it, not shape:**
+
+```bash
+node -e 'const m=require("./context-map.json");console.log(JSON.stringify(m.project||{id:m.projectId,root:m.projectPath}))'
+# must print root: C:\Users\mkdol\dolla\brainiac  ·  id: cbe16611-de98-476a-b901-b2153bc15186
+```
+
+If `project.root` is any other path — **even when the file is perfect app-export shape**
+(`version: 2` integer, no `$schema`, `generator: personas-context-scan`) — it is a foreign
+machine's map committed into this repo, and its names anchor to nothing in the local app. Same
+verdict for a `$schema: vibeman.dev` / `version: "2.0.0"` map. In either case emit nodes without
+the `context` field until a local re-scan, since a wrong name and no name land identically
+(`unanchored`, excluded from the coverage math).
+
+**Why shape alone is not enough** — learned the hard way on 2026-08-04. The personas repo's own
+map passes every shape test and its `project.root` is `C:\Users\kazda\kiro\personas`, a different
+machine, while that machine's local DB held a completely different map. The shape-only version of
+this paragraph (which this skill shipped earlier the same day) waves that straight through.
 
 A re-scan does not need the UI — the running app exposes a loopback bridge:
 
