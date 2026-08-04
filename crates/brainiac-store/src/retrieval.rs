@@ -9,8 +9,9 @@
 //!    where cross-team knowledge surfaces; each graph extra is scored as a
 //!    decayed fraction of the anchoring direct hit rather than pinned to 0.
 //! 5. assembly: temporal filter + supersession-chain dedupe (as-of aware),
-//!    then a blended re-rank (relevance dominant, recency/feedback nudges) over
-//!    direct and graph hits alike; entity anchors attached to the emitted set.
+//!    then a blended re-rank (relevance dominant, with recency / feedback /
+//!    project-affinity nudges) over direct and graph hits alike; entity anchors
+//!    attached to the emitted set.
 //!
 //! The graph + assembly stages run inside the caller's scoped transaction. The
 //! two candidate retrievers (stage 2) run concurrently on separate pooled
@@ -24,7 +25,7 @@ use brainiac_core::fusion::{
     query_is_identifier_heavy, reciprocal_rank_fusion, weighted_reciprocal_rank_fusion,
 };
 use brainiac_core::rerank::Reranker;
-use brainiac_core::scoring::{blended_score, graph_relevance, FeedbackSignal};
+use brainiac_core::scoring::{blended_score, graph_relevance, FeedbackSignal, ProjectAffinity};
 use brainiac_core::temporal::{dedupe_for_time, valid_at};
 use brainiac_core::{Memory, MemoryKind, MemoryStatus};
 use chrono::{DateTime, Utc};
@@ -146,7 +147,8 @@ pub struct EntityAnchor {
 pub struct RetrievalHit {
     pub memory: Memory,
     /// Final blended ranking key (brainiac-core::scoring): relevance as the
-    /// dominant term, nudged by recency decay and net reader feedback. Relevance
+    /// dominant term, nudged by recency decay, net reader feedback and project
+    /// affinity (the caller's own project's memories lead a tie). Relevance
     /// is the fused RRF score for direct hits and a graph-derived score (anchor
     /// strength × hop decay) for graph-expansion extras, so both live on one
     /// scale and a strong cross-team hit can outrank a weak direct hit.
@@ -328,6 +330,31 @@ async fn engine(
     let query_vec = embedder.embed(&req.query).await?;
     let scope = read_scope(tx).await?;
 
+    // The caller's project, for the stage-6 affinity nudge
+    // (brainiac-core::scoring::ProjectAffinity). Two sources, in order:
+    //
+    //  1. the explicit lens (`filters.project_id`) — "my project + the org's
+    //     conventions";
+    //  2. otherwise the project stamped on the connection by `scoped_tx`
+    //     (`app.project_id`, migration 0040).
+    //
+    // (2) matters more than it looks. The lens is OPT-IN at both edges (HTTP's
+    // `project_id` body field, MCP's `scope: "project"`), so a project-scoped
+    // key running a plain search carries its project ONLY in the RLS GUC.
+    // Reading it here is what makes "the answer from THIS repo comes first" the
+    // default rather than a flag someone has to remember.
+    //
+    // Empty string = an org-wide principal (scoped_tx writes '' for None), and
+    // the parse simply fails — which is exactly `ProjectAffinity::NoLens`, i.e.
+    // ranking identical to before this term existed.
+    //
+    // RANKING ONLY. `RetrievalFilters::admits` is untouched: org-shared rows
+    // are as retrievable as they ever were, and hard isolation stays RLS's job.
+    let caller_project: Option<Uuid> = req
+        .filters
+        .project_id
+        .or_else(|| Uuid::parse_str(&scope.project_id).ok());
+
     let vector_fut = async {
         let mut c = scoped_pool_tx(pool, &scope).await?;
         let hits = memories::search_vector(
@@ -495,7 +522,15 @@ async fn engine(
                 wrong: t.wrong,
                 outdated: t.outdated,
             };
-            let blended = blended_score(relevance, age_days(&m, as_of), feedback);
+            // Project affinity: is this the caller's OWN repo talking? A
+            // tiebreak among comparable hits, never an exclusion — org-shared
+            // rows score exactly what they scored before.
+            let affinity = match caller_project {
+                None => ProjectAffinity::NoLens,
+                Some(p) if m.project_id == Some(p) => ProjectAffinity::Own,
+                Some(_) => ProjectAffinity::Shared,
+            };
+            let blended = blended_score(relevance, age_days(&m, as_of), feedback, affinity);
             RetrievalHit {
                 score: blended,
                 via_graph,

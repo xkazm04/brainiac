@@ -1808,6 +1808,194 @@ async fn project_lens_keeps_project_rows_plus_org_shared() {
     assert_eq!(ids(&shared_only), vec![uuid(242)]);
 }
 
+/// Project affinity in RANKING (brainiac-core::scoring::ProjectAffinity).
+///
+/// The lens answers "may I see it"; this answers "which of two comparable
+/// answers is the right one HERE". Three properties, and they are the whole
+/// contract:
+///
+///   1. a memory written by the caller's own project gains exactly
+///      `PROJECT_AFFINITY_WEIGHT` — no more, so relevance stays dominant;
+///   2. org-shared (and other projects') memories gain NOTHING and lose
+///      nothing — this is a lift, never a demotion or an exclusion;
+///   3. the caller's project is read from the RLS GUC (`app.project_id`) as
+///      well as from an explicit lens, because the lens is opt-in at both
+///      edges and a project-scoped key running a plain search would otherwise
+///      never get the benefit.
+#[tokio::test]
+async fn project_affinity_lifts_own_project_rows_without_demoting_org_shared() {
+    let Some((ctx, _guard)) = setup().await else {
+        return;
+    };
+    seed(&ctx).await;
+
+    let payments = uuid(71);
+    let billing = uuid(72);
+    brainiac_store::projects::create(&ctx.admin, payments, org(), "payments-api")
+        .await
+        .expect("payments project");
+    brainiac_store::projects::create(&ctx.admin, billing, org(), "billing")
+        .await
+        .expect("billing project");
+
+    let embedder = DeterministicEmbedder::default();
+    let p = pay_dev();
+    let mut tx = ctx.store.scoped_tx(&p).await.expect("tx");
+    let c = &mut *tx;
+    let mk = |id: u8, project: Option<Uuid>, content: &str| memories::NewMemory {
+        id: uuid(id),
+        org_id: org(),
+        team_id: Some(uuid(21)),
+        owner_user_id: None,
+        visibility: Visibility::Org,
+        status: MemoryStatus::Canonical,
+        kind: MemoryKind::Decision,
+        title: None,
+        lifecycle: Default::default(),
+        detail_md: None,
+        content: content.to_string(),
+        language: "en".into(),
+        valid_from: None,
+        valid_to: None,
+        superseded_by: None,
+        confidence: None,
+        provenance_id: None,
+        project_id: project,
+    };
+    let rows: [(u8, Option<Uuid>, &str); 3] = [
+        (
+            250,
+            Some(payments),
+            "quibbex retries use exponential backoff with jitter",
+        ),
+        (251, Some(billing), "quibbex retries are capped at three"),
+        (252, None, "quibbex retries follow the org retry convention"),
+    ];
+    let ver = memories::ensure_embedding_version(c, embedder.model_name(), embedder.dim() as i32)
+        .await
+        .expect("ver");
+    for (id, project, content) in rows {
+        memories::insert(c, &mk(id, project, content))
+            .await
+            .expect("insert");
+        memories::upsert_embedding(c, uuid(id), ver, &embedder.embed_sync(content))
+            .await
+            .expect("embedding");
+    }
+    // The candidate retrievers run on separate pooled connections, so the rows
+    // must be committed before the search can see them.
+    tx.commit().await.expect("commit");
+
+    let req = |filters: retrieval::RetrievalFilters| retrieval::RetrievalRequest {
+        query: "quibbex retries".into(),
+        k: 10,
+        as_of: None,
+        filters,
+    };
+    let run = async |principal: Principal, filters: retrieval::RetrievalFilters| {
+        let mut tx = ctx.store.scoped_tx(&principal).await.expect("tx");
+        let hits = retrieval::search(&mut tx, ctx.store.pool(), &embedder, ver, &req(filters))
+            .await
+            .expect("search");
+        hits.into_iter()
+            .map(|h| (h.memory.id, h.score))
+            .collect::<std::collections::HashMap<Uuid, f64>>()
+    };
+
+    // Baseline: an org-wide key. No project anywhere ⇒ the affinity term is
+    // inert and this is the pre-affinity ranking.
+    let base = run(p.clone(), Default::default()).await;
+    for (id, ..) in rows {
+        assert!(base.contains_key(&uuid(id)), "baseline missed {id}");
+    }
+
+    // The same user, same query, same filters — but on a project-scoped key.
+    let scoped = Principal {
+        project_id: Some(payments),
+        ..p.clone()
+    };
+    let lensed = run(scoped, Default::default()).await;
+
+    // (2) Nothing is excluded: the served SET is identical. Affinity is a
+    // tiebreak, not a filter.
+    let mut base_ids: Vec<Uuid> = base.keys().copied().collect();
+    let mut lensed_ids: Vec<Uuid> = lensed.keys().copied().collect();
+    base_ids.sort();
+    lensed_ids.sort();
+    assert_eq!(
+        base_ids, lensed_ids,
+        "project affinity must not change WHAT is retrieved, only the order"
+    );
+
+    // (1) + (3): own-project rows gain exactly the nudge, from the RLS GUC
+    // alone (no explicit lens was passed). Everything else is untouched.
+    let delta = |id: u8| lensed[&uuid(id)] - base[&uuid(id)];
+    let w = brainiac_core::scoring::PROJECT_AFFINITY_WEIGHT;
+    assert!(
+        (delta(250) - w).abs() < 1e-12,
+        "own project gains exactly the affinity weight, got {}",
+        delta(250)
+    );
+    assert!(
+        delta(251).abs() < 1e-12,
+        "another project's row is NOT demoted, got {}",
+        delta(251)
+    );
+    assert!(
+        delta(252).abs() < 1e-12,
+        "org-shared knowledge is NOT demoted, got {}",
+        delta(252)
+    );
+
+    // The nudge is per-PROJECT, not "any project stamp wins": the same query
+    // from a billing key lifts billing's row and leaves payments' alone.
+    let from_billing = run(
+        Principal {
+            project_id: Some(billing),
+            ..p.clone()
+        },
+        Default::default(),
+    )
+    .await;
+    assert!(
+        (from_billing[&uuid(251)] - base[&uuid(251)] - w).abs() < 1e-12,
+        "billing's key lifts billing's row"
+    );
+    assert!(
+        (from_billing[&uuid(250)] - base[&uuid(250)]).abs() < 1e-12,
+        "…and leaves payments' row exactly where it was"
+    );
+
+    // Source (1) of the caller's project: an EXPLICIT lens, which takes
+    // precedence over the connection's project. Two principals whose RLS
+    // projects differ (none / billing) but who pass the same payments lens must
+    // score identically — if the GUC won instead, payments' own row would come
+    // back one affinity-weight lower for the billing principal.
+    let lens = || retrieval::RetrievalFilters {
+        project_id: Some(payments),
+        ..Default::default()
+    };
+    let explicit_orgwide = run(p.clone(), lens()).await;
+    let explicit_from_billing = run(
+        Principal {
+            project_id: Some(billing),
+            ..p.clone()
+        },
+        lens(),
+    )
+    .await;
+    assert!(
+        !explicit_orgwide.contains_key(&uuid(251)),
+        "the lens still drops another project's row (pre-existing PR1 behaviour)"
+    );
+    for id in [250u8, 252] {
+        assert!(
+            (explicit_orgwide[&uuid(id)] - explicit_from_billing[&uuid(id)]).abs() < 1e-12,
+            "an explicit lens overrides the connection's project for {id}"
+        );
+    }
+}
+
 // ── LB0: the Library substrate (migration 0028) ─────────────────────────────
 
 /// A principal from a DIFFERENT org. No seeding needed: the point is that the
