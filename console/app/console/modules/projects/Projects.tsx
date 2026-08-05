@@ -22,6 +22,8 @@ import {
   removeRepo,
 } from "./projects-data";
 import { fmtAgo } from "../keys/KeyShared";
+import Button from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { FONT_DISPLAY, FONT_MONO, GROUND, LABEL, MAGENTA } from "@/design/theme";
 
 export default function Projects({ data }: { data: ProjectsData }) {
@@ -114,13 +116,19 @@ export default function Projects({ data }: { data: ProjectsData }) {
                   className={`${FONT_MONO} flex items-center justify-between gap-3 border-b border-white/[0.05] px-4 py-2 text-sm`}
                 >
                   <span className="truncate text-[#e9edff]/70">{r.remote}</span>
-                  <button
+                  {/* Destructive-on-hover: the magenta lives in classes because
+                      an inline colour would beat the `hover:` utility, so
+                      controlStyle's inline pair is cleared. */}
+                  <Button
+                    variant="pill"
+                    size="xs"
                     onClick={() => onRemoveRepo(p.id, r.id)}
                     disabled={!data.live || busy !== null}
-                    className="rounded-full border border-white/12 px-2 py-0.5 text-[10px] uppercase tracking-widest text-[#e9edff]/40 transition hover:border-[#ff5da2]/60 hover:text-[#ff5da2] disabled:opacity-40"
+                    className="border-white/12 px-2 py-0.5 text-[10px] uppercase tracking-widest text-[#e9edff]/40 hover:border-[#ff5da2]/60 hover:text-[#ff5da2]"
+                    style={{ borderColor: undefined, color: undefined }}
                   >
                     remove
-                  </button>
+                  </Button>
                 </div>
               ))}
               {p.repos.length === 0 && (
@@ -129,41 +137,49 @@ export default function Projects({ data }: { data: ProjectsData }) {
                 </p>
               )}
               <div className="flex gap-2 px-4 py-2.5">
-                <input
+                <Input
+                  size="xs"
                   value={repoDrafts[p.id] ?? ""}
                   onChange={(e) => setRepoDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                   placeholder="https://github.com/owner/name or git@…"
                   disabled={!data.live}
-                  className={`${FONT_MONO} w-full rounded-lg border border-white/15 bg-white/[0.03] px-3 py-1.5 text-xs text-white placeholder:text-[#e9edff]/30 focus:border-white/40 focus:outline-none disabled:opacity-50`}
+                  className="rounded-lg"
+                  aria-label={`Repo remote to whitelist for ${p.name}`}
                 />
-                <button
+                <Button
+                  variant="pill"
+                  size="xs"
+                  accent={GROUND}
                   onClick={() => onAddRepo(p.id)}
                   disabled={!data.live || !(repoDrafts[p.id] ?? "").trim() || busy !== null}
-                  className={`${FONT_MONO} shrink-0 rounded-full border px-3 py-1 text-xs transition disabled:opacity-40`}
-                  style={{ borderColor: GROUND, color: GROUND }}
+                  className="shrink-0 px-3 text-xs"
+                  style={{ borderColor: GROUND }}
                 >
                   {busy === `repo-${p.id}` ? "adding…" : "+ whitelist repo"}
-                </button>
+                </Button>
               </div>
             </div>
           ))}
 
           <div className="flex gap-2 rounded-xl border border-white/10 bg-white/[0.015] p-4">
-            <input
+            <Input
               value={newProject}
               onChange={(e) => setNewProject(e.target.value)}
               placeholder="new project — an application or domain"
               disabled={!data.live}
-              className={`${FONT_MONO} w-full rounded-lg border border-white/15 bg-white/[0.03] px-3.5 py-2 text-sm text-white placeholder:text-[#e9edff]/30 focus:border-white/40 focus:outline-none disabled:opacity-50`}
+              aria-label="New project name"
             />
-            <button
+            <Button
+              variant="pill"
+              size="md"
+              accent={GROUND}
               onClick={onCreateProject}
               disabled={!data.live || !newProject.trim() || busy !== null}
-              className={`${FONT_MONO} shrink-0 rounded-full border px-5 py-2 text-sm font-medium transition disabled:opacity-40`}
-              style={{ borderColor: GROUND, color: GROUND }}
+              className="shrink-0 font-medium"
+              style={{ borderColor: GROUND }}
             >
               {busy === "create" ? "creating…" : "◈ create project"}
-            </button>
+            </Button>
           </div>
           <div className={LABEL} style={{ color: "rgba(233,237,255,0.3)" }}>
             a repo maps to exactly one project · keys minted by onboarding are scoped to it
@@ -193,21 +209,28 @@ export default function Projects({ data }: { data: ProjectsData }) {
                   )}
                 </div>
                 <div className="mt-2.5 flex gap-2">
-                  <button
+                  <Button
+                    variant="pill"
+                    size="xs"
+                    accent={GROUND}
                     onClick={() => onDecide(r.id, "approve")}
                     disabled={!data.live || !r.project_name || busy !== null}
-                    className={`${FONT_MONO} rounded-full border px-3.5 py-1 text-xs transition disabled:opacity-40`}
-                    style={{ borderColor: GROUND, color: GROUND }}
+                    className="px-3.5 text-xs"
+                    style={{ borderColor: GROUND }}
                   >
                     {busy === `approve-${r.id}` ? "approving…" : "approve"}
-                  </button>
-                  <button
+                  </Button>
+                  {/* Deny only reddens on hover, so its colours stay class-side. */}
+                  <Button
+                    variant="pill"
+                    size="xs"
                     onClick={() => onDecide(r.id, "deny")}
                     disabled={!data.live || busy !== null}
-                    className={`${FONT_MONO} rounded-full border border-white/12 px-3.5 py-1 text-xs text-[#e9edff]/50 transition hover:border-[#ff5da2]/60 hover:text-[#ff5da2] disabled:opacity-40`}
+                    className="border-white/12 px-3.5 text-xs text-[#e9edff]/50 hover:border-[#ff5da2]/60 hover:text-[#ff5da2]"
+                    style={{ borderColor: undefined, color: undefined }}
                   >
                     {busy === `deny-${r.id}` ? "denying…" : "deny"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}

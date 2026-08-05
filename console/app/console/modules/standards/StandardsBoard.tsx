@@ -13,6 +13,7 @@
 
 import { useState } from "react";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   BORDER,
@@ -48,10 +49,17 @@ function RuleLink({
 }) {
   const tone = lifecycleTone(rule.lifecycle);
   return (
-    <button
+    // `row` IS this shape — its xs bucket is the exact px-2/py-1/12px the rail
+    // already used — and it brings the focus ring, which is what a keyboard
+    // operator moving down the shelf was missing entirely. Selection stays
+    // aria-current (a shelf position, not a pressed toggle), so `selected` is
+    // not passed; the active tint is supplied inline as before.
+    <Button
+      variant="row"
+      size="xs"
       onClick={() => onSelect(rule.id)}
-      className={`${FONT_MONO} flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] transition`}
       style={{
+        borderColor: undefined,
         color: active ? INK : INK_DIM,
         background: active ? withAlpha(THETA, 0.1) : "transparent",
       }}
@@ -78,7 +86,7 @@ function RuleLink({
           triage
         </span>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -87,19 +95,24 @@ type Order = "shelf" | "pressure";
 function OrderToggle({ order, onChange }: { order: Order; onChange: (o: Order) => void }) {
   return (
     <div className="flex items-center gap-1" role="group" aria-label="Order">
+      {/* `quiet`, not `pill`: this toggle is borderless, and pill's `border`
+          utility would draw a currentColor edge that was never in the design.
+          `selected` now emits the aria-pressed that used to be hand-written. */}
       {(["shelf", "pressure"] as const).map((o) => (
-        <button
+        <Button
           key={o}
+          variant="quiet"
+          size="xs"
+          selected={order === o}
           onClick={() => onChange(o)}
-          aria-pressed={order === o}
-          className={`${FONT_MONO} rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] transition`}
+          className="rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]"
           style={{
             color: order === o ? INK : INK_FAINT,
             background: order === o ? withAlpha(THETA, 0.14) : "transparent",
           }}
         >
           {o === "shelf" ? "shelf" : "pressure"}
-        </button>
+        </Button>
       ))}
     </div>
   );

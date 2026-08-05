@@ -15,7 +15,9 @@
 
 import { useState, useTransition } from "react";
 
-import { FONT_MONO, INK, INK_FAINT, PANEL } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { Input, Textarea } from "@/components/ui/Input";
+import { band, FONT_MONO, GOLD, INK, INK_FAINT, MAGENTA, PANEL } from "@/design/theme";
 import type { StandardDetail } from "@/lib/types";
 
 import {
@@ -27,11 +29,16 @@ import {
 } from "./actions";
 import { adoptPlan, allowedActions, editablePatch, isEditable, type RuleDraft } from "./triage";
 
-const GOLD = "hsla(46, 90%, 68%, 1)";
-const MINT = "hsla(158, 90%, 68%, 1)";
-const MAGENTA = "#ff5da2";
+/* GOLD / MAGENTA now come from the theme — these were byte-identical literals
+   of the tokens, and a second copy of a colour is a second thing to forget when
+   the palette moves. MINT is beta at the band's standard lightness. */
+const MINT = band("beta");
 const dim = (a: number) => `rgba(233,237,255,${a})`;
 
+/* The gate's own capsule. `accent` carries the tone through to the text; the
+   explicit borderColor keeps the full-opacity edge the gate has always drawn
+   (controlStyle fades a pill's border to 0.4), so a decree still reads as loud
+   as the decision it is. */
 function GateButton({
   label,
   tone,
@@ -44,14 +51,21 @@ function GateButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
+      variant="pill"
+      size="md"
+      // Own padding: the gate has always been px-4, and a plain className
+      // override loses to the md bucket's px-5 (Tailwind orders its padding
+      // scale ascending, so only upward overrides win).
+      unpadded
+      accent={tone}
       onClick={onClick}
       disabled={busy}
-      className={`${FONT_MONO} rounded-full border px-4 py-2 text-xs uppercase tracking-[0.14em] transition hover:scale-[1.02] disabled:opacity-40`}
-      style={{ borderColor: tone, color: tone }}
+      className="px-4 text-xs uppercase tracking-[0.14em] hover:scale-[1.02]"
+      style={{ borderColor: tone }}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -68,7 +82,12 @@ function Field({
   hint?: string;
   multiline?: boolean;
 }) {
-  const shared = `${FONT_MONO} w-full rounded-md border px-2 py-1.5 text-[12px]`;
+  // The wrapping <label> stays: it already names the control, and it renders
+  // the hint INLINE with the label (`stack · rust, typescript, general`), which
+  // the primitive's own `label`/`hint` props would move below the field. So
+  // these use the bare field primitives — the win here is the focus ring and
+  // one shared chrome, not the label layout. Padding/colour deltas from the xs
+  // bucket are passed through rather than restyled.
   const style = { borderColor: dim(0.18), background: PANEL, color: INK };
   return (
     <label className="flex flex-col gap-1">
@@ -80,15 +99,22 @@ function Field({
         {hint ? <span className="normal-case tracking-normal"> · {hint}</span> : null}
       </span>
       {multiline ? (
-        <textarea
+        <Textarea
+          size="xs"
           value={value}
           rows={3}
           onChange={(e) => onChange(e.target.value)}
-          className={shared}
+          className="px-2"
           style={style}
         />
       ) : (
-        <input value={value} onChange={(e) => onChange(e.target.value)} className={shared} style={style} />
+        <Input
+          size="xs"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="px-2"
+          style={style}
+        />
       )}
     </label>
   );

@@ -13,6 +13,7 @@ import { useState } from "react";
 import type { KeysData } from "./keys-data";
 import { refreshTokens, revokeKey } from "./keys-data";
 import { fmtAgo, MintPanel } from "./KeyShared";
+import Button from "@/components/ui/Button";
 import { FONT_DISPLAY, FONT_MONO, GROUND, LABEL, MAGENTA } from "@/design/theme";
 
 /** The developer-facing bootstrap: one copyable command that installs the
@@ -35,7 +36,13 @@ function OnboardPanel({ apiUrl }: { apiUrl: string }) {
       <div className={`${FONT_MONO} mt-3 select-all break-all rounded-lg border border-white/15 bg-white/[0.03] p-3 text-xs text-[#e9edff]/80`}>
         {cmd}
       </div>
-      <button
+      {/* Ground-band capsule. `accent` carries the text colour; the explicit
+          borderColor restores the full-opacity edge this panel always had —
+          controlStyle fades a pill's border to 0.4 by default. */}
+      <Button
+        variant="pill"
+        size="sm"
+        accent={GROUND}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(cmd);
@@ -45,11 +52,11 @@ function OnboardPanel({ apiUrl }: { apiUrl: string }) {
             setCopied(false);
           }
         }}
-        className={`${FONT_MONO} mt-3 rounded-full border px-4 py-1.5 text-xs transition`}
-        style={{ borderColor: GROUND, color: GROUND }}
+        className="mt-3 px-4 text-xs"
+        style={{ borderColor: GROUND }}
       >
         {copied ? "✓ copied" : "copy command"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -130,17 +137,32 @@ export default function Keys({ data }: { data: KeysData }) {
                     revoked
                   </span>
                 ) : confirming === t.id ? (
-                  <button onClick={() => revoke(t.id)} className="rounded-full border px-2 py-0.5 text-right text-[10px] uppercase tracking-widest" style={{ borderColor: MAGENTA, color: MAGENTA }}>
+                  <Button
+                    variant="pill"
+                    size="xs"
+                    accent={MAGENTA}
+                    onClick={() => revoke(t.id)}
+                    className="px-2 py-0.5 text-right text-[10px] uppercase tracking-widest"
+                    style={{ borderColor: MAGENTA }}
+                  >
                     sure?
-                  </button>
+                  </Button>
                 ) : (
-                  <button
+                  // The resting state changes colour on hover, and an inline
+                  // style always beats a `hover:` utility — so the accent stays
+                  // in classes here and controlStyle's inline colours are
+                  // explicitly cleared. (The capsule, focus ring and disabled
+                  // treatment still come from the primitive.)
+                  <Button
+                    variant="pill"
+                    size="xs"
                     onClick={() => setConfirming(t.id)}
                     disabled={!data.live}
-                    className="rounded-full border border-white/12 px-2 py-0.5 text-right text-[10px] uppercase tracking-widest text-[#e9edff]/40 transition hover:border-[#ff5da2]/60 hover:text-[#ff5da2] disabled:opacity-40"
+                    className="border-white/12 px-2 py-0.5 text-right text-[10px] uppercase tracking-widest text-[#e9edff]/40 hover:border-[#ff5da2]/60 hover:text-[#ff5da2]"
+                    style={{ borderColor: undefined, color: undefined }}
                   >
                     revoke
-                  </button>
+                  </Button>
                 )}
               </div>
             ))}

@@ -12,6 +12,7 @@
 
 import { useTransition } from "react";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   BORDER,
@@ -117,29 +118,35 @@ export default function SweepControl({
         </div>
 
         {/* controls */}
+        {/* Instrument-strip buttons: `pill` for the border + focus ring, with
+            the capsule radius squared back off to rounded-md — the strip reads
+            as an instrument, not as chrome. Colours stay inline, as before. */}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="pill"
+            unpadded
             onClick={runNow}
             disabled={pending}
-            className={`${FONT_MONO} rounded-md px-3 py-1.5 text-[12px]`}
-            style={{ color: INK, border: `1px solid ${BORDER}`, background: "rgba(255,255,255,0.04)" }}
+            className="rounded-md px-3 py-1.5 text-[12px]"
+            style={{ color: INK, borderColor: BORDER, background: "rgba(255,255,255,0.04)" }}
           >
             run now
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="pill"
+            unpadded
+            selected={schedule.enabled}
             onClick={toggle}
             disabled={pending}
-            className={`${FONT_MONO} rounded-md px-3 py-1.5 text-[12px]`}
+            className="rounded-md px-3 py-1.5 text-[12px]"
             style={{
               color: schedule.enabled ? band("beta") : INK_DIM,
-              border: `1px solid ${schedule.enabled ? band("beta") : BORDER}`,
+              borderColor: schedule.enabled ? band("beta") : BORDER,
               background: schedule.enabled ? withAlpha(band("beta"), 0.08) : "transparent",
             }}
           >
             {schedule.enabled ? "scheduled ✓" : "schedule off"}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -152,20 +159,25 @@ export default function SweepControl({
           {CADENCES.map((c) => {
             const active = c.label === currentCadence;
             return (
-              <button
+              // xs is exactly this control's px-2.5/py-1/11px, so only the
+              // radius is overridden. `selected` announces which cadence is in
+              // force — the disabled attribute alone never said so.
+              <Button
                 key={c.label}
-                type="button"
+                variant="pill"
+                size="xs"
+                selected={active}
                 onClick={() => setCadence(c.secs)}
                 disabled={pending || active}
-                className={`${FONT_MONO} rounded px-2.5 py-1 text-[11px]`}
+                className="rounded"
                 style={{
                   color: active ? band("gamma") : INK_DIM,
-                  border: `1px solid ${active ? band("gamma") : BORDER}`,
+                  borderColor: active ? band("gamma") : BORDER,
                   background: active ? withAlpha(band("gamma"), 0.08) : "transparent",
                 }}
               >
                 {c.label}
-              </button>
+              </Button>
             );
           })}
         </div>

@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
 import { band, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
 import { ageLabel, STAGES, stageOf, type IngestData } from "../ingest-data";
@@ -65,18 +66,26 @@ export default function ManifestView({ data: initial }: { data: IngestData }) {
 
       {/* triage filters */}
       <div className={`${FONT_MONO} mt-4 flex items-center gap-2 text-xs`}>
+        {/* `selected` is what makes the active filter announceable (aria-pressed);
+            the look stays in classes because this strip carries its own blue
+            tint rather than the theta band, and controlStyle's inline colours
+            would otherwise beat both it and the hover. */}
         {FILTERS.map((f) => (
-          <button
+          <Button
             key={f}
+            variant="pill"
+            size="xs"
+            selected={filter === f}
             onClick={() => setFilter(f)}
-            className={`rounded-full border px-3 py-1 transition ${
+            className={`px-3 text-xs ${
               filter === f
                 ? "border-[#7fa8f5]/70 bg-[#7fa8f5]/[0.08] text-[#a8c4f8]"
                 : "border-white/12 text-[#e9edff]/50 hover:border-white/30 hover:text-white"
             }`}
+            style={{ borderColor: undefined, color: undefined, background: undefined }}
           >
             {f === "attention" ? `needs attention · ${attentionCount}` : f}
-          </button>
+          </Button>
         ))}
         <span className="ml-auto text-[#e9edff]/35">
           {rows.length} / {data.sources.length} shipments · attention floats first

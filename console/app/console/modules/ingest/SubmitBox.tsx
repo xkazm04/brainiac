@@ -8,7 +8,9 @@
 
 import { useState } from "react";
 
-import { band, FONT_MONO } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { band, MAGENTA } from "@/design/theme";
 
 const THETA = band("theta");
 
@@ -44,24 +46,34 @@ export default function SubmitBox({
 
   return (
     <div className="flex items-center gap-2">
-      <input
+      {/* Capsule field: `fullWidth={false}` because the caller owns the width
+          (w-72) — a baked-in w-full would win or lose by stylesheet order.
+          A failed submit reddens the edge; `invalid` also announces it, and the
+          MAGENTA override keeps the original solid edge rather than the token's
+          softer invalid wash. */}
+      <Input
         value={content}
         onChange={(e) => setContent(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         placeholder={live ? "drop a learning into the pipeline…" : "demo mode — server offline"}
         disabled={!live}
-        className={`${FONT_MONO} w-72 rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm text-white placeholder:text-[#e9edff]/30 focus:outline-none disabled:opacity-50`}
-        style={{ borderColor: state === "error" ? "#ff5da2" : undefined }}
+        fullWidth={false}
+        invalid={state === "error"}
+        className="w-72 rounded-full px-4"
+        style={{ borderColor: state === "error" ? MAGENTA : undefined }}
         aria-label="Submit a memory"
       />
-      <button
+      <Button
+        variant="pill"
+        size="sm"
+        accent={THETA}
         onClick={submit}
         disabled={!live || !content.trim() || state === "sending"}
-        className={`${FONT_MONO} rounded-full border px-4 py-2 text-sm transition disabled:opacity-40`}
-        style={{ borderColor: THETA, color: THETA }}
+        className="px-4 py-2"
+        style={{ borderColor: THETA }}
       >
         {state === "sending" ? "…" : state === "sent" ? "✓ queued" : state === "error" ? "failed" : "⚡ capture"}
-      </button>
+      </Button>
     </div>
   );
 }

@@ -11,6 +11,8 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import type { MintedToken, OrgUser, TokenPreview } from "@/lib/types";
+import Button from "@/components/ui/Button";
+import { Input, Select } from "@/components/ui/Input";
 import { band, FONT_DISPLAY, FONT_MONO, GROUND, GROUND_DIM, LABEL, MAGENTA } from "@/design/theme";
 
 import { demoPreview, fetchPreview, mintKey, SCOPES } from "./keys-data";
@@ -125,19 +127,24 @@ export function MintPanel({
       <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
         cut a new key
       </div>
-      <input
+      {/* The mint form is unlabelled by design — the section header above is the
+          only chrome that fits the rail — so each field carries an aria-label.
+          `focus:border-white/40` is gone with the rest: the ring is the focus
+          signal now, and it survives an `outline-none` further down a class. */}
+      <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="key name — who or what will hold it"
         disabled={!live}
-        className={`${FONT_MONO} w-full rounded-lg border border-white/15 bg-white/[0.03] px-3.5 py-2 text-sm text-white placeholder:text-[#e9edff]/30 focus:border-white/40 focus:outline-none disabled:opacity-50`}
+        aria-label="Key name"
       />
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <Select
           value={userId}
           onChange={(e) => setUserId(e.target.value)}
           disabled={!live && users.length === 0}
-          className={`${FONT_MONO} rounded-lg border border-white/15 bg-[#0a090f] px-3 py-2 text-sm text-white focus:border-white/40 focus:outline-none`}
+          fullWidth={false}
+          className="px-3"
           aria-label="Acts as user"
         >
           {users.map((u) => (
@@ -145,22 +152,29 @@ export function MintPanel({
               {u.email} · {u.teams.map((t) => t.name).join("+") || "no team"}
             </option>
           ))}
-        </select>
+        </Select>
+        {/* Scope toggles. `selected` emits aria-pressed; the pressed *look*
+            stays in classes because admin reads magenta and the rest read white
+            — a single accent could not say both. controlStyle's inline colours
+            are cleared so the class pair (and its hover) still wins. */}
         {SCOPES.map((s) => (
-          <button
+          <Button
             key={s}
+            variant="pill"
+            size="xs"
+            selected={scopes.includes(s)}
             onClick={() => toggleScope(s)}
-            className={`${FONT_MONO} rounded-full border px-3 py-1 text-xs transition ${
+            className={`px-3 text-xs ${
               scopes.includes(s)
                 ? s === "admin"
                   ? "border-[#ff5da2]/70 text-[#ff5da2]"
                   : "border-white/50 text-white"
                 : "border-white/12 text-[#e9edff]/40 hover:border-white/30"
             }`}
-            aria-pressed={scopes.includes(s)}
+            style={{ borderColor: undefined, color: undefined, background: undefined }}
           >
             {s}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -175,14 +189,17 @@ export function MintPanel({
         </div>
       )}
 
-      <button
+      <Button
+        variant="pill"
+        size="md"
+        accent={state === "error" ? MAGENTA : GROUND}
         onClick={mint}
         disabled={!live || !name.trim() || scopes.length === 0 || state === "minting"}
-        className={`${FONT_MONO} rounded-full border px-5 py-2 text-sm font-medium transition disabled:opacity-40`}
-        style={{ borderColor: state === "error" ? MAGENTA : GROUND, color: state === "error" ? MAGENTA : GROUND }}
+        className="font-medium"
+        style={{ borderColor: state === "error" ? MAGENTA : GROUND }}
       >
         {state === "minting" ? "cutting…" : state === "error" ? "mint failed" : "◈ mint key"}
-      </button>
+      </Button>
       {!live && (
         <p className={`${FONT_MONO} text-xs text-[#e9edff]/35`}>demo mode — minting needs the live server</p>
       )}
@@ -216,7 +233,10 @@ export function MintPanel({
                 {minted.token}
               </div>
               <div className="mt-4 flex items-center gap-3">
-                <button
+                <Button
+                  variant="pill"
+                  size="sm"
+                  accent={GROUND}
                   onClick={async () => {
                     // Only claim "copied" when the write actually succeeds. This is
                     // a one-time secret (not stored), so a false ✓ on a blocked or
@@ -229,21 +249,27 @@ export function MintPanel({
                       setCopied(false);
                     }
                   }}
-                  className={`${FONT_MONO} rounded-full border px-4 py-1.5 text-sm transition`}
-                  style={{ borderColor: GROUND, color: GROUND }}
+                  className="px-4"
+                  style={{ borderColor: GROUND }}
                 >
                   {copied ? "✓ copied" : "copy secret"}
-                </button>
-                <button
+                </Button>
+                {/* Dismiss is the quieter of the pair and brightens on hover, so
+                    its colours stay in classes — an inline colour cannot be
+                    beaten by a `hover:` utility. */}
+                <Button
+                  variant="pill"
+                  size="sm"
                   onClick={() => {
                     setMinted(null);
                     setCopied(false);
                     onMinted();
                   }}
-                  className={`${FONT_MONO} rounded-full border border-white/15 px-4 py-1.5 text-sm text-[#e9edff]/60 transition hover:border-white/40 hover:text-white`}
+                  className="border-white/15 px-4 text-[#e9edff]/60 hover:border-white/40 hover:text-white"
+                  style={{ borderColor: undefined, color: undefined }}
                 >
                   done — I stored it
-                </button>
+                </Button>
               </div>
             </motion.div>
           </motion.div>

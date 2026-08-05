@@ -10,6 +10,7 @@
 
 import { useState, useTransition } from "react";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   BORDER,
@@ -53,16 +54,22 @@ function PublishControl({ skill, detail }: { skill: LibrarySkill; detail?: Skill
       </span>
       <div className="flex flex-wrap items-center gap-3">
         {hasDraft && (
-          <button
+          // Same capsule the standards gate uses — gold text from `accent`,
+          // with the border pinned to full opacity so the one signing act on
+          // the shelf keeps its weight (controlStyle fades a pill to 0.4).
+          <Button
+            variant="pill"
+            size="md"
+            accent={GOLD}
             onClick={() => start(async () => setResult(await publishSkillAction(skill.slug)))}
             disabled={pending}
-            className={`${FONT_MONO} rounded-full border px-4 py-2 text-xs uppercase tracking-[0.14em] transition hover:scale-[1.02] disabled:opacity-40`}
-            style={{ borderColor: GOLD, color: GOLD }}
+            className="px-4 text-xs uppercase tracking-[0.14em] hover:scale-[1.02]"
+            style={{ borderColor: GOLD }}
           >
             {pending
               ? "publishing…"
               : `publish ${draft ? `v${draft.semver}` : "the draft"} — sign it by name`}
-          </button>
+          </Button>
         )}
         {result && (
           <span className={`${FONT_MONO} text-[11px]`} style={{ color: result.ok ? BETA : GOLD }}>
@@ -102,7 +109,20 @@ function SkillCard({
       className="flex flex-col overflow-hidden rounded-xl"
       style={{ background: PANEL, border: `1px solid ${open ? withAlpha(BETA, 0.4) : BORDER}` }}
     >
-      <button onClick={onToggle} className="flex flex-col gap-2 px-6 py-5 text-left" aria-expanded={open}>
+      {/* The whole card head is the disclosure control. `quiet` rather than
+          `row`: row's shape is a single centred line, and this stacks a title
+          row over a description. Every descendant sets its own colour and size,
+          so the variant contributes only the focus ring — which is the point,
+          since this was a full-width click target with no visible focus at all.
+          `mono={false}` keeps the display face on the heading. */}
+      <Button
+        variant="quiet"
+        mono={false}
+        onClick={onToggle}
+        className="flex flex-col gap-2 px-6 py-5 text-left"
+        style={{ color: undefined }}
+        aria-expanded={open}
+      >
         <div className="flex flex-wrap items-center gap-3">
           <h2 className={`${FONT_DISPLAY} text-xl`} style={{ color: INK }}>
             {skill.name}
@@ -136,7 +156,7 @@ function SkillCard({
             {skill.description}
           </p>
         )}
-      </button>
+      </Button>
 
       {open && detail && (
         <div className="flex flex-col gap-5 border-t px-6 py-5" style={{ borderColor: BORDER }}>

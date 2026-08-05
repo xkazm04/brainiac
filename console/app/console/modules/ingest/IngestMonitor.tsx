@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
 import { band } from "@/design/theme";
 
 import { makeLargeIngest, type IngestData } from "./ingest-data";
@@ -94,14 +95,24 @@ export default function IngestMonitor({ data }: { data: IngestData }) {
           {VIEWS.map((v) => {
             const selected = v.id === active;
             return (
-              <button
+              // A tab, not a toggle: `aria-selected` (not aria-pressed) is what
+              // a tablist announces, so `selected` is deliberately not passed.
+              // `quiet` because the "fill" is the shared layoutId pill below,
+              // not a border — and the selected label is pinned to black
+              // inline, since quiet's `hover:text-white` would otherwise wash
+              // it out the moment the pointer landed on the active tab.
+              <Button
                 key={v.id}
+                variant="quiet"
+                size="md"
+                mono={false}
                 role="tab"
                 aria-selected={selected}
                 onClick={() => pick(v.id)}
-                className={`relative rounded-full px-4 py-2 text-sm font-medium transition ${
+                className={`relative rounded-full px-4 py-2 font-medium ${
                   selected ? "text-black" : "text-white/70 hover:text-white"
                 }`}
+                style={{ color: selected ? "#000" : undefined }}
               >
                 {selected && (
                   <motion.span
@@ -114,20 +125,32 @@ export default function IngestMonitor({ data }: { data: IngestData }) {
                   <span className="inline-block h-2 w-2 rounded-full" style={{ background: band("theta") }} />
                   {v.name}
                 </span>
-              </button>
+              </Button>
             );
           })}
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-3 text-[11px] text-white/60 [text-shadow:0_1px_4px_rgba(0,0,0,0.9)]">
           <span>{current.blurb}</span>
           <span className="text-white/25">·</span>
-          <button
+          {/* `selected` supplies aria-pressed. The colours stay class-side (the
+              control brightens on hover, which an inline colour would block),
+              and the black wash is inline so pill's `hover:bg-white/5` cannot
+              lighten a chip that sits over the view. */}
+          <Button
+            variant="pill"
+            size="xs"
+            mono={false}
+            selected={large}
             onClick={() => pickScale(!large)}
-            className="rounded-full border border-white/20 bg-black/50 px-2.5 py-0.5 transition hover:border-white/50 hover:text-white"
-            aria-pressed={large}
+            className="border-white/20 py-0.5 hover:border-white/50 hover:text-white"
+            style={{
+              borderColor: undefined,
+              color: undefined,
+              background: "rgba(0,0,0,0.5)",
+            }}
           >
             load: {large ? "40 sources (mock)" : `${data.sources.length} live`}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
