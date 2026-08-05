@@ -105,6 +105,33 @@ export const GROUND_DIM = "rgba(223,230,242,0.45)";
 export const LABEL = `${FONT_MONO} text-[11px] uppercase tracking-[0.2em]`;
 
 /**
+ * Focus ring — the accessibility token.
+ *
+ * The console shipped 100+ hand-rolled controls with nine focus declarations
+ * between them, so a keyboard operator could not see where they were. The ring
+ * is gamma at full brightness: the binding band, the one accent that is legible
+ * against every module's own hue and against the gold solid button (which is
+ * why it is an *offset* outline rather than a border or an inset shadow).
+ *
+ * Two surfaces consume this, and they must agree:
+ *  - `--focus-ring` in app/globals.css, which drives both the unlayered
+ *    `:where(a,button,…):focus-visible` baseline (every control on every route,
+ *    including ones no one has migrated yet) and the `.focus-ring` class.
+ *  - FOCUS below, the class every shared primitive applies explicitly.
+ *
+ * `.focus-ring` is a real CSS class rather than Tailwind `focus-visible:outline-*`
+ * utilities on purpose: it lives outside any cascade layer, so it beats the
+ * `focus:outline-none` utilities scattered through the existing inputs no matter
+ * what order Tailwind emits them in.
+ */
+export const FOCUS_RING = band("gamma", 68, 0.9);
+export const FOCUS_RING_WIDTH = "2px";
+export const FOCUS_RING_OFFSET = "2px";
+
+/** Apply to every interactive element. Pairs with `.focus-ring` in globals.css. */
+export const FOCUS = "focus-ring";
+
+/**
  * Motion policy:
  * - Hero/brand surfaces (home field) may run ambient canvas motion — the
  *   wave IS the brand — always behind a prefers-reduced-motion static frame.
