@@ -1478,7 +1478,7 @@ pub(crate) struct CreatedTokenResponse {
     request_body = CreateTokenBody,
     responses(
         (status = 201, description = "Token minted", body = CreatedTokenResponse),
-        (status = 400, description = "Empty name or scopes outside the mintable set (see auth::SCOPES)"),
+        (status = 400, description = "Empty name, scopes outside the mintable set (see auth::SCOPES), a `user_id` that is not a member of the caller's org, or a `project_id` from another org"),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `admin` scope"),
     )
@@ -1512,7 +1512,40 @@ pub(crate) async fn create_token(
         )
             .into());
     }
-    let user_id = body.user_id.unwrap_or(ctx.principal.user_id);
+    // The principal the key will ACT AS. Minting for yourself is your own
+    // authority and needs no roster check (it is also the only shape available
+    // on a fresh deploy, where the break-glass principal has no `users` row yet
+    // — scripts/first-boot.sh mints exactly this way).
+    //
+    // An EXPLICIT `user_id` is different: it is caller-supplied, and the caller
+    // holds `admin`, so without this check the endpoint mints authority for any
+    // uuid at all — including identities that belong to nobody and can
+    // therefore never be recognised, revoked by their owner, or audited to a
+    // person. `console/src/lib/key-guard.ts` closes the console's path to here;
+    // this closes the endpoint itself, for every direct caller. Same roster the
+    // console's picker reads (`GET /v1/org/users`), and it fails CLOSED: a
+    // lookup error is a 500, never a fall-through to minting.
+    let user_id = match body.user_id {
+        None => ctx.principal.user_id,
+        Some(requested) if requested == ctx.principal.user_id => requested,
+        Some(requested) => {
+            let member = brainiac_store::orgs::user_belongs(
+                state.store.pool(),
+                ctx.principal.org_id,
+                requested,
+            )
+            .await
+            .map_err(internal)?;
+            if !member {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("user {requested} is not a member of this org"),
+                )
+                    .into());
+            }
+            requested
+        }
+    };
     // A project-scoped key must point at a project the caller's org actually
     // owns — otherwise a typo'd/foreign UUID would mint a key whose scope
     // nothing can resolve (or worse, referencing another org's project).

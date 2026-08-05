@@ -3248,7 +3248,7 @@
             }
           },
           "400": {
-            "description": "Empty name or scopes outside the mintable set (see auth::SCOPES)"
+            "description": "Empty name, scopes outside the mintable set (see auth::SCOPES), a `user_id` that is not a member of the caller's org, or a `project_id` from another org"
           },
           "401": {
             "description": "Missing or unknown bearer token"
