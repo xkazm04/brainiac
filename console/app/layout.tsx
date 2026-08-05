@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import type { ReactNode } from "react";
 
+import { siteUrl } from "@/lib/site-url";
+
 import "./globals.css";
 
 // The fused identity's type pair (see console/src/design/theme.ts):
@@ -16,8 +18,22 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  // Without a metadataBase every relative asset Next emits (og:image, twitter
+  // card, canonical) stays relative — and a crawler that fetches the page from
+  // its own origin cannot resolve it, so the share card is simply absent. There
+  // is no production domain yet: see src/lib/site-url.ts for what to set.
+  metadataBase: siteUrl(),
+  // Deliberately NO title.template: every page that sets a title already spells
+  // "· Brainiac" itself (see app/signup/page.tsx), so a template would render
+  // "Get a project · Brainiac · Brainiac".
   title: "Brainiac Console",
   description: "Governance console for organizational AI knowledge",
+  openGraph: {
+    siteName: "Brainiac",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: { card: "summary_large_image" },
 };
 
 // No global chrome here: the operator header lives in the console-module
