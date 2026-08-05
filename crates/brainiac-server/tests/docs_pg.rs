@@ -393,33 +393,57 @@ async fn doc_search_filters_by_kind_tag_and_staleness() {
 
     // kind is exact: the page is a runbook, not a topic page.
     assert_eq!(
-        search(DocFilter { kind: Some("runbook"), ..Default::default() }).await.len(),
+        search(DocFilter {
+            kind: Some("runbook"),
+            ..Default::default()
+        })
+        .await
+        .len(),
         1
     );
-    assert!(search(DocFilter { kind: Some("topic_page"), ..Default::default() })
-        .await
-        .is_empty());
+    assert!(search(DocFilter {
+        kind: Some("topic_page"),
+        ..Default::default()
+    })
+    .await
+    .is_empty());
 
     // tag walks revision provenance → entity links → CANONICAL name,
     // case-insensitively; a name nothing cites matches no page.
     assert_eq!(
-        search(DocFilter { tag: Some("psp gateway"), ..Default::default() }).await.len(),
+        search(DocFilter {
+            tag: Some("psp gateway"),
+            ..Default::default()
+        })
+        .await
+        .len(),
         1,
         "canonical entity name should match case-insensitively"
     );
-    assert!(search(DocFilter { tag: Some("kafka"), ..Default::default() })
-        .await
-        .is_empty());
+    assert!(search(DocFilter {
+        tag: Some("kafka"),
+        ..Default::default()
+    })
+    .await
+    .is_empty());
 
     // Staleness: the fresh revision left the page clean; dirtying the cited
     // memory flips which side of the filter it lands on.
     assert_eq!(
-        search(DocFilter { stale: Some(false), ..Default::default() }).await.len(),
+        search(DocFilter {
+            stale: Some(false),
+            ..Default::default()
+        })
+        .await
+        .len(),
         1
     );
-    assert!(search(DocFilter { stale: Some(true), ..Default::default() })
-        .await
-        .is_empty());
+    assert!(search(DocFilter {
+        stale: Some(true),
+        ..Default::default()
+    })
+    .await
+    .is_empty());
     {
         let mut tx = ctx.store.worker_tx(&p).await.expect("tx");
         brainiac_store::documents::mark_dirty_for_memory(&mut tx, mem_id)
@@ -428,22 +452,33 @@ async fn doc_search_filters_by_kind_tag_and_staleness() {
         tx.commit().await.expect("commit");
     }
     assert_eq!(
-        search(DocFilter { stale: Some(true), ..Default::default() }).await.len(),
+        search(DocFilter {
+            stale: Some(true),
+            ..Default::default()
+        })
+        .await
+        .len(),
         1
     );
 
     // Filters AND with the lexical needle.
     assert_eq!(
-        search(DocFilter { q: Some("payments"), kind: Some("runbook"), ..Default::default() })
-            .await
-            .len(),
+        search(DocFilter {
+            q: Some("payments"),
+            kind: Some("runbook"),
+            ..Default::default()
+        })
+        .await
+        .len(),
         1
     );
-    assert!(
-        search(DocFilter { q: Some("kafka"), kind: Some("runbook"), ..Default::default() })
-            .await
-            .is_empty()
-    );
+    assert!(search(DocFilter {
+        q: Some("kafka"),
+        kind: Some("runbook"),
+        ..Default::default()
+    })
+    .await
+    .is_empty());
 }
 
 #[tokio::test]

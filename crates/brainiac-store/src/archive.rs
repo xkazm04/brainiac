@@ -163,12 +163,32 @@ fn bind_filter<'q>(
 ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
     query
         .bind(f.q.as_deref())
-        .bind(if mask_out == Dim::Kind { None } else { f.kind.as_deref() })
-        .bind(if mask_out == Dim::Status { None } else { f.status.as_deref() })
-        .bind(if mask_out == Dim::Team { None } else { f.team_id })
-        .bind(if mask_out == Dim::Visibility { None } else { f.visibility.as_deref() })
+        .bind(if mask_out == Dim::Kind {
+            None
+        } else {
+            f.kind.as_deref()
+        })
+        .bind(if mask_out == Dim::Status {
+            None
+        } else {
+            f.status.as_deref()
+        })
+        .bind(if mask_out == Dim::Team {
+            None
+        } else {
+            f.team_id
+        })
+        .bind(if mask_out == Dim::Visibility {
+            None
+        } else {
+            f.visibility.as_deref()
+        })
         .bind(f.as_of)
-        .bind(if mask_out == Dim::Project { None } else { f.project.as_deref() })
+        .bind(if mask_out == Dim::Project {
+            None
+        } else {
+            f.project.as_deref()
+        })
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -256,7 +276,9 @@ pub async fn facets(conn: &mut PgConnection, f: &MemoryFilter) -> Result<MemoryF
              FROM memories m {FILTER}
              GROUP BY {col} ORDER BY n DESC, value ASC"
         );
-        let rows = bind_filter(sqlx::query(&sql), f, dim).fetch_all(conn).await?;
+        let rows = bind_filter(sqlx::query(&sql), f, dim)
+            .fetch_all(conn)
+            .await?;
         Ok(rows
             .iter()
             .map(|r| {

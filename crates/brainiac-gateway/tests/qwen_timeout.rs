@@ -70,7 +70,10 @@ async fn stalled_upstream_times_out_as_a_retryable_transport_error() {
         .chain()
         .filter_map(|e| (e as &dyn Error).downcast_ref::<reqwest::Error>())
         .any(reqwest::Error::is_timeout);
-    assert!(is_timeout, "the root cause must be a genuine timeout, got: {chain}");
+    assert!(
+        is_timeout,
+        "the root cause must be a genuine timeout, got: {chain}"
+    );
 
     // The upstream really was hit (connect succeeded, then stalled) — this is a
     // timeout, not a connection refusal.

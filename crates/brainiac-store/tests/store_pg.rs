@@ -12,7 +12,9 @@ use brainiac_core::{
     Enforcement, LibraryArtifactKind, LibraryUsageEvent, MemoryKind, MemoryStatus, Principal,
     StandardLifecycle, StandardProvenanceKind, Visibility,
 };
-use brainiac_store::{entities, feedback, library, memories, orgs, projects, queue, retrieval, Store};
+use brainiac_store::{
+    entities, feedback, library, memories, orgs, projects, queue, retrieval, Store,
+};
 use uuid::Uuid;
 
 fn database_url() -> Option<String> {
@@ -1758,9 +1760,16 @@ async fn project_lens_keeps_project_rows_plus_org_shared() {
         provenance_id: None,
         project_id: project,
     };
-    memories::insert(c, &mk(240, Some(payments), "zorbit retries use exponential backoff"))
-        .await
-        .expect("m240");
+    memories::insert(
+        c,
+        &mk(
+            240,
+            Some(payments),
+            "zorbit retries use exponential backoff",
+        ),
+    )
+    .await
+    .expect("m240");
     memories::insert(c, &mk(241, Some(billing), "zorbit invoices settle nightly"))
         .await
         .expect("m241");
@@ -3037,9 +3046,10 @@ async fn an_isolated_project_still_finds_its_own_memories_through_hybrid_search(
 
     let embedder = DeterministicEmbedder::default();
     let mut tx = ctx.store.scoped_tx(&iso_proj_a()).await.expect("tx");
-    let ver = memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
-        .await
-        .expect("ver");
+    let ver =
+        memories::ensure_embedding_version(&mut tx, embedder.model_name(), embedder.dim() as i32)
+            .await
+            .expect("ver");
     let hits = retrieval::search(
         &mut tx,
         ctx.store.pool(),

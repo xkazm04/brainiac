@@ -493,7 +493,9 @@ pub async fn flagged_facets(
     let mut project_facets: Vec<Facet> = projects
         .into_iter()
         .map(|((id, name), count)| Facet {
-            value: id.map(|u| u.to_string()).unwrap_or_else(|| "none".to_string()),
+            value: id
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             label: name.unwrap_or_else(|| "org-shared".to_string()),
             count,
         })

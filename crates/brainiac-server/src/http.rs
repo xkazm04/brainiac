@@ -595,9 +595,10 @@ async fn effective_project(
     let Some(project_id) = requested else {
         return Ok(ctx.project_id);
     };
-    let ok = brainiac_store::projects::belongs(state.store.pool(), ctx.principal.org_id, project_id)
-        .await
-        .map_err(internal)?;
+    let ok =
+        brainiac_store::projects::belongs(state.store.pool(), ctx.principal.org_id, project_id)
+            .await
+            .map_err(internal)?;
     if !ok {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1459,9 +1460,10 @@ pub(crate) async fn create_token(
     // owns — otherwise a typo'd/foreign UUID would mint a key whose scope
     // nothing can resolve (or worse, referencing another org's project).
     if let Some(project_id) = body.project_id {
-        let ok = brainiac_store::projects::belongs(state.store.pool(), ctx.principal.org_id, project_id)
-            .await
-            .map_err(internal)?;
+        let ok =
+            brainiac_store::projects::belongs(state.store.pool(), ctx.principal.org_id, project_id)
+                .await
+                .map_err(internal)?;
         if !ok {
             return Err((
                 StatusCode::BAD_REQUEST,

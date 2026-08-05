@@ -258,7 +258,11 @@ fn bind_doc<'q>(
         .bind(f.tag)
         .bind(f.stale)
         .bind(if mask == DocDim::Space { None } else { f.space })
-        .bind(if mask == DocDim::Status { None } else { f.status })
+        .bind(if mask == DocDim::Status {
+            None
+        } else {
+            f.status
+        })
         .bind(f.needs_review)
         .bind(f.published_only)
 }
@@ -357,9 +361,15 @@ pub async fn browse_facets(conn: &mut PgConnection, f: &DocFilter<'_>) -> Result
 
     // The two tabs are booleans, so their "cross-filtered" count is just the
     // filtered total with that predicate forced on — one count each.
-    let review_filter = DocFilter { needs_review: Some(true), ..*f };
+    let review_filter = DocFilter {
+        needs_review: Some(true),
+        ..*f
+    };
     let needs_review = browse_count(conn, &review_filter).await?;
-    let dirty_filter = DocFilter { stale: Some(true), ..*f };
+    let dirty_filter = DocFilter {
+        stale: Some(true),
+        ..*f
+    };
     let dirty = browse_count(conn, &dirty_filter).await?;
 
     Ok(DocFacets {

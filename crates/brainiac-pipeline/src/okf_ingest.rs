@@ -405,7 +405,7 @@ mod tests {
             .iter()
             .map(|p| {
                 p.strip_prefix(&tmp)
-                    .unwrap()
+                    .expect("walked path is under tmp")
                     .to_string_lossy()
                     .replace('\\', "/")
             })

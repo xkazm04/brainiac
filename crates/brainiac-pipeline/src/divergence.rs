@@ -210,7 +210,11 @@ pub async fn scan_org(
                         .join("\n"),
                 ),
             };
-            let noun = if axis == "project" { "application" } else { "team" };
+            let noun = if axis == "project" {
+                "application"
+            } else {
+                "team"
+            };
             let user = format!(
                 "System / concept: {canonical_name}\n\nWhat each {noun} has recorded about it:\n{listed}"
             );
@@ -234,7 +238,13 @@ pub async fn scan_org(
             };
             if v.divergence && !v.practice.trim().is_empty() {
                 stats.divergences += 1;
-                confirmed.push((*canonical_id, canonical_name.clone(), v, resp.model_ref, axis));
+                confirmed.push((
+                    *canonical_id,
+                    canonical_name.clone(),
+                    v,
+                    resp.model_ref,
+                    axis,
+                ));
             }
         }
     }

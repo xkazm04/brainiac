@@ -167,7 +167,10 @@ async fn rate_limit_429_is_retried_then_exhausted() {
     let chain = format!("{err:#}");
     // The caller sees a retryable-exhausted error that names the 429 status and
     // the attempt budget it burned (BRAINIAC_GATEWAY_RETRIES=2 for this binary).
-    assert!(chain.contains("429"), "must name the 429 status, got: {chain}");
+    assert!(
+        chain.contains("429"),
+        "must name the 429 status, got: {chain}"
+    );
     assert!(
         chain.contains("failed after 2 attempts"),
         "must report the exhausted attempt budget, got: {chain}"
@@ -175,7 +178,11 @@ async fn rate_limit_429_is_retried_then_exhausted() {
 
     // 429 is retried at the provider boundary: the upstream saw both attempts.
     let hits = server.received_requests().await.expect("recorded");
-    assert_eq!(hits.len(), 2, "429 must be retried up to the attempt budget");
+    assert_eq!(
+        hits.len(),
+        2,
+        "429 must be retried up to the attempt budget"
+    );
 }
 
 #[tokio::test]
@@ -194,7 +201,10 @@ async fn permanent_4xx_is_not_retried() {
         .expect_err("auth failure is permanent");
 
     let chain = format!("{err:#}");
-    assert!(chain.contains("401"), "must name the 401 status, got: {chain}");
+    assert!(
+        chain.contains("401"),
+        "must name the 401 status, got: {chain}"
+    );
 
     let hits = server.received_requests().await.expect("recorded");
     assert_eq!(hits.len(), 1, "permanent 4xx must not be retried");

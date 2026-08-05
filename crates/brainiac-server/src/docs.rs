@@ -275,11 +275,7 @@ pub(crate) async fn docs_list(
             brainiac_core::DocKind::parse(s)
                 .map(|k| k.as_str())
                 .ok_or_else(|| -> HttpError {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        format!("unknown page kind `{s}`"),
-                    )
-                        .into()
+                    (StatusCode::BAD_REQUEST, format!("unknown page kind `{s}`")).into()
                 })
         })
         .transpose()?;

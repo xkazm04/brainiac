@@ -312,7 +312,7 @@ pub(crate) async fn onboard_poll(
         ("claimed", _) => return Ok(bare("claimed")),
         ("approved", false) => {}
         (other, _) => {
-            return Err(internal(anyhow::anyhow!("impossible pairing status {other:?}")).into())
+            return Err(internal(anyhow::anyhow!("impossible pairing status {other:?}")))
         }
     }
 
@@ -331,8 +331,7 @@ pub(crate) async fn onboard_poll(
                 return Err(internal(anyhow::anyhow!(
                     "approved pairing {} is missing org/project/approver",
                     claimed.id
-                ))
-                .into())
+                )))
             }
         };
     let project_name = brainiac_store::projects::list(pool, org_id)

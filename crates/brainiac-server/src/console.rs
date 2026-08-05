@@ -3928,7 +3928,10 @@ fn memory_filter(
     as_of: Option<chrono::DateTime<chrono::Utc>>,
 ) -> brainiac_store::archive::MemoryFilter {
     brainiac_store::archive::MemoryFilter {
-        q: p.q.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        q: p.q
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         kind: p.kind.clone(),
         status: p.status.clone(),
         team_id: p.team,
