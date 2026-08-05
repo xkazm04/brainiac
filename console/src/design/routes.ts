@@ -148,14 +148,33 @@ export const routeForPath = (pathname: string): ProductRoute | undefined =>
 // copies drifted twice before (/kb unreachable, chrome stacked on /demo).
 
 /**
- * Exact-match public paths: the landing wave field, the gate itself, and the
- * free-tier sign-up.
+ * Exact-match public paths: the landing wave field, the gate itself, the
+ * free-tier sign-up, the legal pages, and the crawler surfaces.
  *
  * `/signup` MUST be public — it exists for someone who has no passcode, which is
  * the entire point of it. It reads no org data: the only privileged step is the
  * server-side provisioning call, made after the Google sign-in is verified.
+ *
+ * The crawler entries are load-bearing, not decoration. The middleware's matcher
+ * excludes static output and a list of file EXTENSIONS (see middleware.ts), so
+ * `/robots.txt` slips through on `.txt` — but `/sitemap.xml` does not (no `.xml`
+ * in that list), and Next's generated metadata routes `/opengraph-image` and
+ * `/icon` have no extension at all. Without these three a crawler asking for the
+ * sitemap, and every social platform fetching the share card, would be handed a
+ * 307 to /login. None of them reads org data: all three are built from static
+ * content and src/design/theme.ts.
  */
-const PUBLIC_PATHS = new Set<string>(["/", "/login", "/signup"]);
+const PUBLIC_PATHS = new Set<string>([
+  "/",
+  "/login",
+  "/signup",
+  "/privacy",
+  "/terms",
+  "/sitemap.xml",
+  "/robots.txt",
+  "/opengraph-image",
+  "/icon",
+]);
 
 /** Public subtrees — each renders its own shell (pitch, demo tour, wiki, library). */
 const PUBLIC_SUBTREES = ["/pitch", "/demo", "/kb", "/library"];
