@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
+import { securityHeaders } from "./src/security/csp";
+
 // The operator modules stopped being routes: the console is one page and the
 // module is a query param (/console?m=reviews). These keep every old inbound
 // link working — both the original top-level /reviews and the /console/reviews
@@ -35,6 +37,12 @@ const nextConfig: NextConfig = {
   // never corrupt a running dev server's .next — the cause of the recurring
   // "Cannot find module './NNN.js'" / missing-CSS breakages.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Baseline security headers on every response — including Next's static
+  // output, which the auth middleware's matcher deliberately skips. The policy
+  // itself, and what each allowance is for, is in src/security/csp.ts.
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders() }];
+  },
   async redirects() {
     return [
       // /reviews and /console/reviews → /console?m=reviews
