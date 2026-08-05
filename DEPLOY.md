@@ -48,6 +48,18 @@ it if you would rather it were not there.
 For liveness-only checks that write nothing (health, auth-is-on, OpenAPI, the
 console gate), `./scripts/smoke-test-env.sh` is the complementary script.
 
+> ⚠ **Verify with a principal that belongs to a team.** A memory defaults to
+> `visibility = 'team'` and takes its team from the writer's **first** team. The
+> `BRAINIAC_TOKENS` example ships `"teams": []`, and a teamless writer produces
+> memories with `team_id = NULL` — which the RLS read policy
+> (`migrations/0001_init.sql`, `memories_read`) matches with
+> `team_id IN (…)`. `NULL` matches nothing, for anyone, permanently. The write
+> returns 202, the pipeline reports `processed`, and the memory is unreadable
+> by every principal in the org including the one that wrote it. Put a real
+> team uuid in the token's `teams` array **and** ensure that user is a row in
+> `team_members` for it — RLS reads the table, not the token.
+> `verify-retrieval.sh` detects exactly this case and says so.
+
 `BRAINIAC_IMAGE_TAG` (default `latest`) picks the version; pin an exact tag such
 as `v0.3.0` for a reproducible host. Images are published to
 `ghcr.io/xkazm04/brainiac` and `…/brainiac-console` by
