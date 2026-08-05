@@ -13,9 +13,13 @@ COPY crates/brainiac-fixtures/Cargo.toml crates/brainiac-fixtures/
 COPY crates/brainiac-store/Cargo.toml crates/brainiac-store/
 COPY crates/brainiac-gateway/Cargo.toml crates/brainiac-gateway/
 COPY crates/brainiac-pipeline/Cargo.toml crates/brainiac-pipeline/
+# brainiac-publish is a workspace member, so cargo refuses to read the manifest
+# without it even though brainiac-server does not depend on it. Omitting it
+# broke every `docker build` of this image — including release.yml's.
+COPY crates/brainiac-publish/Cargo.toml crates/brainiac-publish/
 COPY crates/brainiac-eval/Cargo.toml crates/brainiac-eval/
 COPY crates/brainiac-server/Cargo.toml crates/brainiac-server/
-RUN for c in core fixtures store gateway pipeline eval; do \
+RUN for c in core fixtures store gateway pipeline publish eval; do \
         mkdir -p crates/brainiac-$c/src && echo "" > crates/brainiac-$c/src/lib.rs; \
     done && \
     mkdir -p crates/brainiac-server/src && \
