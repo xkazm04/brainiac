@@ -28,4 +28,13 @@ services:
     build:
       context: ./console
       dockerfile: Dockerfile
+      # Console Sentry can ONLY be wired here. Next.js inlines `NEXT_PUBLIC_*`
+      # at build time, so these must reach `npm run build` — a runtime env var
+      # on the console service is substituted into nothing. Both are optional:
+      # unset ⇒ empty ⇒ `if (dsn)` stays false and Sentry never initializes.
+      # They reuse the SAME .env.deploy vars the Rust server reads at runtime,
+      # so one DSN + one environment tag covers both halves of the stack.
+      args:
+        NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}
+        NEXT_PUBLIC_BRAINIAC_ENV: ${BRAINIAC_ENV:-production}
     image: ghcr.io/xkazm04/brainiac-console:${BRAINIAC_IMAGE_TAG:-latest}
