@@ -47,9 +47,16 @@ jobs:
             # the client bundle by design), but it is still repo configuration,
             # so it comes from a repository variable/secret rather than a
             # literal. An unset var yields "" — the previous behaviour.
+            # Same reasoning for the Plausible pair: NEXT_PUBLIC_PLAUSIBLE_DOMAIN
+            # is inlined at build time, so an image published without it ships
+            # with analytics compiled out and the funnel reports nothing. HOST is
+            # only needed when self-hosting Plausible; unset falls back to
+            # https://plausible.io.
             build-args: |
               NEXT_PUBLIC_SENTRY_DSN=${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
               NEXT_PUBLIC_BRAINIAC_ENV=production
+              NEXT_PUBLIC_PLAUSIBLE_DOMAIN=${{ vars.NEXT_PUBLIC_PLAUSIBLE_DOMAIN }}
+              NEXT_PUBLIC_PLAUSIBLE_HOST=${{ vars.NEXT_PUBLIC_PLAUSIBLE_HOST }}
     steps:
       - uses: actions/checkout@v4
 
