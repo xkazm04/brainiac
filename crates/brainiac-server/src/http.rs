@@ -609,6 +609,42 @@ async fn effective_project(
     Ok(Some(project_id))
 }
 
+/// What an operator is told when a memory write has no team to belong to.
+///
+/// This is the whole remedy, because half of it does not work: putting a uuid
+/// in the token's `teams` array without a matching `team_members` row leaves
+/// the row just as unreadable — RLS reads the TABLE, not the token. Kept
+/// deliberately in sync with the same diagnosis in `scripts/verify-retrieval.sh`.
+pub(crate) const NO_TEAM_MESSAGE: &str =
+    "this write has no team to belong to: the token's principal belongs to no team. \
+     A memory defaults to visibility='team' and takes its team from the writer's first \
+     team, so with no team its team_id is NULL — and the memories_read RLS policy \
+     (migrations/0001_init.sql) matches team-visible rows by `team_id IN (…)`, which NULL \
+     satisfies for nobody, including the writer. Refusing the write rather than storing \
+     something unreadable. Fix: give the principal a team — put a real team uuid in the \
+     token's `teams` array AND add the user to that team in `team_members` (RLS reads the \
+     table, not the token).";
+
+/// The team a memory write is attributed to — the ONE resolution point for
+/// every REST ingest path (single add, keyed add, every bulk item) and the MCP
+/// `memory_add` tool, which calls this too.
+///
+/// It returns a non-optional `Uuid` on purpose: a NULL team is not a benign
+/// default here but permanent, silent data loss (see [`NO_TEAM_MESSAGE`]), and
+/// no caller of this function can end up holding one.
+///
+/// NOTE what this does NOT cover: a NON-null team the writer is not actually a
+/// `team_members` row for is equally unreadable, and this guard passes it. The
+/// message says so; membership validation would be a second change.
+pub(crate) fn write_team_id(
+    principal: &Principal,
+    requested: Option<Uuid>,
+) -> Result<Uuid, HttpError> {
+    requested
+        .or_else(|| principal.team_ids.first().copied())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, NO_TEAM_MESSAGE.to_string()).into())
+}
+
 /// Validate one item of content, write its source, and enqueue extraction —
 /// the shared, non-idempotent ingest path behind single-add (no key) and every
 /// bulk item. An empty or oversized body is a 400 before any DB work.
@@ -620,14 +656,14 @@ async fn ingest_source(
     project_id: Option<Uuid>,
 ) -> Result<MemoryAcceptedResponse, HttpError> {
     let raw_text = encode_add_source(body)?;
-    let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
+    let team_id = write_team_id(principal, body.team_id)?;
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(principal).await.map_err(internal)?;
     brainiac_store::governance::insert_source(
         &mut tx,
         source_id,
         principal.org_id,
-        team_id,
+        Some(team_id),
         "manual",
         &raw_text,
         Some(principal.user_id),
@@ -652,7 +688,7 @@ async fn ingest_source(
     params(("Idempotency-Key" = Option<String>, Header, description = "Opaque retry token (≤200 chars). Same key + org ⇒ the original source_id/job_id, no duplicate source.")),
     responses(
         (status = 202, description = "Source stored and job enqueued (or the original receipt replayed for a repeated Idempotency-Key)", body = MemoryAcceptedResponse),
-        (status = 400, description = "Empty content, or an oversized content / Idempotency-Key"),
+        (status = 400, description = "Empty content, an oversized content / Idempotency-Key, or a principal with no team to attribute the memory to (a teamless write would be permanently unreadable — see the error message)"),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `write` scope"),
     )
@@ -674,14 +710,14 @@ pub(crate) async fn memory_add(
     // Keyed: validate + encode the body up front so even a first use of a bad
     // body is a clean 400 (never a stored, un-processable source).
     let raw_text = encode_add_source(&body)?;
-    let team_id = body.team_id.or_else(|| principal.team_ids.first().copied());
+    let team_id = write_team_id(&principal, body.team_id)?;
     let source_id = Uuid::new_v4();
     let mut tx = state.store.scoped_tx(&principal).await.map_err(internal)?;
     let inserted = brainiac_store::governance::insert_source_idempotent(
         &mut tx,
         source_id,
         principal.org_id,
-        team_id,
+        Some(team_id),
         "manual",
         &raw_text,
         Some(principal.user_id),
@@ -779,7 +815,7 @@ pub(crate) struct BulkAcceptedResponse {
     request_body = BulkAddBody,
     responses(
         (status = 202, description = "Batch accepted; see per-item results (mix of receipts and errors)", body = BulkAcceptedResponse),
-        (status = 400, description = "Empty batch or more than 100 items"),
+        (status = 400, description = "Empty batch or more than 100 items (a per-ITEM failure — including a principal with no team — is a `bad_request` entry in `results`, not a 400 on the batch)"),
         (status = 401, description = "Missing or unknown bearer token"),
         (status = 403, description = "Token lacks the `write` scope"),
     )

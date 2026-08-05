@@ -155,6 +155,27 @@ case "$(http_code "$resp")" in
   202) ;;
   401) fail "401 — the token is not a key of BRAINIAC_TOKENS and not a live brk_ key." ;;
   403) fail "403 — the token lacks the \`write\` scope. Mint one with SCOPES=read,write." ;;
+  # A teamless principal is refused HERE, at the boundary, rather than writing a
+  # memory nobody can ever read. That refusal is the server telling you the same
+  # thing this script used to have to infer three steps later (see the RLS-count
+  # branch in step 3) — so name it here, with the shipped config it describes.
+  400)
+    case "$(http_body "$resp")" in
+      *"no team"*)
+        fail "the write was REFUSED: this key's principal belongs to no team." \
+          "" \
+          "$(http_body "$resp")" \
+          "" \
+          "The shipped example config has exactly this shape:" \
+          "" \
+          "  BRAINIAC_TOKENS={\"secret\":{\"org\":\"…\",\"user\":\"…\",\"teams\":[]}}" \
+          "                                                ^^^^^^^^^^^^" \
+          "" \
+          "Fix: verify with a key whose principal belongs to a team — put a real" \
+          "team uuid in the token's \`teams\` array AND make sure the user is a row" \
+          "in team_members for it (RLS reads the table, not the token)." ;;
+      *) fail "400 from POST /v1/memories:" "$(http_body "$resp")" ;;
+    esac ;;
   *)   fail "unexpected response from POST /v1/memories:" "$(http_body "$resp")" ;;
 esac
 SOURCE_ID="$(http_body "$resp" | sed -n 's/.*"source_id":"\([0-9a-f-]*\)".*/\1/p')"
