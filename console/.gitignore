@@ -5,3 +5,11 @@ next-env.d.ts
 *.tsbuildinfo
 .env*.local
 .next-build/
+# Every OTHER Next build directory too. `next build` writes wherever
+# NEXT_DIST_DIR points (package.json's build script sets `.next-build`), and
+# parallel sessions routinely point it somewhere throwaway to avoid trampling a
+# running dev server — `.next-build-p4`, `.next-p4firstrun`, and so on. Those
+# are machine-generated output by definition, but each new name showed up as
+# untracked noise in `git status` for everyone until someone deleted it. One
+# pattern covers the whole family, present and future.
+.next*/
