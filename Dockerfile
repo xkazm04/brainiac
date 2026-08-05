@@ -31,6 +31,11 @@ RUN for c in core fixtures store gateway pipeline publish eval; do \
 COPY crates ./crates
 COPY migrations ./migrations
 COPY fixtures ./fixtures
+# brainiac-server serves the onboarding skill straight out of the repo with
+# `include_str!("../../../docs/skills/brainiac-onboard/SKILL.md")` (onboard.rs),
+# so the build stage needs the file to exist. Scoped to the one directory the
+# compile actually reads — not all of docs/.
+COPY docs/skills ./docs/skills
 # Touch so cargo rebuilds the real sources over the cached deps.
 RUN find crates -name "*.rs" -exec touch {} + && \
     cargo build --release -p brainiac-server && \
