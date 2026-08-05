@@ -72,6 +72,28 @@ function sentryOrigins(): string[] {
   }
 }
 
+/**
+ * The Plausible instance the analytics tag loads from and beacons to.
+ *
+ * Same shape as sentryOrigins() and for the same reason: absent config means
+ * the tracker is never emitted (src/analytics/Analytics.tsx returns null), so
+ * there is nothing to allow and the policy stays that much tighter. The origin
+ * is needed in BOTH script-src (the tag) and connect-src (the event beacon) —
+ * allowing only the first produces the worst outcome, a tracker that loads and
+ * then silently drops every conversion.
+ */
+function plausibleOrigins(): string[] {
+  if (!process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN?.trim()) return [];
+  const host =
+    process.env.NEXT_PUBLIC_PLAUSIBLE_HOST?.trim().replace(/\/+$/, "") ||
+    "https://plausible.io";
+  try {
+    return [new URL(host).origin];
+  } catch {
+    return [];
+  }
+}
+
 /** `next dev` compiles and hot-reloads in the browser; production must not. */
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -85,6 +107,7 @@ export function contentSecurityPolicy(): string {
       // React Refresh and the dev overlay evaluate compiled chunks.
       ...(isDev ? ["'unsafe-eval'"] : []),
       ...GOOGLE_AUTH_SCRIPTS,
+      ...plausibleOrigins(),
     ],
     "style-src": ["'self'", "'unsafe-inline'"],
     "img-src": [
@@ -102,6 +125,7 @@ export function contentSecurityPolicy(): string {
       ...GOOGLE_AUTH_CONNECT,
       ...firebase,
       ...sentryOrigins(),
+      ...plausibleOrigins(),
       // The dev server's HMR socket.
       ...(isDev ? ["ws:", "wss:"] : []),
     ],

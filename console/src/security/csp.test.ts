@@ -59,6 +59,31 @@ describe("contentSecurityPolicy", () => {
     ).toBe(false);
   });
 
+  it("allows the Plausible origin in BOTH script-src and connect-src when configured", () => {
+    // Allowing only the script is the silent failure: the tracker loads and
+    // every conversion beacon is blocked.
+    vi.stubEnv("NEXT_PUBLIC_PLAUSIBLE_DOMAIN", "brainiac.example");
+    const p = contentSecurityPolicy();
+    expect(directive(p, "script-src")).toContain("https://plausible.io");
+    expect(directive(p, "connect-src")).toContain("https://plausible.io");
+  });
+
+  it("names a self-hosted Plausible instead of the cloud when one is set", () => {
+    vi.stubEnv("NEXT_PUBLIC_PLAUSIBLE_DOMAIN", "brainiac.example");
+    vi.stubEnv("NEXT_PUBLIC_PLAUSIBLE_HOST", "https://stats.example.dev/");
+    expect(directive(contentSecurityPolicy(), "connect-src")).toContain(
+      "https://stats.example.dev",
+    );
+  });
+
+  it("does not widen the policy when analytics is unconfigured", () => {
+    vi.stubEnv("NEXT_PUBLIC_PLAUSIBLE_DOMAIN", "");
+    vi.stubEnv("NEXT_PUBLIC_PLAUSIBLE_HOST", "https://stats.example.dev");
+    const p = contentSecurityPolicy();
+    expect(directive(p, "script-src").some((s) => s.includes("plausible"))).toBe(false);
+    expect(directive(p, "connect-src").some((s) => s.includes("stats.example"))).toBe(false);
+  });
+
   it("does not emit upgrade-insecure-requests", () => {
     // Not an oversight — see the block comment in csp.ts. It has nothing to fix
     // here (no http:// subresources anywhere) and it was observed killing Next's

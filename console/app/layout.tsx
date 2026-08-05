@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 
 import { siteUrl } from "@/lib/site-url";
 
+import Analytics from "@/analytics/Analytics";
+
 import "./globals.css";
 
 // The fused identity's type pair (see console/src/design/theme.ts):
@@ -44,6 +46,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <body className={`${spaceGrotesk.variable} ${jetbrains.variable}`}>
         <main>{children}</main>
+        {/*
+          Product analytics: cookieless Plausible, and NOTHING at all when
+          NEXT_PUBLIC_PLAUSIBLE_DOMAIN is unset (src/analytics/config.ts). It
+          lives in the root layout because the funnel starts on the public
+          shell, before any console chrome exists.
+        */}
+        <Analytics />
       </body>
     </html>
   );
