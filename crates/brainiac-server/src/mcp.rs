@@ -1485,8 +1485,7 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
     // MCP just as readily as by REST, and instrumenting only one of the two
     // would under-count activation by whichever transport that cohort happens to
     // prefer. First source per org only; see crate::analytics.
-    let first =
-        crate::analytics::is_first_source(&mut tx, state.principal.org_id, source_id).await;
+    let first = crate::analytics::is_first_source(&mut tx, state.principal.org_id, source_id).await;
     tx.commit().await?;
     if first {
         crate::analytics::track_activation_memory_add();

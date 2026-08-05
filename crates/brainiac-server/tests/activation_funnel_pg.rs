@@ -95,7 +95,9 @@ async fn activation_fires_once_for_an_orgs_first_memory_and_never_again() {
         .expect("bind plausible");
     let plausible_addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
-        axum::serve(listener, plausible).await.expect("serve plausible");
+        axum::serve(listener, plausible)
+            .await
+            .expect("serve plausible");
     });
     std::env::set_var("PLAUSIBLE_DOMAIN", "brainiac.test");
     std::env::set_var("PLAUSIBLE_HOST", format!("http://{plausible_addr}"));
@@ -179,7 +181,12 @@ async fn activation_fires_once_for_an_orgs_first_memory_and_never_again() {
     };
 
     // 1. The org's first memory ever — the one activation.
-    add("tok_signup", "the deploy runbook lives in docs/deploy", None).await;
+    add(
+        "tok_signup",
+        "the deploy runbook lives in docs/deploy",
+        None,
+    )
+    .await;
     assert_eq!(
         settle(&seen, 1, Duration::from_secs(5)).await,
         1,
