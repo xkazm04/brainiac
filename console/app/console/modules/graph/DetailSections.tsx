@@ -90,7 +90,7 @@ export function AnchoredMemories({ detail }: { detail: CanonicalDetail }) {
         ))}
         {detail.memories.length === 0 && (
           <li className={`${FONT_MONO} text-sm text-[#e9edff]/35`}>
-            nothing you're cleared to read anchors here
+            {"nothing you're cleared to read anchors here"}
           </li>
         )}
       </ul>

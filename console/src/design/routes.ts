@@ -256,15 +256,18 @@ export const oneOf = <T extends string>(
 export const decodeAddress = (
   params: Record<string, string | string[] | undefined>,
 ): ConsoleAddress => {
-  const module = parseModule(params.m);
-  const allowed = ADDRESS_SPECS[module];
+  // Named `mod`, not `module`: a local binding called `module` shadows the
+  // CommonJS one bundlers inject, which is why @next/next/no-assign-module-variable
+  // exists. The address field it feeds is still `module`.
+  const mod = parseModule(params.m);
+  const allowed = ADDRESS_SPECS[mod];
   const filters: Record<string, string> = {};
   for (const key of allowed) {
     const v = one(params[key]);
     if (v !== undefined) filters[key] = v;
   }
   return {
-    module,
+    module: mod,
     view: one(params.view),
     sel: one(params.sel),
     asOf: one(params.as_of),

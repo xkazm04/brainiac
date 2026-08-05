@@ -7,6 +7,7 @@
     "build": "cross-env NEXT_DIST_DIR=.next-build next build",
     "start": "cross-env NEXT_DIST_DIR=.next-build next start -p 3100",
     "test": "vitest run",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "dev:fresh": "node -e \"fs.rmSync('.next',{recursive:true,force:true})\" && next dev -p 3100",
     "gen:api": "openapi-typescript ../openapi.json -o src/lib/api-schema.d.ts"
@@ -25,11 +26,14 @@
     "server-only": "^0.0.1"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "cross-env": "^10.1.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.22",
     "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.8.0",
