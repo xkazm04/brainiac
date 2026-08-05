@@ -312,7 +312,9 @@ pub(crate) async fn onboard_poll(
         ("claimed", _) => return Ok(bare("claimed")),
         ("approved", false) => {}
         (other, _) => {
-            return Err(internal(anyhow::anyhow!("impossible pairing status {other:?}")))
+            return Err(internal(anyhow::anyhow!(
+                "impossible pairing status {other:?}"
+            )))
         }
     }
 
