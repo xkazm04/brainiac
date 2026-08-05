@@ -13,17 +13,20 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion, useScroll, useSpring } from "framer-motion";
 
+import { controlClass, controlStyle } from "../components/ui/control-styles";
 import { CANONICAL_DEMO } from "../design/demo-data";
 import { PRODUCT_ROUTES } from "../design/routes";
 import {
   band,
   BG,
+  BORDER,
   FONT_DISPLAY,
   FONT_MONO,
   GOLD,
   GOLD_GLOW,
   LABEL,
   MAGENTA,
+  PANEL,
 } from "../design/theme";
 import StationModule from "./StationModules";
 
@@ -77,6 +80,57 @@ const PUBLIC_NAV = [
   { path: "/kb", label: "knowledge base" },
   { path: "/library", label: "library" },
   { path: "/console", label: "console →" },
+];
+
+/**
+ * The three claims the landing page is allowed to make.
+ *
+ * The wave field is the atmosphere and the scroll story is the argument, but a
+ * cold visitor was landing on a canvas and a couplet ("Three teams. One wave.")
+ * with no plain sentence anywhere above the fold saying what this is. That is
+ * what the block below fixes — and it is deliberately only THREE, cut from the
+ * six in src/pitch/pitch-data.ts:
+ *
+ *   kept    — RLS-inside-the-scan, the review gate + provenance, and
+ *             contradiction adjudication + temporal validity. README's
+ *             "Shipped:" line covers all three, and the RLS artifact is the one
+ *             claim on the whole site bound to the migrations by a drift test
+ *             (src/pitch/pitch-data.test.ts).
+ *   cut     — BYOM (an infrastructure detail, not a reason to sign up) and the
+ *             knowledge base (README calls the document layer *in progress*;
+ *             putting it in the hero would overstate what ships today).
+ *
+ * `instead` lines are sourced from the competitors' own documentation, quoted
+ * at length in pitch-data.ts — never soften them into vague superiority claims.
+ */
+const LANDING_FEATURES = [
+  {
+    key: "rls",
+    eyebrow: "permission",
+    tone: band("alpha"),
+    title: "The database refuses rows you may not read.",
+    body: "Visibility is a Postgres row-level security policy, and retrieval opens its transaction as the calling principal — so the pgvector similarity scan is evaluated over rows the policy already excluded. There is no code path that returns a memory the caller cannot see, because the planner never sees one either.",
+    instead:
+      "the independents scope memory with an org_id you pass, or filter after the search has already ranked everything.",
+  },
+  {
+    key: "gate",
+    eyebrow: "review gate · provenance",
+    tone: GOLD,
+    title: "An agent proposes. A named human promotes.",
+    body: "A memory moves raw → candidate → canonical, and reaching canonical always takes a person. Every fact points back at the session it came from, the model that extracted it and the pipeline run that produced it — so “who said this, and when” is a query, not an archaeology project.",
+    instead:
+      "Copilot lets owners review only after the fact. ChatGPT's 2026 rewrite replaced its editable memory list with opaque synthesis.",
+  },
+  {
+    key: "truth",
+    eyebrow: "contradiction · time",
+    tone: band("theta"),
+    title: "Conflicts get adjudicated, and facts know when they died.",
+    body: "Two colliding claims open a contradiction with a suggested resolution, and a contested claim is never served to an agent as though it were settled. Every memory carries a validity window and a pointer to whatever superseded it, so you can ask what the org believed in March and get March's answer.",
+    instead:
+      "Zep resolves conflicts by silent last-writer-wins. Mem0 went ADD-only in April 2026, so both claims simply coexist and the ranker decides.",
+  },
 ];
 
 export default function Home({
@@ -266,6 +320,11 @@ export default function Home({
 
   const emitters = emittersRef.current;
 
+  // The couplet over the canvas is the page's h1 for an operator, but on the
+  // public landing the plain statement above the field owns that slot — two h1s
+  // would leave a crawler (and a screen reader) to guess which one is the page.
+  const FieldHeading = isPublic ? motion.h2 : motion.h1;
+
   // The scroll story tells the live truth when the server is up: real team
   // names + counts, the real open-contradiction tally, the actual canonical
   // graph. The demo fiction (labelled as such in the stats strip + footer)
@@ -431,6 +490,53 @@ export default function Home({
         </nav>
       </header>
 
+      {/* The plain statement. Public surface only — an operator inside the gate
+          already knows what the product is and wants the field, not the pitch.
+          It sits ABOVE the canvas on purpose: the wave is a demonstration, and a
+          demonstration only lands once you have been told what it demonstrates. */}
+      {isPublic && (
+        <section className="mx-auto max-w-7xl px-6 pb-10 pt-6">
+          <div className={LABEL} style={{ color: GOLD }}>
+            brainiac · shared memory for coding agents
+          </div>
+          <h1 className="mt-4 max-w-4xl text-4xl font-semibold leading-[1.05] tracking-tight text-white lg:text-6xl">
+            Shared memory for your coding agents —{" "}
+            <span style={{ color: GOLD, textShadow: `0 0 42px ${GOLD_GLOW}` }}>
+              governed like code.
+            </span>
+          </h1>
+          <p
+            className={`${FONT_MONO} mt-5 max-w-3xl text-sm leading-relaxed text-[#e9edff]/60 lg:text-base`}
+          >
+            Brainiac captures what your team&apos;s AI coding sessions learn, puts every fact
+            through human review, and serves it back to any agent over MCP — under row-level
+            security Postgres enforces inside the search itself, with provenance attached and
+            an expiry date.
+          </p>
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
+            {/* Not the shared <Button>: this is a navigation, so it must be an
+                anchor. It borrows the primitive's shape, accent and focus ring
+                (controlClass/controlStyle) rather than growing a second button. */}
+            <Link
+              href="/signup"
+              className={controlClass("solid", "md", `${FONT_MONO} hover:scale-[1.02]`)}
+              style={controlStyle("solid", GOLD)}
+            >
+              Give your agent a memory — free project
+            </Link>
+            <Link
+              href="/pitch"
+              className={`${FONT_MONO} text-sm text-[#e9edff]/55 underline decoration-dotted underline-offset-4 transition hover:text-[#f3c74f]`}
+            >
+              read the evidence first →
+            </Link>
+          </div>
+          <div className={`${LABEL} mt-5 text-[#e9edff]/35`}>
+            free while in beta · one project per Google account · no card
+          </div>
+        </section>
+      )}
+
       {/* field */}
       <section className="mx-auto max-w-7xl px-6">
         <div className="relative overflow-hidden rounded-xl border border-white/10">
@@ -463,7 +569,7 @@ export default function Home({
             </span>
           ))}
           <div className="pointer-events-none absolute left-8 top-8 max-w-md">
-            <motion.h1
+            <FieldHeading
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8 }}
@@ -472,7 +578,7 @@ export default function Home({
               Three teams.
               <br />
               <span style={{ color: GOLD, textShadow: `0 0 42px ${GOLD_GLOW}` }}>One wave.</span>
-            </motion.h1>
+            </FieldHeading>
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -528,6 +634,49 @@ export default function Home({
           </span>
         </div>
       </section>
+
+      {/* the three claims — public surface only (see LANDING_FEATURES) */}
+      {isPublic && (
+        <section className="mx-auto max-w-7xl px-6 pt-20">
+          <div className={LABEL} style={{ color: GOLD }}>
+            three things nothing else in this market does
+          </div>
+          <div className="mt-7 grid gap-5 md:grid-cols-3">
+            {LANDING_FEATURES.map((f) => (
+              <div
+                key={f.key}
+                className="rounded-xl border p-6"
+                style={{ borderColor: BORDER, background: PANEL }}
+              >
+                <div className={LABEL} style={{ color: f.tone }}>
+                  {f.eyebrow}
+                </div>
+                <h3 className="mt-3 text-xl font-semibold leading-snug tracking-tight text-white">
+                  {f.title}
+                </h3>
+                <p className={`${FONT_MONO} mt-4 text-sm leading-relaxed text-[#e9edff]/55`}>
+                  {f.body}
+                </p>
+                <p className={`${FONT_MONO} mt-4 text-xs leading-relaxed text-[#e9edff]/40`}>
+                  <span className={LABEL} style={{ color: MAGENTA }}>
+                    elsewhere
+                  </span>{" "}
+                  {f.instead}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className={`${LABEL} mt-6 text-[#e9edff]/35`}>
+            every claim above is argued from the vendors&apos; own documentation ·{" "}
+            <Link
+              href="/pitch"
+              className="underline decoration-dotted underline-offset-4 transition hover:text-[#f3c74f]"
+            >
+              read the pitch
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* scroll story along the sine spine */}
       <div ref={trackRef} className="relative mx-auto max-w-5xl px-6 pt-20">
@@ -614,22 +763,48 @@ export default function Home({
           </Fragment>
         ))}
 
-        <footer className={`${LABEL} flex flex-wrap items-center justify-between gap-3 border-t border-white/10 py-6 text-[#e9edff]/35`}>
-          <span>brainiac · constructive by design</span>
-          <Link href="/pitch" className="transition hover:text-[#f3c74f]">
-            → why brainiac · the evidence
-          </Link>
-          <Link href="/demo" className="transition hover:text-[#f3c74f]">
-            → live demo · fixture org
-          </Link>
-          {/* No existing endpoint exposes eval/gate/RLS-leak results, so the
-              "0 leaks" claim is unverifiable — in live mode we state real,
-              checkable numbers instead. The fiction stays only in demo mode. */}
-          <span style={{ color: GOLD }}>
-            {live
-              ? `${plural(live.canonicalCount, "canonical")} · ${plural(live.openContradictions, "open contradiction")}`
-              : "0 leaks · every phase-lock signed"}
-          </span>
+        {/* Two rows, because a single justify-between strip silently drops the
+            last items onto their own line the moment you add one — and the ones
+            that wrapped were the legal links, which are exactly the ones that
+            must be findable. Row 1 is where to go next; row 2 is the small print. */}
+        <footer className="border-t border-white/10 py-7">
+          <div className={`${LABEL} flex flex-wrap items-center gap-x-7 gap-y-3 text-[#e9edff]/40`}>
+            <Link href="/pitch" className="transition hover:text-[#f3c74f]">
+              → why brainiac · the evidence
+            </Link>
+            <Link href="/demo" className="transition hover:text-[#f3c74f]">
+              → live demo · fixture org
+            </Link>
+            <a
+              href="https://github.com/xkazm04/brainiac/issues/new"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="transition hover:text-[#f3c74f]"
+            >
+              → feedback · open an issue
+            </a>
+          </div>
+          <div
+            className={`${LABEL} mt-5 flex flex-wrap items-center justify-between gap-x-7 gap-y-3 text-[#e9edff]/30`}
+          >
+            <span>brainiac · constructive by design</span>
+            <span className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <Link href="/privacy" className="transition hover:text-[#f3c74f]">
+                privacy
+              </Link>
+              <Link href="/terms" className="transition hover:text-[#f3c74f]">
+                terms
+              </Link>
+            </span>
+            {/* No existing endpoint exposes eval/gate/RLS-leak results, so the
+                "0 leaks" claim is unverifiable — in live mode we state real,
+                checkable numbers instead. The fiction stays only in demo mode. */}
+            <span style={{ color: GOLD }}>
+              {live
+                ? `${plural(live.canonicalCount, "canonical")} · ${plural(live.openContradictions, "open contradiction")}`
+                : "0 leaks · every phase-lock signed"}
+            </span>
+          </div>
         </footer>
       </div>
     </div>
