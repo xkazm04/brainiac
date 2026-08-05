@@ -1,156 +1,78 @@
 {
   "contexts": [
     {
-      "api_surface": "GET /v1/analytics, GET /v1/analytics/observatory, GET /v1/queue/health",
-      "business_feature": "Analytics Dashboard",
-      "category": "ui",
+      "api_surface": "GET /api/status",
+      "business_feature": "API Client",
+      "category": "lib",
       "cross_refs": [
-        "knowledge-health",
-        "practice-divergence-ui",
-        "sweep-pipeline"
+        "auth-shell",
+        "app-shell"
       ],
       "db_tables": [],
-      "description": "Top-level analytics console aggregating org-wide memory quality metrics, observatory views, and ops sweep controls. The analytics module hosts the high-level summary; observatory provides time-series insight; ops/SweepControl lets operators trigger sweeps on demand. The status BFF route provides system-wide health to the shell.",
+      "description": "The server-side REST client layer that all console modules use to talk to the Brainiac binary. api.ts is the single authorised fetch wrapper (server-only, bearer token from env); api-schema.d.ts is generated from openapi.json; governance-api.ts contains governance-specific helpers; format/seeded/types are shared utilities. Also includes the /api/status proxy route and the demo-fallback shim that returns fixture data when the live API is unavailable.",
       "entry_points": [
-        "console/src/app/console/modules/analytics/Module.tsx",
-        "console/src/observatory/Observatory.tsx"
+        "console/src/lib/api.ts",
+        "console/src/lib/api-schema.d.ts"
       ],
       "file_paths": [
-        "console/src/observatory/Observatory.tsx",
-        "console/src/observatory/observatory-data.ts",
-        "console/src/ops/SweepControl.tsx",
-        "console/src/ops/sweep-actions.ts"
+        "console/src/lib/api.ts",
+        "console/src/lib/api.test.ts",
+        "console/src/lib/api-schema.d.ts",
+        "console/src/lib/governance-api.ts",
+        "console/src/lib/format.ts",
+        "console/src/lib/seeded.ts",
+        "console/src/lib/types.ts",
+        "console/src/lib/demo-fallback.ts",
+        "console/src/lib/demo-fallback.test.ts",
+        "console/app/api/status/route.ts"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "65e00b4b-333d-4343-aef9-a4492dcb0135",
+      "group": "App Shell & Auth",
+      "group_id": "7dc44e47-ad8b-417b-bf36-4f23b27bcf46",
+      "id": "77bab558-d0f9-43f3-9fe1-d69d3a4de226",
       "keywords": [
-        "analytics",
-        "observatory",
-        "dashboard",
-        "sweeps",
-        "ops",
-        "metrics",
-        "quality",
-        "status"
+        "api",
+        "client",
+        "fetch",
+        "bearer",
+        "openapi",
+        "schema",
+        "status",
+        "governance",
+        "format"
       ],
-      "last_written_at": "2026-07-23T12:14:02.359039600+00:00",
-      "name": "analytics-dashboard",
+      "last_written_at": "2026-08-05T08:16:04.204030+00:00",
+      "name": "api-client",
       "pinned": false,
       "tech_stack": [
-        "Next.js",
-        "React",
+        "Next.js 15.3",
         "TypeScript",
-        "recharts"
+        "openapi-typescript 7.13"
       ]
     },
     {
-      "api_surface": "GET/POST /v1/org/users (token list), POST /v1/keys",
-      "business_feature": "API Key Management",
-      "category": "api",
-      "cross_refs": [
-        "auth-middleware",
-        "org-directory"
-      ],
-      "db_tables": [
-        "api_tokens"
-      ],
-      "description": "Mints and manages org-scoped API tokens that external agents and MCP clients use to authenticate. Tokens are hashed at rest in Postgres; the console lets operators generate, preview (one-time reveal), and revoke keys. Powers the external agent authentication path that does not use Firebase.",
-      "entry_points": [
-        "crates/brainiac-store/src/tokens.rs",
-        "console/src/app/console/modules/keys/Module.tsx"
-      ],
-      "file_paths": [
-        "crates/brainiac-store/src/tokens.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "98920879-0699-4817-adce-0610397f9590",
-      "keywords": [
-        "api-key",
-        "token",
-        "mint",
-        "revoke",
-        "preview",
-        "hash",
-        "agent",
-        "authentication"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.363002800+00:00",
-      "name": "api-keys",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "sqlx",
-        "Next.js",
-        "TypeScript"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Authentication",
-      "category": "api",
-      "cross_refs": [
-        "org-directory",
-        "api-keys",
-        "server-core"
-      ],
-      "db_tables": [],
-      "description": "Validates Firebase JWTs and org-scoped API tokens on every request, extracting caller org/user context that stamps each transaction for RLS. The console handles Firebase login/signup flows client- and server-side, then passes the ID token to the Rust backend. The Next.js root middleware enforces auth on all protected routes.",
-      "entry_points": [
-        "crates/brainiac-server/src/auth.rs",
-        "console/src/middleware.ts"
-      ],
-      "file_paths": [
-        "crates/brainiac-server/src/auth.rs",
-        "crates/brainiac-server/src/http.rs",
-        "console/src/lib/auth.ts",
-        "console/src/lib/auth.test.ts",
-        "console/src/lib/firebase/config.ts",
-        "console/src/lib/firebase/client.ts",
-        "console/src/lib/firebase/admin.ts"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "48de1f29-ca84-4a7e-9f60-fc85dde6c40b",
-      "keywords": [
-        "auth",
-        "firebase",
-        "jwt",
-        "token",
-        "login",
-        "signup",
-        "middleware",
-        "rls",
-        "org-id"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.363541300+00:00",
-      "name": "auth-middleware",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "axum",
-        "Firebase",
-        "Next.js",
-        "TypeScript"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Console Shell",
+      "api_surface": "",
+      "business_feature": "App Shell",
       "category": "ui",
       "cross_refs": [
-        "auth-middleware",
-        "memory-console",
-        "review-workflow"
+        "auth-shell",
+        "api-client"
       ],
       "db_tables": [],
-      "description": "Next.js app shell providing navigation, layout, the typed API client, shared UI primitives (skeletons, banners, section rails), design system tokens, and route definitions. All console modules mount inside this shell. The generated api-schema.d.ts keeps TypeScript types in sync with the Rust OpenAPI spec.",
+      "description": "The navigational and layout skeleton of the entire console SPA: root and console layouts, the chrome wrapper, global CSS, and the ModuleBoundary that lazy-mounts each feature module. The src/components directory supplies shared Nav, Skeleton, Divider, and error boundary primitives; src/design owns the route registry (which routes are public vs protected) and the design theme.",
       "entry_points": [
-        "console/src/app/layout.tsx",
-        "console/src/lib/api.ts"
+        "console/app/layout.tsx",
+        "console/app/console/layout.tsx",
+        "console/src/design/routes.ts"
       ],
       "file_paths": [
+        "console/app/layout.tsx",
+        "console/app/page.tsx",
+        "console/app/chrome.tsx",
+        "console/app/globals.css",
+        "console/app/console/layout.tsx",
+        "console/app/console/page.tsx",
+        "console/app/console/ModuleBoundary.tsx",
+        "console/src/components/AddressBar.tsx",
         "console/src/components/ApiOffline.tsx",
         "console/src/components/DemoBanner.tsx",
         "console/src/components/Divider.tsx",
@@ -159,62 +81,308 @@
         "console/src/components/RouteError.tsx",
         "console/src/components/SectionRail.tsx",
         "console/src/components/Skeleton.tsx",
-        "console/src/lib/api.ts",
-        "console/src/lib/api.test.ts",
-        "console/src/lib/api-schema.d.ts",
-        "console/src/lib/types.ts",
-        "console/src/lib/format.ts",
-        "console/src/lib/seeded.ts",
-        "console/src/lib/demo-fallback.ts",
-        "console/src/lib/demo-fallback.test.ts",
         "console/src/home/Home.tsx",
         "console/src/home/StationModules.tsx",
-        "console/src/design/theme.ts",
         "console/src/design/routes.ts",
         "console/src/design/routes.test.ts",
-        "console/src/design/demo-data.ts",
-        "console/src/design/PrototypeSwitcher.tsx",
-        "console/src/test/server-only-stub.ts"
+        "console/src/design/theme.ts"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "0e04119c-ae8d-4919-9e91-a9442f161872",
+      "group": "App Shell & Auth",
+      "group_id": "7dc44e47-ad8b-417b-bf36-4f23b27bcf46",
+      "id": "786fbd10-a2b4-4a69-ad1c-0824328c9034",
       "keywords": [
-        "shell",
-        "navigation",
         "layout",
-        "api-client",
-        "openapi",
-        "design-system",
-        "tailwind",
-        "skeleton",
-        "chrome"
+        "navigation",
+        "chrome",
+        "shell",
+        "routes",
+        "theme",
+        "module-boundary",
+        "nav"
       ],
-      "last_written_at": "2026-07-23T12:14:02.364382100+00:00",
-      "name": "console-shell",
+      "last_written_at": "2026-08-05T08:16:04.203711100+00:00",
+      "name": "app-shell",
       "pinned": false,
       "tech_stack": [
-        "Next.js",
-        "React",
+        "Next.js 15.3",
+        "React 19.1",
         "TypeScript",
-        "Tailwind",
-        "openapi-typescript"
+        "Tailwind 4"
       ]
     },
     {
-      "api_surface": null,
-      "business_feature": "Database Schema",
-      "category": "data",
+      "api_surface": "session cookie; Firebase Auth REST",
+      "business_feature": "Authentication",
+      "category": "lib",
       "cross_refs": [
-        "shared-core",
-        "memory-ledger",
-        "org-directory",
-        "document-wiki"
+        "app-shell",
+        "api-client"
       ],
       "db_tables": [],
-      "description": "Append-only numbered SQL migration history that defines the full Postgres schema — all tables, indexes, RLS policies, roles, and FTS configurations. Applied by sqlx::migrate! at startup. Migrations are the authoritative source of truth for table structure that the store crate's sqlx queries compile against.",
+      "description": "Handles Firebase-backed authentication: login and signup pages collect credentials, server actions validate against Firebase Admin SDK and set a session cookie, and the middleware enforces the public/protected surface split on every request. The lib/auth module owns session validation and the SESSION_COOKIE constant consumed by middleware.",
       "entry_points": [
-        "migrations/0001_init.sql"
+        "console/middleware.ts",
+        "console/src/lib/auth.ts"
+      ],
+      "file_paths": [
+        "console/app/login/page.tsx",
+        "console/app/login/actions.ts",
+        "console/app/signup/page.tsx",
+        "console/app/signup/actions.ts",
+        "console/app/signup/SignupClient.tsx",
+        "console/middleware.ts",
+        "console/src/lib/auth.ts",
+        "console/src/lib/auth.test.ts",
+        "console/src/lib/firebase/admin.ts",
+        "console/src/lib/firebase/client.ts",
+        "console/src/lib/firebase/config.ts"
+      ],
+      "group": "App Shell & Auth",
+      "group_id": "7dc44e47-ad8b-417b-bf36-4f23b27bcf46",
+      "id": "7ea64c1e-7232-4fbf-945e-0671b590c3ee",
+      "keywords": [
+        "auth",
+        "login",
+        "signup",
+        "firebase",
+        "session",
+        "cookie",
+        "middleware",
+        "protected"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.203320100+00:00",
+      "name": "auth-shell",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Firebase 12.16",
+        "Firebase Admin 14.1"
+      ]
+    },
+    {
+      "api_surface": "CLI: node tools/gen-bank-corpus.mjs; node tools/seed-bank-docs.mjs",
+      "business_feature": "Scale Corpus Generation",
+      "category": "test",
+      "cross_refs": [
+        "eval-harness",
+        "documents-kb"
+      ],
+      "db_tables": [
+        "documents",
+        "document_sections",
+        "document_revisions",
+        "orgs",
+        "teams",
+        "canonical_entities"
+      ],
+      "description": "Provides the deterministic data-generation layer for Brainiac's scale evaluation corpus ('Meridian Bank'). `bank-org.mjs` declares the org topology — teams, hub entities with cross-team dialects, domain claims, contradiction seams, and cross-cutting practices — as pure data so the shape is readable independently of the generation machinery. `gen-bank-corpus.mjs` turns that data into YAML fixture files (1,200+ memories, entity merge sets, contradiction cases, QA/leak/temporal gold slices, and extraction transcripts) that feed `cargo run -- eval`. `seed-bank-docs.mjs` reads the seeded corpus back out of Postgres and bulk-inserts ~1,050 knowledge-base pages (entity pages, topic pages, runbooks, post-mortems, ADRs, process pages, onboarding) so the KB layer runs under realistic document load without invoking the compose pipeline.",
+      "entry_points": [
+        "tools/gen-bank-corpus.mjs"
+      ],
+      "file_paths": [
+        "tools/bank-org.mjs",
+        "tools/gen-bank-corpus.mjs",
+        "tools/seed-bank-docs.mjs"
+      ],
+      "group": "Quality Assurance",
+      "group_id": "5b901e0a-3ebd-469c-abae-c5e95ee9c95d",
+      "id": "9e21e25c-250f-4edc-8bb6-a6dd8e75797d",
+      "keywords": [
+        "fixture",
+        "corpus",
+        "eval",
+        "benchmark",
+        "bank",
+        "seed",
+        "knowledge-base",
+        "deterministic",
+        "YAML",
+        "meridian"
+      ],
+      "last_written_at": "2026-08-05T08:22:17.325755700+00:00",
+      "name": "bank-corpus-tooling",
+      "pinned": false,
+      "tech_stack": [
+        "Node.js (ESM)",
+        "Docker Compose (psql exec)"
+      ]
+    },
+    {
+      "api_surface": "",
+      "business_feature": "Build & Observability Config",
+      "category": "config",
+      "cross_refs": [],
+      "db_tables": [],
+      "description": "All project-level configuration and observability instrumentation for the console: TypeScript and PostCSS compiler settings, the Vitest test runner config, Dockerfile for container builds, Next.js instrumentation hooks (server + edge), and Sentry error-monitoring config for both server and edge runtimes. The server-only stub ensures server modules can't be accidentally imported client-side in tests.",
+      "entry_points": [
+        "console/tsconfig.json",
+        "console/vitest.config.ts"
+      ],
+      "file_paths": [
+        "console/vitest.config.ts",
+        "console/postcss.config.mjs",
+        "console/instrumentation.ts",
+        "console/instrumentation-client.ts",
+        "console/sentry.edge.config.ts",
+        "console/sentry.server.config.ts",
+        "console/src/test/server-only-stub.ts"
+      ],
+      "group": "App Shell & Auth",
+      "group_id": "7dc44e47-ad8b-417b-bf36-4f23b27bcf46",
+      "id": "820d2348-7ccc-42ea-b778-793ed54b5fa2",
+      "keywords": [
+        "tsconfig",
+        "vitest",
+        "sentry",
+        "docker",
+        "instrumentation",
+        "observability",
+        "build",
+        "config"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.204941200+00:00",
+      "name": "build-config",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "TypeScript 5.8",
+        "Vitest 3.1",
+        "Sentry 10.67",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "Consumes: POST /v1/memories/search, POST /v1/memories, GET /v1/sources/:id, GET /v1/docs, GET /v1/library/standards, POST /v1/library/standards/propose, POST /v1/library/skills/propose, GET /v1/library/skills, POST /v1/library/usage, POST /v1/tokens",
+      "business_feature": "ChainSonar Field Test",
+      "category": "test",
+      "cross_refs": [
+        "memory-intelligence",
+        "library-skills",
+        "documents-knowledge-base",
+        "access-control-projects"
+      ],
+      "db_tables": [],
+      "description": "The ChainSonar field test is a realistic end-to-end harness that deploys three simulated developer agents (new-feature, refactor, UI-scaling) against the live ChainSonar codebase to surface design gaps, bugs, and feature opportunities in Brainiac's Memory, Library, and Knowledge Base modules. It provisions a scoped multi-user org via `setup.mjs`, routes every Brainiac call through an instrumented `bx.mjs` CLI that records timing and outcome to JSONL logs, then aggregates results into a findings report via `report.mjs`. Key dependencies are the Brainiac REST API and the external ChainSonar Next.js repository; agent briefs in `agents/` drive the three isolated git-worktree sessions.",
+      "entry_points": [
+        "load/README.md",
+        "load/chainsonar/bx.mjs",
+        "load/chainsonar/README-run.md"
+      ],
+      "file_paths": [
+        "load/chainsonar/.seed-mem.sql",
+        "load/chainsonar/bx.mjs",
+        "load/chainsonar/report.mjs",
+        "load/chainsonar/setup.mjs"
+      ],
+      "group": "Quality Assurance",
+      "group_id": "5b901e0a-3ebd-469c-abae-c5e95ee9c95d",
+      "id": "e2a651c6-e576-4ccd-bac2-94f7416c597b",
+      "keywords": [
+        "field-test",
+        "ChainSonar",
+        "telemetry",
+        "harness",
+        "scoped-keys",
+        "bx-cli",
+        "realistic-load",
+        "Brainiac-adoption",
+        "memory-travel",
+        "friction-measurement"
+      ],
+      "last_written_at": "2026-08-05T08:22:40.589215400+00:00",
+      "name": "chainsonar-field-test",
+      "pinned": false,
+      "tech_stack": [
+        "Node.js",
+        "JavaScript (ESM)"
+      ]
+    },
+    {
+      "api_surface": "",
+      "business_feature": "Domain Intelligence Algorithms",
+      "category": "lib",
+      "cross_refs": [],
+      "db_tables": [],
+      "description": "Pure domain math and type definitions with no I/O or database dependencies. Implements temporal validity windows, rank fusion (RRF), vector/BM25 scoring, cross-encoder reranking, health metrics, PII redaction, and the canonical Principal/Memory/Document types shared by every crate. Being IO-free means all logic here is unit-tested without Postgres or an LLM.",
+      "entry_points": [
+        "crates/brainiac-core/src/lib.rs",
+        "crates/brainiac-core/src/types.rs"
+      ],
+      "file_paths": [
+        "crates/brainiac-core/src/lib.rs",
+        "crates/brainiac-core/src/types.rs",
+        "crates/brainiac-core/src/embed.rs",
+        "crates/brainiac-core/src/fusion.rs",
+        "crates/brainiac-core/src/health.rs",
+        "crates/brainiac-core/src/library.rs",
+        "crates/brainiac-core/src/metrics.rs",
+        "crates/brainiac-core/src/redact.rs",
+        "crates/brainiac-core/src/rerank.rs",
+        "crates/brainiac-core/src/scoring.rs",
+        "crates/brainiac-core/src/temporal.rs"
+      ],
+      "group": "Core Intelligence",
+      "group_id": "af5857e0-782d-4380-80ab-0c9269211e98",
+      "id": "fb185451-63b4-413f-83b0-dc8cbb546327",
+      "keywords": [
+        "embedding",
+        "fusion",
+        "rerank",
+        "scoring",
+        "temporal",
+        "principal",
+        "memory",
+        "health",
+        "RRF",
+        "NDCG"
+      ],
+      "last_written_at": "2026-08-05T08:15:55.173261200+00:00",
+      "name": "core-algorithms",
+      "pinned": false,
+      "tech_stack": [
+        "Rust",
+        "serde",
+        "uuid",
+        "chrono"
+      ]
+    },
+    {
+      "api_surface": "",
+      "business_feature": "Core Memory & Knowledge Graph Schema",
+      "category": "data",
+      "cross_refs": [
+        "knowledge-health-document-migrations",
+        "library-projects-retrieval-migrations"
+      ],
+      "db_tables": [
+        "orgs",
+        "teams",
+        "users",
+        "team_members",
+        "sources",
+        "provenance",
+        "memories",
+        "memory_embeddings",
+        "embedding_versions",
+        "entities",
+        "canonical_entities",
+        "entity_links",
+        "edges",
+        "memory_entities",
+        "promotions",
+        "contradictions",
+        "pipeline_runs",
+        "queue.jobs",
+        "queue.archive",
+        "api_tokens",
+        "memory_feedback"
+      ],
+      "description": "Establishes the foundational Postgres schema: org/team/user tenancy, the memories table with three-tier visibility, the knowledge graph (entities/edges/entity_links), governance tables (promotions/contradictions), the pgmq-shaped job queue, and the embedding-versions side-table pattern that allows zero-downtime model swaps. Also adds early operational extensions: worker-read grants, API tokens, memory feedback/resolution, language-aware FTS, canonical embedding consolidation, canonical aliases, pipeline-run stats, and the first HNSW ANN index. Row-level security policies enforcing `app.org_id`/`app.user_id` per transaction are defined here and are load-bearing for every later query path.",
+      "entry_points": [
+        "migrations/0001_init.sql",
+        "migrations/0008_canonical_embeddings.sql"
       ],
       "file_paths": [
         "migrations/0001_init.sql",
@@ -227,7 +395,642 @@
         "migrations/0008_canonical_embeddings.sql",
         "migrations/0009_canonical_aliases.sql",
         "migrations/0010_pipeline_run_stats.sql",
-        "migrations/0012_dim_agnostic_hnsw.sql",
+        "migrations/0012_dim_agnostic_hnsw.sql"
+      ],
+      "group": "Database Schema",
+      "group_id": "891ee10c-1376-4ca9-bb0d-4f2988a893a4",
+      "id": "80e091b0-cec5-4e46-9a8e-aeba37aae5ec",
+      "keywords": [
+        "rls",
+        "tenancy",
+        "memories",
+        "embeddings",
+        "pgvector",
+        "hnsw",
+        "graph",
+        "governance",
+        "job-queue",
+        "fts"
+      ],
+      "last_written_at": "2026-08-05T08:13:00.144748900+00:00",
+      "name": "core-schema-migrations",
+      "pinned": false,
+      "tech_stack": [
+        "PostgreSQL 16",
+        "pgvector",
+        "sqlx"
+      ]
+    },
+    {
+      "api_surface": "GET /api/graph/canonical/[id]",
+      "business_feature": "Knowledge Graph",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "memory-archive"
+      ],
+      "db_tables": [
+        "canonicals",
+        "memories"
+      ],
+      "description": "Renders the organisation's memory knowledge graph as an interactive visualisation — a star-chart and depth-of-field view let operators explore how canonical memory clusters are connected. The cortex-data module fetches canonical node summaries; useCanonicalDetail loads individual node details via the canonical API route; the analytics module surfaces aggregate usage metrics alongside the graph.",
+      "entry_points": [
+        "console/app/console/modules/graph/Module.tsx",
+        "console/app/console/modules/graph/CortexMap.tsx"
+      ],
+      "file_paths": [
+        "console/app/console/modules/graph/Module.tsx",
+        "console/app/console/modules/graph/Skeleton.tsx",
+        "console/app/console/modules/graph/cortex-data.ts",
+        "console/app/console/modules/graph/CortexMap.tsx",
+        "console/app/console/modules/graph/DetailSections.tsx",
+        "console/app/console/modules/graph/useCanonicalDetail.ts",
+        "console/app/console/modules/graph/views/DepthOfFieldView.tsx",
+        "console/app/console/modules/graph/views/StarChartView.tsx",
+        "console/app/api/graph/canonical/[id]/route.ts",
+        "console/app/console/modules/analytics/Module.tsx",
+        "console/app/console/modules/analytics/Skeleton.tsx"
+      ],
+      "group": "Knowledge Graph",
+      "group_id": "ae644f28-8175-41f2-8958-5391eab98c20",
+      "id": "b74a92d2-0880-4b6e-b66a-61e9de1697fd",
+      "keywords": [
+        "graph",
+        "canonical",
+        "cortex",
+        "visualisation",
+        "cluster",
+        "analytics",
+        "star-chart",
+        "depth-of-field"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.200515900+00:00",
+      "name": "cortex-graph",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Recharts 3.9",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "reads fixture/seeded data only — no live API calls",
+      "business_feature": "Demo & Pitch",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "app-shell"
+      ],
+      "db_tables": [],
+      "description": "Serves two public (unauthenticated) surfaces: the /demo route mounts a read-only console on the synthetic Meridian fixture org so prospects can explore the product without signing up; the /pitch route is a rich competitive evidence deck with diagrams, evidence matrices, and a balance-sheet layout. Both surfaces use seeded fixture data and the demo-fallback shim rather than the live org API.",
+      "entry_points": [
+        "console/app/demo/page.tsx",
+        "console/app/pitch/page.tsx",
+        "console/src/pitch/Pitch.tsx"
+      ],
+      "file_paths": [
+        "console/app/demo/DemoConsole.tsx",
+        "console/app/demo/DemoReviews.tsx",
+        "console/app/demo/demo-reviews-data.ts",
+        "console/app/demo/demo-shell.tsx",
+        "console/app/demo/DemoStandards.tsx",
+        "console/app/demo/layout.tsx",
+        "console/app/demo/loading.tsx",
+        "console/app/demo/ModuleIntro.tsx",
+        "console/app/demo/page.tsx",
+        "console/app/pitch/layout.tsx",
+        "console/app/pitch/page.tsx",
+        "console/src/pitch/diagrams.tsx",
+        "console/src/pitch/hero-types.ts",
+        "console/src/pitch/LedgerField.tsx",
+        "console/src/pitch/Pitch.tsx",
+        "console/src/pitch/pitch-data.ts",
+        "console/src/pitch/pitch-data.test.ts",
+        "console/src/pitch/PitchNav.tsx",
+        "console/src/pitch/sections/EvidenceMatrix.tsx",
+        "console/src/pitch/sections/LimitsBalanceSheet.tsx",
+        "console/src/pitch/sections/RetreatAutopsy.tsx",
+        "console/src/design/demo-data.ts",
+        "console/src/design/PrototypeSwitcher.tsx"
+      ],
+      "group": "Demo & Marketing",
+      "group_id": "00c1b01e-cc90-46e2-bc34-b579b703530c",
+      "id": "2e3dfd5a-3ef7-4525-9e1b-16716e56bfec",
+      "keywords": [
+        "demo",
+        "pitch",
+        "prospect",
+        "meridian",
+        "fixture",
+        "evidence",
+        "marketing",
+        "unauthenticated",
+        "competitive"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.204649400+00:00",
+      "name": "demo-pitch",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Framer Motion 12.42",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "docs endpoints via api-client; server actions in actions.ts",
+      "business_feature": "Document Wiki",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "knowledge-health"
+      ],
+      "db_tables": [
+        "documents",
+        "doc_revisions"
+      ],
+      "description": "Powers the AI-generated document wiki: operators can read, approve revisions, and edit sections of auto-generated docs. DocReader renders markdown with Mermaid diagrams; SectionEditor handles inline edits; the tree module builds a navigation hierarchy from the flat document list; the docs module entry and [slug] route expose the docs surface inside the console.",
+      "entry_points": [
+        "console/src/docs/DocWiki.tsx",
+        "console/app/console/modules/docs/Module.tsx"
+      ],
+      "file_paths": [
+        "console/src/docs/ApproveRevision.tsx",
+        "console/src/docs/DocPage.tsx",
+        "console/src/docs/DocReader.tsx",
+        "console/src/docs/docs-demo.ts",
+        "console/src/docs/DocWiki.tsx",
+        "console/src/docs/edit-copy.ts",
+        "console/src/docs/edit-copy.test.ts",
+        "console/src/docs/facets.ts",
+        "console/src/docs/markdown.ts",
+        "console/src/docs/markdown.test.ts",
+        "console/src/docs/MermaidBlock.tsx",
+        "console/src/docs/SectionEditor.tsx",
+        "console/src/docs/tree.ts",
+        "console/src/docs/tree.test.ts",
+        "console/src/docs/wiki-data.ts",
+        "console/app/console/modules/docs/Module.tsx",
+        "console/app/console/modules/docs/Skeleton.tsx",
+        "console/app/console/docs/[slug]/page.tsx",
+        "console/app/console/docs/[slug]/actions.ts"
+      ],
+      "group": "Documents & Knowledge Base",
+      "group_id": "5dc484dd-7273-4d8e-9775-c566efd857f5",
+      "id": "f6a7b575-0675-4706-9fe7-ba646607a834",
+      "keywords": [
+        "docs",
+        "wiki",
+        "markdown",
+        "mermaid",
+        "revision",
+        "edit",
+        "approve",
+        "section",
+        "document"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.201404700+00:00",
+      "name": "docs-editor",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Mermaid 11.16",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "CLI: brainiac eval --fixtures fixtures/v1 --profile <profile> --baseline results/baseline.json",
+      "business_feature": "Retrieval & Pipeline Quality Gates",
+      "category": "test",
+      "cross_refs": [
+        "core-algorithms",
+        "store-data-plane",
+        "ingestion-pipeline",
+        "llm-provider-gateway"
+      ],
+      "db_tables": [
+        "memories",
+        "memory_embeddings",
+        "entities",
+        "sources",
+        "promotions",
+        "contradictions",
+        "documents"
+      ],
+      "description": "The golden-fixture eval harness (Meridian suite) that regression-gates every retrieval and pipeline change: profiles cover retrieval (NDCG/MRR/Recall, RLS leak = 0), resolution (B³/pairwise clustering), contradiction detection, divergence, extraction recall, document composition, drift, and a backend grid bake-off. The fixtures crate loads and validates the YAML fixture tree for referential integrity before any benchmark run; a loader error kills CI before a corrupt fixture can pollute a baseline.",
+      "entry_points": [
+        "crates/brainiac-eval/src/lib.rs",
+        "crates/brainiac-eval/src/gates.rs",
+        "crates/brainiac-fixtures/src/lib.rs"
+      ],
+      "file_paths": [
+        "crates/brainiac-eval/src/lib.rs",
+        "crates/brainiac-eval/src/contradiction_profile.rs",
+        "crates/brainiac-eval/src/divergence_profile.rs",
+        "crates/brainiac-eval/src/docs_profile.rs",
+        "crates/brainiac-eval/src/drift_profile.rs",
+        "crates/brainiac-eval/src/extraction_profile.rs",
+        "crates/brainiac-eval/src/gates.rs",
+        "crates/brainiac-eval/src/grid.rs",
+        "crates/brainiac-eval/src/pipeline_profile.rs",
+        "crates/brainiac-eval/src/report.rs",
+        "crates/brainiac-eval/src/resolution_profile.rs",
+        "crates/brainiac-eval/src/retrieval_profile.rs",
+        "crates/brainiac-eval/src/seed.rs",
+        "crates/brainiac-eval/tests/contradiction_pg.rs",
+        "crates/brainiac-eval/tests/divergence_pg.rs",
+        "crates/brainiac-eval/tests/grid_pg.rs",
+        "crates/brainiac-eval/tests/pipeline_pg.rs",
+        "crates/brainiac-eval/tests/resolution_pg.rs",
+        "crates/brainiac-eval/tests/retrieval_pg.rs",
+        "crates/brainiac-fixtures/src/lib.rs",
+        "crates/brainiac-fixtures/src/export.rs",
+        "crates/brainiac-fixtures/src/ids.rs",
+        "crates/brainiac-fixtures/src/loader.rs",
+        "crates/brainiac-fixtures/src/schema.rs",
+        "crates/brainiac-fixtures/src/validate.rs",
+        "crates/brainiac-fixtures/tests/load_v1.rs"
+      ],
+      "group": "Quality Assurance",
+      "group_id": "5b901e0a-3ebd-469c-abae-c5e95ee9c95d",
+      "id": "52820988-21a9-467c-a551-72214500700b",
+      "keywords": [
+        "eval",
+        "NDCG",
+        "MRR",
+        "recall",
+        "RLS leak",
+        "fixtures",
+        "Meridian",
+        "baseline",
+        "gates",
+        "retrieval",
+        "contradiction",
+        "divergence"
+      ],
+      "last_written_at": "2026-08-05T08:15:55.177692400+00:00",
+      "name": "eval-quality-gate",
+      "pinned": false,
+      "tech_stack": [
+        "Rust",
+        "sqlx",
+        "tokio",
+        "serde",
+        "anyhow"
+      ]
+    },
+    {
+      "api_surface": "GET/POST /api/onboard/requests, PATCH /api/onboard/requests/[id]/[decision]",
+      "business_feature": "Governance Worklist",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "memory-archive"
+      ],
+      "db_tables": [
+        "governance_items",
+        "audit_log",
+        "onboard_requests"
+      ],
+      "description": "Covers the three governance surfaces: the review worklist where operators approve or reject pending memory submissions, the dispute bench where contradictory memories are adjudicated, and the audit ledger that records every governance decision. Operators act through server actions that POST decisions back to the Brainiac API; the onboard request routes handle approval of new-agent join requests.",
+      "entry_points": [
+        "console/app/console/modules/reviews/Module.tsx",
+        "console/app/console/modules/disputes/Module.tsx",
+        "console/app/console/modules/audit/AuditLedger.tsx"
+      ],
+      "file_paths": [
+        "console/app/console/modules/reviews/Module.tsx",
+        "console/app/console/modules/reviews/Skeleton.tsx",
+        "console/app/console/modules/reviews/actions.ts",
+        "console/app/console/modules/reviews/review-buttons.tsx",
+        "console/app/console/modules/reviews/ReviewsLive.tsx",
+        "console/app/console/modules/reviews/review-surface.ts",
+        "console/app/console/modules/reviews/review-surface.test.ts",
+        "console/app/console/modules/reviews/ReviewWorklist.tsx",
+        "console/app/console/modules/disputes/Module.tsx",
+        "console/app/console/modules/disputes/Skeleton.tsx",
+        "console/app/console/modules/disputes/actions.ts",
+        "console/app/console/modules/disputes/DecisionBar.tsx",
+        "console/app/console/modules/disputes/DisputeBench.tsx",
+        "console/app/console/modules/disputes/disputes-data.ts",
+        "console/app/console/modules/disputes/disputes-data.test.ts",
+        "console/app/console/modules/audit/Module.tsx",
+        "console/app/console/modules/audit/Skeleton.tsx",
+        "console/app/console/modules/audit/AuditLedger.tsx",
+        "console/app/console/modules/audit/audit-data.ts",
+        "console/app/console/modules/audit/audit-data.test.ts",
+        "console/app/api/onboard/requests/route.ts",
+        "console/app/api/onboard/requests/[id]/[decision]/route.ts"
+      ],
+      "group": "Governance & Reviews",
+      "group_id": "20bd9431-1837-4497-8dbb-62e8a8985e65",
+      "id": "142169be-d8e0-4aaf-a711-2badd570952c",
+      "keywords": [
+        "review",
+        "approve",
+        "reject",
+        "dispute",
+        "contradiction",
+        "audit",
+        "governance",
+        "onboard",
+        "decision"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.199781600+00:00",
+      "name": "governance-worklist",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "POST /api/ingest, GET /api/ingest/feed (SSE)",
+      "business_feature": "Ingest Monitor",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "governance-worklist"
+      ],
+      "db_tables": [
+        "ingest_jobs"
+      ],
+      "description": "Allows operators to submit new content into the Brainiac pipeline and monitor its processing status in real time. The SubmitBox accepts URLs or text; useIngestFeed polls the SSE feed route; AirlockView shows quarantined items awaiting review while ManifestView shows the full processing manifest. The API routes proxy ingest and feed requests to the Brainiac server.",
+      "entry_points": [
+        "console/app/console/modules/ingest/Module.tsx",
+        "console/app/console/modules/ingest/IngestMonitor.tsx"
+      ],
+      "file_paths": [
+        "console/app/console/modules/ingest/Module.tsx",
+        "console/app/console/modules/ingest/Skeleton.tsx",
+        "console/app/console/modules/ingest/ingest-data.ts",
+        "console/app/console/modules/ingest/IngestMonitor.tsx",
+        "console/app/console/modules/ingest/SubmitBox.tsx",
+        "console/app/console/modules/ingest/useIngestFeed.ts",
+        "console/app/console/modules/ingest/views/AirlockView.tsx",
+        "console/app/console/modules/ingest/views/ManifestView.tsx",
+        "console/app/api/ingest/route.ts",
+        "console/app/api/ingest/feed/route.ts"
+      ],
+      "group": "Content Pipeline",
+      "group_id": "9ea07450-a90b-4881-b134-0774196a8a54",
+      "id": "9f336bf0-a39d-48a6-aabf-06df73cd0700",
+      "keywords": [
+        "ingest",
+        "pipeline",
+        "feed",
+        "airlock",
+        "manifest",
+        "submit",
+        "processing",
+        "SSE"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.200811800+00:00",
+      "name": "ingest-monitor",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "",
+      "business_feature": "Memory Ingestion & Processing",
+      "category": "lib",
+      "cross_refs": [
+        "core-algorithms",
+        "store-data-plane",
+        "llm-provider-gateway"
+      ],
+      "db_tables": [
+        "ingest_queue",
+        "memories",
+        "sources",
+        "entities",
+        "entity_relations",
+        "promotions",
+        "contradictions",
+        "documents",
+        "document_revisions",
+        "library_standards"
+      ],
+      "description": "The async worker chain that turns raw source text into governed knowledge: extract (LLM → raw memories + entities + relations), resolve (entity clustering), contradict (conflict detection), compose (document synthesis), plus sweeps for re-embedding, library mining, practice divergence detection, and OKF ingest. A single pipeline_principal scopes all writes; a shared worker loop drains the ingest queue stage by stage.",
+      "entry_points": [
+        "crates/brainiac-pipeline/src/worker.rs",
+        "crates/brainiac-pipeline/src/extract.rs",
+        "crates/brainiac-pipeline/src/compose.rs"
+      ],
+      "file_paths": [
+        "crates/brainiac-pipeline/src/lib.rs",
+        "crates/brainiac-pipeline/src/compose.rs",
+        "crates/brainiac-pipeline/src/contradict.rs",
+        "crates/brainiac-pipeline/src/divergence.rs",
+        "crates/brainiac-pipeline/src/extract.rs",
+        "crates/brainiac-pipeline/src/faithfulness.rs",
+        "crates/brainiac-pipeline/src/library_sweep.rs",
+        "crates/brainiac-pipeline/src/manual.rs",
+        "crates/brainiac-pipeline/src/okf_ingest.rs",
+        "crates/brainiac-pipeline/src/policy.rs",
+        "crates/brainiac-pipeline/src/reembed.rs",
+        "crates/brainiac-pipeline/src/resolve.rs",
+        "crates/brainiac-pipeline/src/standards_page.rs",
+        "crates/brainiac-pipeline/src/worker.rs",
+        "crates/brainiac-pipeline/tests/compose_isolation_pg.rs",
+        "crates/brainiac-pipeline/tests/compose_pg.rs",
+        "crates/brainiac-pipeline/tests/divergence_pg.rs",
+        "crates/brainiac-pipeline/tests/extract_cache_pg.rs",
+        "crates/brainiac-pipeline/tests/extract_recall_pg.rs",
+        "crates/brainiac-pipeline/tests/library_sweep_pg.rs",
+        "crates/brainiac-pipeline/tests/pipeline_pg.rs",
+        "crates/brainiac-pipeline/tests/reembed_pg.rs",
+        "crates/brainiac-pipeline/tests/standards_page_pg.rs"
+      ],
+      "group": "Knowledge Pipeline",
+      "group_id": "db7baa9b-3054-4113-9323-8c2cc85040de",
+      "id": "cc5df774-e06d-461c-9bcd-98f174d2214b",
+      "keywords": [
+        "extract",
+        "resolve",
+        "contradict",
+        "compose",
+        "divergence",
+        "faithfulness",
+        "reembed",
+        "library",
+        "sweep",
+        "pipeline"
+      ],
+      "last_written_at": "2026-08-05T08:15:55.175619900+00:00",
+      "name": "ingestion-pipeline",
+      "pinned": false,
+      "tech_stack": [
+        "Rust",
+        "tokio",
+        "sqlx",
+        "anyhow",
+        "serde"
+      ]
+    },
+    {
+      "api_surface": "GET/POST /api/keys, POST /api/keys/preview, DELETE /api/keys/[id]/revoke, GET/POST /api/projects, GET/POST/DELETE /api/projects/[id]/repos/[repoId]",
+      "business_feature": "API Keys & Projects",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "app-shell"
+      ],
+      "db_tables": [
+        "api_tokens",
+        "projects",
+        "repos"
+      ],
+      "description": "Manages API key lifecycle (create, preview, revoke) and project/repository registration that scopes memory access per codebase. Keys are created via the keys API routes which proxy to Brainiac; projects can be linked to one or more repos; the ops/SweepControl surface lets operators trigger and monitor background sweep jobs associated with a project.",
+      "entry_points": [
+        "console/app/console/modules/keys/Module.tsx",
+        "console/app/console/modules/projects/Module.tsx"
+      ],
+      "file_paths": [
+        "console/app/console/modules/keys/Module.tsx",
+        "console/app/console/modules/keys/Skeleton.tsx",
+        "console/app/console/modules/keys/Keys.tsx",
+        "console/app/console/modules/keys/keys-data.ts",
+        "console/app/console/modules/keys/KeyShared.tsx",
+        "console/app/api/keys/route.ts",
+        "console/app/api/keys/preview/route.ts",
+        "console/app/api/keys/[id]/revoke/route.ts",
+        "console/app/console/modules/projects/Module.tsx",
+        "console/app/console/modules/projects/Skeleton.tsx",
+        "console/app/console/modules/projects/Projects.tsx",
+        "console/app/console/modules/projects/projects-data.ts",
+        "console/app/api/projects/route.ts",
+        "console/app/api/projects/[id]/repos/route.ts",
+        "console/app/api/projects/[id]/repos/[repoId]/route.ts",
+        "console/src/ops/sweep-actions.ts",
+        "console/src/ops/SweepControl.tsx"
+      ],
+      "group": "Access Control & Projects",
+      "group_id": "e7028b7f-5265-44a2-b12f-4204176b4dca",
+      "id": "241d9f19-5fc5-4639-aec1-017926bcbdf0",
+      "keywords": [
+        "api-key",
+        "token",
+        "revoke",
+        "project",
+        "repository",
+        "repo",
+        "sweep",
+        "access"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.202076500+00:00",
+      "name": "keys-projects",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "health and KB endpoints via api-client",
+      "business_feature": "Knowledge Health",
+      "category": "ui",
+      "cross_refs": [
+        "api-client",
+        "docs-editor"
+      ],
+      "db_tables": [
+        "memories",
+        "kb_pages"
+      ],
+      "description": "Visualises the health and completeness of the organisation's knowledge base: KnowledgeHealth shows per-memory age decay curves and coverage gaps; the Observatory surface gives a high-level dashboard of KB freshness; the kb module renders the KB export page with projection diagrams and a rotation curve illustrating how memory coverage evolves over time.",
+      "entry_points": [
+        "console/src/health/KnowledgeHealth.tsx",
+        "console/src/observatory/Observatory.tsx",
+        "console/src/kb/KnowledgeBase.tsx"
+      ],
+      "file_paths": [
+        "console/src/kb/illustrations.tsx",
+        "console/src/kb/kb-data.ts",
+        "console/src/kb/kb-data.test.ts",
+        "console/src/kb/KnowledgeBase.tsx",
+        "console/src/kb/ProjectionDiagram.tsx",
+        "console/src/kb/RotCurve.tsx",
+        "console/app/kb/layout.tsx",
+        "console/app/kb/page.tsx",
+        "console/src/health/age.ts",
+        "console/src/health/age.test.ts",
+        "console/src/health/health-data.ts",
+        "console/src/health/KnowledgeHealth.tsx",
+        "console/app/console/modules/health/Module.tsx",
+        "console/app/console/modules/health/Skeleton.tsx",
+        "console/src/observatory/Observatory.tsx",
+        "console/src/observatory/observatory-data.ts",
+        "console/src/observatory/observatory-data.test.ts"
+      ],
+      "group": "Documents & Knowledge Base",
+      "group_id": "5dc484dd-7273-4d8e-9775-c566efd857f5",
+      "id": "02b79837-1656-4bb7-a3d1-2046c4d03eba",
+      "keywords": [
+        "health",
+        "knowledge-base",
+        "age",
+        "decay",
+        "freshness",
+        "observatory",
+        "projection",
+        "coverage"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.201692800+00:00",
+      "name": "knowledge-health",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Recharts 3.9",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "",
+      "business_feature": "Knowledge Health, Documents & Library Schema",
+      "category": "data",
+      "cross_refs": [
+        "core-schema-migrations",
+        "library-projects-retrieval-migrations"
+      ],
+      "db_tables": [
+        "sources",
+        "knowledge_health_snapshots",
+        "memory_facets",
+        "practice_divergences",
+        "documents",
+        "document_pages",
+        "sweep_schedules",
+        "kb_publish_targets",
+        "compose_backoff",
+        "identities",
+        "library_standards",
+        "library_mining_runs",
+        "library_proposals"
+      ],
+      "description": "Extends the schema across three feature milestones: operational intelligence (source idempotency key, knowledge-health snapshots, memory facets, practice-divergence detection, sweep schedules), the document/KB layer (document pages as compiled projections over canonical memories, delete-policy tombstoning, KB publishing targets, compose-backoff tracking), and early platform features (identity federation via 0022, memory titles, raw-TTL sweeps, per-document read events, feedback resolution notes, digest-kind enumeration, and the Library substrate tables for standards and mining proposals). RLS and grants are added incrementally with each new org-scoped table.",
+      "entry_points": [
+        "migrations/0017_document_layer.sql",
+        "migrations/0022_identities.sql",
+        "migrations/0028_library_substrate.sql"
+      ],
+      "file_paths": [
         "migrations/0013_source_idempotency.sql",
         "migrations/0014_knowledge_health_snapshots.sql",
         "migrations/0015_memory_facets.sql",
@@ -245,566 +1048,98 @@
         "migrations/0027_digest_kind.sql",
         "migrations/0028_library_substrate.sql",
         "migrations/0029_library_mining.sql",
-        "migrations/0030_library_proposals.sql",
-        "migrations/0031_standards_pages.sql",
-        "migrations/0032_skill_proposals.sql",
-        "migrations/0033_list_indexes.sql",
-        "migrations/0034_projects_onboarding.sql",
-        "migrations/0035_project_stamping.sql",
-        "migrations/0036_revision_faithfulness.sql",
-        "migrations/0037_divergence_axis.sql",
-        "migrations/0038_document_project.sql",
-        "migrations/0039_project_path_prefix.sql",
-        "migrations/0040_project_isolation.sql"
+        "migrations/0030_library_proposals.sql"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "c2f8ca0b-4d59-4ced-8957-225950dd07e7",
+      "group": "Database Schema",
+      "group_id": "891ee10c-1376-4ca9-bb0d-4f2988a893a4",
+      "id": "3d3551c8-b360-4c15-9d99-dfe75d8277c3",
       "keywords": [
-        "migration",
-        "schema",
-        "postgres",
-        "rls",
-        "pgvector",
-        "fts",
-        "hnsw",
-        "tables",
-        "indexes",
-        "sqlx"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.941564600+00:00",
-      "name": "database-schema",
-      "pinned": false,
-      "tech_stack": [
-        "PostgreSQL",
-        "pgvector",
-        "sqlx"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Demo & Pitch Pages",
-      "category": "ui",
-      "cross_refs": [
-        "console-shell",
-        "review-workflow",
-        "standards-governance"
-      ],
-      "db_tables": [],
-      "description": "Public demo mode and investor pitch page for product communication. The demo console simulates a live governance session with pre-baked data; the pitch page presents evidence matrix, limits balance sheet, and retreat autopsy sections. Also contains the chainsonar research CLI in tools/.",
-      "entry_points": [
-        "console/src/app/demo/DemoConsole.tsx",
-        "console/src/pitch/Pitch.tsx"
-      ],
-      "file_paths": [
-        "console/src/pitch/Pitch.tsx",
-        "console/src/pitch/PitchNav.tsx",
-        "console/src/pitch/LedgerField.tsx",
-        "console/src/pitch/pitch-data.ts",
-        "console/src/pitch/hero-types.ts",
-        "console/src/pitch/diagrams.tsx",
-        "console/src/pitch/sections/EvidenceMatrix.tsx",
-        "console/src/pitch/sections/LimitsBalanceSheet.tsx",
-        "console/src/pitch/sections/RetreatAutopsy.tsx"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "c0352bac-f6a4-4bf5-9ae5-98731959c97a",
-      "keywords": [
-        "demo",
-        "pitch",
-        "marketing",
-        "investor",
-        "evidence",
-        "simulation",
-        "public",
-        "showcase"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.365955200+00:00",
-      "name": "demo-marketing",
-      "pinned": false,
-      "tech_stack": [
-        "Next.js",
-        "React",
-        "TypeScript",
-        "Tailwind",
-        "framer-motion"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Deployment & CI",
-      "category": "config",
-      "cross_refs": [
-        "server-core",
-        "eval-harness",
-        "llm-gateway"
-      ],
-      "db_tables": [],
-      "description": "Container build, compose orchestration, CI pipeline, Sentry observability wiring, and dev tooling configuration. The Dockerfile builds the single Rust binary + Next.js console for one-VM deploys; GitHub Actions mirrors the local quality bar (fmt, clippy, test, eval gates, console build). Backup/restore scripts handle the Postgres volume.",
-      "entry_points": [
-        "Dockerfile",
-        "docker-compose.deploy.yml"
-      ],
-      "file_paths": [
-        "Dockerfile",
-        "docker-compose.yml",
-        "docker-compose.deploy.yml",
-        ".env.example",
-        ".env.deploy.example",
-        "Cargo.toml",
-        "Cargo.lock",
-        "app-cost.json",
-        "context-map.json",
-        "scripts/backup.sh",
-        "scripts/restore.sh",
-        "console/instrumentation.ts",
-        "console/instrumentation-client.ts",
-        "console/sentry.edge.config.ts",
-        "console/sentry.server.config.ts",
-        "console/vitest.config.ts"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "97af7a2a-3b32-4ab5-859c-0281da4c3275",
-      "keywords": [
-        "docker",
-        "ci",
-        "deploy",
-        "sentry",
-        "observability",
-        "vitest",
-        "cargo",
-        "compose",
-        "backup",
-        "github-actions"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.941809600+00:00",
-      "name": "deploy-config",
-      "pinned": false,
-      "tech_stack": [
-        "Docker",
-        "GitHub Actions",
-        "Sentry",
-        "Vitest"
-      ]
-    },
-    {
-      "api_surface": "GET/POST /v1/docs, GET/PUT /v1/docs/{slug}, GET/POST /v1/docs/{slug}/edit, GET /v1/docs/{slug}/revisions, POST /v1/docs/{slug}/approve",
-      "business_feature": "Document Wiki",
-      "category": "api",
-      "cross_refs": [
+        "documents",
         "kb-publishing",
-        "memory-ledger",
-        "extraction-pipeline"
+        "health-snapshots",
+        "divergence",
+        "sweep",
+        "library",
+        "standards",
+        "identity-federation",
+        "memory-facets",
+        "compose-backoff"
       ],
-      "db_tables": [
-        "documents",
-        "document_revisions",
-        "document_reads"
-      ],
-      "description": "Structured wiki layer where the org's distilled knowledge appears as markdown documents organized by topic, with revision history and section-level editing. Documents flow from the memory pipeline or manual edits, go through an approval workflow, and render with Mermaid diagram support. The Rust docs.rs serves the full REST API; the console module and src/docs/ components handle all UI.",
-      "entry_points": [
-        "crates/brainiac-server/src/docs.rs",
-        "console/src/docs/DocWiki.tsx"
-      ],
-      "file_paths": [
-        "crates/brainiac-store/src/documents.rs",
-        "crates/brainiac-server/src/docs.rs",
-        "crates/brainiac-server/tests/docs_pg.rs",
-        "crates/brainiac-server/tests/doc_edit_pg.rs",
-        "crates/brainiac-store/tests/docs_browse_pg.rs",
-        "console/src/docs/DocPage.tsx",
-        "console/src/docs/DocReader.tsx",
-        "console/src/docs/DocWiki.tsx",
-        "console/src/docs/MermaidBlock.tsx",
-        "console/src/docs/SectionEditor.tsx",
-        "console/src/docs/ApproveRevision.tsx",
-        "console/src/docs/markdown.ts",
-        "console/src/docs/markdown.test.ts",
-        "console/src/docs/tree.ts",
-        "console/src/docs/tree.test.ts",
-        "console/src/docs/edit-copy.ts",
-        "console/src/docs/edit-copy.test.ts",
-        "console/src/docs/facets.ts",
-        "console/src/docs/wiki-data.ts",
-        "console/src/docs/docs-demo.ts"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "b4d27796-6ba0-4d7c-8d21-d1819de0423d",
-      "keywords": [
-        "wiki",
-        "documents",
-        "markdown",
-        "revision",
-        "approval",
-        "mermaid",
-        "sections",
-        "edit",
-        "knowledge-base"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.367264900+00:00",
-      "name": "document-wiki",
+      "last_written_at": "2026-08-05T08:13:00.145935+00:00",
+      "name": "knowledge-health-document-migrations",
       "pinned": false,
       "tech_stack": [
-        "Rust",
-        "axum",
-        "sqlx",
-        "Next.js",
-        "React",
-        "TypeScript",
-        "mermaid"
+        "PostgreSQL 16",
+        "pgvector",
+        "sqlx"
       ]
     },
     {
-      "api_surface": null,
-      "business_feature": "Quality Regression Gates",
-      "category": "test",
-      "cross_refs": [
-        "extraction-pipeline",
-        "memory-retrieval",
-        "contradiction-detection",
-        "sweep-pipeline"
-      ],
-      "db_tables": [],
-      "description": "Regression quality gate harness with profiles for retrieval, extraction, contradiction, resolution, divergence, pipeline, docs, and drift. Compares current runs against committed baselines and enforces hard gates (zero RLS leaks, zero superseded-in-top-3). Also contains the fixtures crate and UAT tooling that seed and validate the synthetic Meridian org corpus.",
-      "entry_points": [
-        "crates/brainiac-eval/src/lib.rs",
-        "crates/brainiac-eval/src/gates.rs"
-      ],
-      "file_paths": [
-        "crates/brainiac-eval/src/lib.rs",
-        "crates/brainiac-eval/src/gates.rs",
-        "crates/brainiac-eval/src/grid.rs",
-        "crates/brainiac-eval/src/seed.rs",
-        "crates/brainiac-eval/src/report.rs",
-        "crates/brainiac-eval/src/pipeline_profile.rs",
-        "crates/brainiac-eval/src/extraction_profile.rs",
-        "crates/brainiac-eval/src/retrieval_profile.rs",
-        "crates/brainiac-eval/src/resolution_profile.rs",
-        "crates/brainiac-eval/src/contradiction_profile.rs",
-        "crates/brainiac-eval/src/drift_profile.rs",
-        "crates/brainiac-eval/src/docs_profile.rs",
-        "crates/brainiac-eval/src/divergence_profile.rs",
-        "crates/brainiac-eval/tests/retrieval_pg.rs",
-        "crates/brainiac-eval/tests/contradiction_pg.rs",
-        "crates/brainiac-eval/tests/grid_pg.rs",
-        "crates/brainiac-eval/tests/pipeline_pg.rs",
-        "crates/brainiac-eval/tests/resolution_pg.rs",
-        "crates/brainiac-eval/tests/divergence_pg.rs",
-        "crates/brainiac-fixtures/src/lib.rs",
-        "crates/brainiac-fixtures/src/loader.rs",
-        "crates/brainiac-fixtures/src/schema.rs",
-        "crates/brainiac-fixtures/src/validate.rs",
-        "crates/brainiac-fixtures/src/export.rs",
-        "crates/brainiac-fixtures/src/ids.rs",
-        "crates/brainiac-fixtures/tests/load_v1.rs",
-        "fixtures/v1/org.yaml",
-        "fixtures/v1/entities/entities.yaml",
-        "fixtures/v1/entities/merges.yaml",
-        "fixtures/v1/contradictions/cases.yaml",
-        "fixtures/v1/memories/gold.yaml",
-        "fixtures/v1/retrieval/qa.yaml",
-        "fixtures/v1/retrieval/leak.yaml",
-        "fixtures/v1/temporal/asof.yaml",
-        "fixtures/v1/drift/docs.yaml",
-        "fixtures/v1/divergence/clusters.yaml",
-        "fixtures/v1/documents/pages.yaml",
-        "fixtures/v2/org.yaml",
-        "fixtures/bank/org.yaml",
-        "tools/bank-org.mjs",
-        "tools/gen-bank-corpus.mjs",
-        "tools/seed-bank-docs.mjs",
-        "results/baseline.json"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "2daa647b-e06a-47a4-b96e-1b029990ebb9",
-      "keywords": [
-        "eval",
-        "regression",
-        "gates",
-        "baseline",
-        "fixtures",
-        "meridian",
-        "profiles",
-        "quality",
-        "uat",
-        "corpus",
-        "ci"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.368751200+00:00",
-      "name": "eval-harness",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "sqlx",
-        "tokio",
-        "YAML"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Memory Extraction",
-      "category": "lib",
-      "cross_refs": [
-        "memory-ledger",
-        "entity-resolution",
-        "llm-gateway",
-        "contradiction-detection"
-      ],
-      "db_tables": [
-        "pipeline_run_stats",
-        "job_queue"
-      ],
-      "description": "Ingestion pipeline entry point: takes raw transcripts or manually submitted content, calls an LLM to extract discrete memory candidates, scores faithfulness, deduplicates via composition, and enqueues results for downstream processing. The worker loop polls the job queue; policy controls routing per source type.",
-      "entry_points": [
-        "crates/brainiac-pipeline/src/worker.rs",
-        "crates/brainiac-pipeline/src/extract.rs"
-      ],
-      "file_paths": [
-        "crates/brainiac-pipeline/src/lib.rs",
-        "crates/brainiac-pipeline/src/worker.rs",
-        "crates/brainiac-pipeline/src/extract.rs",
-        "crates/brainiac-pipeline/src/manual.rs",
-        "crates/brainiac-pipeline/src/policy.rs",
-        "crates/brainiac-pipeline/src/faithfulness.rs",
-        "crates/brainiac-pipeline/src/compose.rs",
-        "crates/brainiac-store/src/queue.rs",
-        "crates/brainiac-pipeline/tests/pipeline_pg.rs",
-        "crates/brainiac-pipeline/tests/compose_pg.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "24cf410f-f281-4a84-9259-416460a9855a",
-      "keywords": [
-        "extraction",
-        "pipeline",
-        "worker",
-        "transcript",
-        "faithfulness",
-        "compose",
-        "dedup",
-        "queue",
-        "ingest",
-        "policy"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.938287400+00:00",
-      "name": "extraction-pipeline",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "tokio",
-        "sqlx",
-        "anyhow"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Cortex Map",
-      "category": "ui",
-      "cross_refs": [
-        "entity-resolution",
-        "console-shell"
-      ],
-      "db_tables": [],
-      "description": "Interactive cortex map of the org's canonical entity graph, offering depth-of-field zoom and star chart views in the console. Fetches entity graph topology and canonical entity details via BFF API routes backed by the entity store. Entry point is CortexMap.tsx for graph rendering and useCanonicalDetail for detail expansion.",
-      "entry_points": [
-        "console/src/app/console/modules/graph/CortexMap.tsx"
-      ],
-      "file_paths": [],
-      "group": null,
-      "group_id": null,
-      "id": "0d295829-c48d-491e-81e1-b2d7e0d13457",
-      "keywords": [
-        "graph",
-        "cortex",
-        "entity",
-        "canonical",
-        "visualization",
-        "depth",
-        "star-chart",
-        "topology"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.369336900+00:00",
-      "name": "graph-visualization",
-      "pinned": false,
-      "tech_stack": [
-        "Next.js",
-        "React",
-        "TypeScript",
-        "Tailwind"
-      ]
-    },
-    {
-      "api_surface": "POST /v1/provision (publish target setup)",
+      "api_surface": "",
       "business_feature": "Knowledge Base Publishing",
       "category": "lib",
       "cross_refs": [
-        "document-wiki",
-        "memory-ledger",
-        "onboarding"
+        "core-algorithms",
+        "store-data-plane"
       ],
       "db_tables": [
-        "kb_publishing"
+        "publish_targets",
+        "publications",
+        "documents",
+        "document_revisions"
       ],
-      "description": "Exports the distilled memory corpus as a published knowledge base supporting Git-based GitOps push, Confluence, and Open Knowledge Format outputs. The publish crate handles rendering and serialization; the store tracks publishing state; the OKF ingest path imports external KBs. The public KB page explains the projection model to users.",
+      "description": "Pushes the org's knowledge base outward to external targets (Confluence, Git, OKF) in a one-way, health-gated, RLS-respecting flow. Only org-visible documents may leave; credentials are never stored in the database (only env-var references). Implements the Publisher trait with per-target adapters plus shared page rendering and bundle-level artifact generation (index.md, log.md).",
       "entry_points": [
-        "crates/brainiac-publish/src/lib.rs",
-        "console/src/kb/KnowledgeBase.tsx"
+        "crates/brainiac-publish/src/lib.rs"
       ],
       "file_paths": [
         "crates/brainiac-publish/src/lib.rs",
-        "crates/brainiac-publish/src/git.rs",
         "crates/brainiac-publish/src/confluence.rs",
+        "crates/brainiac-publish/src/git.rs",
         "crates/brainiac-publish/src/okf.rs",
-        "crates/brainiac-publish/src/render.rs",
         "crates/brainiac-publish/src/pointer.rs",
-        "crates/brainiac-store/src/publishing.rs",
-        "crates/brainiac-server/tests/publish_pg.rs",
-        "console/src/kb/KnowledgeBase.tsx",
-        "console/src/kb/kb-data.ts",
-        "console/src/kb/kb-data.test.ts",
-        "console/src/kb/illustrations.tsx",
-        "console/src/kb/ProjectionDiagram.tsx",
-        "console/src/kb/RotCurve.tsx"
+        "crates/brainiac-publish/src/render.rs",
+        "crates/brainiac-publish/tests/okf_pg.rs"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "7352a270-5ece-488e-a284-11a63fd89ef4",
+      "group": "Knowledge Pipeline",
+      "group_id": "db7baa9b-3054-4113-9323-8c2cc85040de",
+      "id": "db65b641-8048-446b-bb97-757930968b7a",
       "keywords": [
         "publish",
-        "knowledge-base",
-        "git",
-        "gitops",
-        "confluence",
-        "okf",
+        "Confluence",
+        "Git",
+        "OKF",
+        "knowledge base",
         "export",
-        "rendering",
-        "projection"
+        "health gate",
+        "visibility"
       ],
-      "last_written_at": "2026-07-23T12:14:02.370293200+00:00",
-      "name": "kb-publishing",
+      "last_written_at": "2026-08-05T08:15:55.175940200+00:00",
+      "name": "knowledge-publish",
       "pinned": false,
       "tech_stack": [
         "Rust",
-        "git2",
-        "Next.js",
-        "React",
-        "TypeScript"
+        "tokio",
+        "anyhow",
+        "serde",
+        "async-trait"
       ]
     },
     {
-      "api_surface": "GET /v1/analytics/knowledge-health",
-      "business_feature": "Knowledge Health Dashboard",
+      "api_surface": "skills endpoints via api-client",
+      "business_feature": "Library & Skills Catalog",
       "category": "ui",
       "cross_refs": [
-        "memory-ledger",
-        "analytics-dashboard"
+        "api-client",
+        "standards-board"
       ],
       "db_tables": [
-        "knowledge_health_snapshots"
+        "skills"
       ],
-      "description": "Displays memory health snapshots — tracking age distribution, staleness curves, quality scores, and expiry timelines across the org's corpus. Snapshots are computed by a backend scheduler and stored; the console renders interactive health dashboards. The age.ts module handles client-side time-decay calculations.",
-      "entry_points": [
-        "console/src/health/KnowledgeHealth.tsx"
-      ],
-      "file_paths": [
-        "console/src/health/KnowledgeHealth.tsx",
-        "console/src/health/health-data.ts",
-        "console/src/health/age.ts",
-        "console/src/health/age.test.ts"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "3a87bad8-4860-411a-96c2-b456603ef33e",
-      "keywords": [
-        "health",
-        "snapshots",
-        "staleness",
-        "age",
-        "quality",
-        "expiry",
-        "decay",
-        "corpus"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.371218500+00:00",
-      "name": "knowledge-health",
-      "pinned": false,
-      "tech_stack": [
-        "Next.js",
-        "React",
-        "TypeScript",
-        "recharts"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Library Substrate",
-      "category": "data",
-      "cross_refs": [
-        "standards-governance",
-        "skills-catalog",
-        "sweep-pipeline",
-        "memory-ledger"
-      ],
-      "db_tables": [
-        "library_standards",
-        "library_skills",
-        "library_proposals",
-        "library_usage",
-        "library_mining"
-      ],
-      "description": "Normative data layer storing org-wide standards and skills as first-class knowledge artifacts, with proposal workflows for promoting mined candidates into adopted norms. Covers the full substrate: standards, skills, proposals, usage tracking, and the bridge that links library items back to source memories. Pure persistence — no HTTP or pipeline logic.",
-      "entry_points": [
-        "crates/brainiac-store/src/library/mod.rs",
-        "crates/brainiac-core/src/library.rs"
-      ],
-      "file_paths": [
-        "crates/brainiac-core/src/library.rs",
-        "crates/brainiac-store/src/library/mod.rs",
-        "crates/brainiac-store/src/library/standards.rs",
-        "crates/brainiac-store/src/library/skills.rs",
-        "crates/brainiac-store/src/library/proposals.rs",
-        "crates/brainiac-store/src/library/usage.rs",
-        "crates/brainiac-store/src/library/bridge.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "7f9c8f2e-8156-4068-8176-9cef2e520ee0",
-      "keywords": [
-        "library",
-        "standards",
-        "skills",
-        "proposals",
-        "usage",
-        "bridge",
-        "adopted",
-        "normative",
-        "substrate"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.933205600+00:00",
-      "name": "library-core",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "sqlx"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Library Landing Page",
-      "category": "ui",
-      "cross_refs": [
-        "standards-governance",
-        "skills-catalog"
-      ],
-      "db_tables": [],
-      "description": "Public-facing landing page explaining the Library feature — its normative role, how standards and skills flow from memory patterns into adopted org norms, and the lifecycle from mining to ratification. Contains animated sections, architectural diagrams, and layer visualizations for product communication.",
+      "description": "Hosts the org skills catalog (agent-callable skills that agents can invoke) and the public-facing library page that explains the Brainiac layered-knowledge model. The library page renders illustrated sections (anatomy, layers, drift, status ladder) that double as onboarding documentation; the skills module lets operators browse and adopt available skills with server-action-backed adopt/revoke flows.",
       "entry_points": [
         "console/src/library/Library.tsx",
-        "console/src/app/library/page.tsx"
+        "console/app/console/modules/skills/Module.tsx"
       ],
       "file_paths": [
         "console/src/library/Library.tsx",
@@ -824,510 +1159,655 @@
         "console/src/library/sections/Layers.tsx",
         "console/src/library/sections/Loop.tsx",
         "console/src/library/sections/Never.tsx",
-        "console/src/library/sections/StatusLadder.tsx"
+        "console/src/library/sections/StatusLadder.tsx",
+        "console/app/library/layout.tsx",
+        "console/app/library/page.tsx",
+        "console/app/console/modules/skills/Module.tsx",
+        "console/app/console/modules/skills/Skeleton.tsx",
+        "console/app/console/modules/skills/actions.ts",
+        "console/app/console/modules/skills/SkillsCatalog.tsx",
+        "console/app/console/modules/skills/skills-data.ts"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "9c420e28-1822-44d8-a8ac-535d81186f96",
+      "group": "Library & Skills",
+      "group_id": "23708691-7095-4cfe-93a8-cf43971032c7",
+      "id": "14b630b0-e04e-4af1-88f1-9d591198b0d1",
       "keywords": [
         "library",
-        "landing",
-        "standards",
         "skills",
-        "normative",
-        "marketing",
-        "diagrams",
-        "layers"
+        "catalog",
+        "adopt",
+        "layers",
+        "anatomy",
+        "standards",
+        "agents",
+        "onboarding"
       ],
-      "last_written_at": "2026-07-23T12:14:02.372735900+00:00",
-      "name": "library-landing",
+      "last_written_at": "2026-08-05T08:16:04.202451300+00:00",
+      "name": "library-catalog",
       "pinned": false,
       "tech_stack": [
-        "Next.js",
-        "React",
+        "Next.js 15.3",
+        "React 19.1",
         "TypeScript",
-        "Tailwind",
-        "framer-motion"
+        "Framer Motion 12.42",
+        "Tailwind 4"
       ]
     },
     {
-      "api_surface": null,
-      "business_feature": "LLM Provider Gateway",
+      "api_surface": "",
+      "business_feature": "Library, Projects & Retrieval Schema",
+      "category": "data",
+      "cross_refs": [
+        "core-schema-migrations",
+        "knowledge-health-document-migrations"
+      ],
+      "db_tables": [
+        "standards_pages",
+        "skill_proposals",
+        "projects",
+        "project_repos",
+        "project_onboarding",
+        "retrieval_events",
+        "extraction_cache",
+        "knowledge_gaps",
+        "divergence_identity",
+        "revision_faithfulness"
+      ],
+      "description": "Covers the later platform milestones: Library normative layer completion (standards pages, skill proposals, list indexes), the Projects axis (repo whitelist, onboarding pairings, project stamping on memories/documents, path-prefix routing, per-project RLS isolation, OKF publish targets), quality and traceability improvements (revision faithfulness scores, divergence-axis labels, divergence identity attribution, contradiction sibling-lookup index), and the demand/retrieval intelligence layer (retrieval events ledger, extraction cache, knowledge-gaps table that turns unanswered questions into actionable work items). Also includes the migrations README documenting append-only rules and sequence-number conventions.",
+      "entry_points": [
+        "migrations/0034_projects_onboarding.sql",
+        "migrations/0043_retrieval_events.sql",
+        "migrations/0049_knowledge_gaps.sql",
+        "migrations/README.md"
+      ],
+      "file_paths": [
+        "migrations/0031_standards_pages.sql",
+        "migrations/0032_skill_proposals.sql",
+        "migrations/0033_list_indexes.sql",
+        "migrations/0034_projects_onboarding.sql",
+        "migrations/0035_project_stamping.sql",
+        "migrations/0036_revision_faithfulness.sql",
+        "migrations/0037_divergence_axis.sql",
+        "migrations/0038_document_project.sql",
+        "migrations/0039_project_path_prefix.sql",
+        "migrations/0040_project_isolation.sql",
+        "migrations/0041_okf_publish_target.sql",
+        "migrations/0042_divergence_identity.sql",
+        "migrations/0043_retrieval_events.sql",
+        "migrations/0046_contradiction_sibling_lookup.sql",
+        "migrations/0048_extraction_cache.sql",
+        "migrations/0049_knowledge_gaps.sql"
+      ],
+      "group": "Database Schema",
+      "group_id": "891ee10c-1376-4ca9-bb0d-4f2988a893a4",
+      "id": "1e273d53-efb2-423b-81fc-1d72cbcf4cb6",
+      "keywords": [
+        "projects",
+        "retrieval-events",
+        "knowledge-gaps",
+        "skill-proposals",
+        "standards-pages",
+        "divergence-axis",
+        "faithfulness",
+        "extraction-cache",
+        "project-isolation",
+        "okf-publishing"
+      ],
+      "last_written_at": "2026-08-05T08:13:00.146565400+00:00",
+      "name": "library-projects-retrieval-migrations",
+      "pinned": false,
+      "tech_stack": [
+        "PostgreSQL 16",
+        "pgvector",
+        "sqlx"
+      ]
+    },
+    {
+      "api_surface": "External: OpenAI /chat/completions, Anthropic Messages API, Google Gemini generateContent, AWS Bedrock, Vertex AI",
+      "business_feature": "Multi-Provider LLM Integration",
       "category": "lib",
       "cross_refs": [
-        "extraction-pipeline",
-        "contradiction-detection",
-        "sweep-pipeline",
-        "deploy-config"
+        "core-algorithms"
       ],
       "db_tables": [],
-      "description": "Provider-agnostic abstraction layer for calling external LLMs and embedding models, with Qwen/DashScope as the first provider. Implements resilience patterns (retry, timeout, circuit-breaker) and lightweight per-call token/cost telemetry (LightTrack). All pipeline LLM calls route through this crate — it is the single external AI dependency.",
+      "description": "BYOM (Bring Your Own Model) abstraction layer that exposes a single ChatProvider trait implemented by OpenAI-compatible endpoints (Qwen/DashScope, Azure, Groq, DeepSeek, Ollama), Anthropic Messages API, Google Gemini, AWS Bedrock, and Google Vertex AI. Resilience (retry/timeout) and fire-and-forget LightTrack telemetry are shared across all providers; per-stage model overrides compose via ProviderRouter.",
       "entry_points": [
-        "crates/brainiac-gateway/src/lib.rs"
+        "crates/brainiac-gateway/src/lib.rs",
+        "crates/brainiac-gateway/src/providers/mod.rs"
       ],
       "file_paths": [
         "crates/brainiac-gateway/src/lib.rs",
         "crates/brainiac-gateway/src/lighttrack.rs",
         "crates/brainiac-gateway/src/resilience.rs",
+        "crates/brainiac-gateway/src/providers/mod.rs",
+        "crates/brainiac-gateway/src/providers/anthropic.rs",
+        "crates/brainiac-gateway/src/providers/bedrock.rs",
+        "crates/brainiac-gateway/src/providers/google.rs",
+        "crates/brainiac-gateway/src/providers/openai.rs",
+        "crates/brainiac-gateway/src/providers/vertex.rs",
+        "crates/brainiac-gateway/tests/providers.rs",
         "crates/brainiac-gateway/tests/qwen_provider.rs",
-        "crates/brainiac-gateway/tests/qwen_timeout.rs"
+        "crates/brainiac-gateway/tests/qwen_timeout.rs",
+        "crates/brainiac-gateway/tests/bedrock.rs",
+        "crates/brainiac-gateway/tests/vertex.rs"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "f6cf3ada-6ceb-47d0-bebd-fbcde2340423",
+      "group": "LLM Provider Gateway",
+      "group_id": "52dbd1bf-d4c8-4d9d-a85c-87ceeb275bb4",
+      "id": "91ec5af0-3ee9-4ec8-bb48-2ab52b3a9375",
       "keywords": [
-        "llm",
-        "gateway",
-        "qwen",
-        "dashscope",
-        "embedding",
+        "LLM",
         "provider",
+        "Qwen",
+        "OpenAI",
+        "Anthropic",
+        "Gemini",
+        "Bedrock",
+        "Vertex",
         "resilience",
-        "retry",
-        "timeout",
-        "lighttrack",
-        "telemetry",
-        "byom"
+        "LightTrack"
       ],
-      "last_written_at": "2026-07-23T12:13:51.939262900+00:00",
-      "name": "llm-gateway",
+      "last_written_at": "2026-08-05T08:15:55.174661600+00:00",
+      "name": "llm-provider-gateway",
       "pinned": false,
       "tech_stack": [
         "Rust",
-        "reqwest",
-        "tokio"
+        "async-trait",
+        "tokio",
+        "serde",
+        "anyhow"
       ]
     },
     {
-      "api_surface": "POST /v1/onboard/start, GET /v1/onboard/poll, GET /v1/onboard/requests, POST /v1/provision",
-      "business_feature": "Device Flow Onboarding",
-      "category": "api",
+      "api_surface": "GET /api/memories/[id] — proxy to Brainiac REST",
+      "business_feature": "Memory Archive",
+      "category": "ui",
       "cross_refs": [
-        "api-keys",
-        "org-directory"
+        "api-client",
+        "app-shell"
       ],
       "db_tables": [
-        "onboard_requests"
+        "memories"
       ],
-      "description": "Device-flow onboarding state machine that pairs external clients (agents, MCP servers) with an org — generates a device code, polls for human approval, then issues an API token on completion. The server and store implement the full RFC 8628-style flow; admin console routes expose pending requests and allow approve/deny decisions.",
+      "description": "Provides the operator UI for browsing, searching, and inspecting the organisation's stored memories. The Archive table lists all memories with column filters and full-text search; MemoryInspector renders the detail panel. Data is fetched from the Brainiac REST API (memories endpoint) via the server-only api client, with pagination state managed by archive-index helpers.",
       "entry_points": [
+        "console/app/console/modules/memories/Module.tsx",
+        "console/app/console/modules/memories/Archive.tsx"
+      ],
+      "file_paths": [
+        "console/app/console/modules/memories/Module.tsx",
+        "console/app/console/modules/memories/Skeleton.tsx",
+        "console/app/console/modules/memories/Archive.tsx",
+        "console/app/console/modules/memories/archive-data.ts",
+        "console/app/console/modules/memories/archive-data.test.ts",
+        "console/app/console/modules/memories/archive-index.ts",
+        "console/app/console/modules/memories/archive-index.test.ts",
+        "console/app/console/modules/memories/ArchiveSearch.tsx",
+        "console/app/console/modules/memories/ColumnFilter.tsx",
+        "console/app/console/modules/memories/MemoryInspector.tsx",
+        "console/app/console/modules/memories/row-icons.tsx",
+        "console/app/console/modules/memories/useMemoryDetail.ts",
+        "console/app/api/memories/[id]/route.ts"
+      ],
+      "group": "Memory Intelligence",
+      "group_id": "04618d93-e001-403c-931d-63a6531d877b",
+      "id": "955ac908-86ae-48d6-acc6-d0e7f9d77c20",
+      "keywords": [
+        "memories",
+        "archive",
+        "search",
+        "inspect",
+        "pagination",
+        "knowledge",
+        "browse",
+        "filter"
+      ],
+      "last_written_at": "2026-08-05T08:16:04.197961400+00:00",
+      "name": "memory-archive",
+      "pinned": false,
+      "tech_stack": [
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Tailwind 4"
+      ]
+    },
+    {
+      "api_surface": "GET /health, POST /v1/memories, POST /v1/memories/search; MCP stdio tools: memory_search, memory_context, memory_add, entity_lookup, knowledge_propose, memory_feedback, memory_provenance",
+      "business_feature": "REST & MCP API Server",
+      "category": "api",
+      "cross_refs": [
+        "core-algorithms",
+        "store-data-plane",
+        "llm-provider-gateway",
+        "ingestion-pipeline"
+      ],
+      "db_tables": [
+        "api_tokens",
+        "memories",
+        "memory_embeddings"
+      ],
+      "description": "The axum HTTP server binary entry point, MCP stdio transport, bearer-token auth, OpenAPI schema generation, and the health/memories REST surface. Every handler resolves the caller's principal before touching data; the MCP loop is a pure handle_message function testable without a process. The admin pool (RLS-bypassing) is provisioned here for the two legitimate bypasses: org-true analytics and self-serve provisioning.",
+      "entry_points": [
+        "crates/brainiac-server/src/main.rs",
+        "crates/brainiac-server/src/http.rs",
+        "crates/brainiac-server/src/mcp.rs"
+      ],
+      "file_paths": [
+        "crates/brainiac-server/src/main.rs",
+        "crates/brainiac-server/src/lib.rs",
+        "crates/brainiac-server/src/auth.rs",
+        "crates/brainiac-server/src/guard.rs",
+        "crates/brainiac-server/src/http.rs",
+        "crates/brainiac-server/src/mcp.rs",
+        "crates/brainiac-server/src/openapi.rs",
+        "crates/brainiac-server/tests/http_smoke.rs",
+        "crates/brainiac-server/tests/guard_pg.rs",
+        "crates/brainiac-server/tests/mcp_pg.rs",
+        "crates/brainiac-server/tests/mcp_contested_backfill_pg.rs",
+        "crates/brainiac-server/tests/mcp_rerank_parity_pg.rs"
+      ],
+      "group": "API Surface",
+      "group_id": "ab67ee8a-b26d-43c0-ab5f-ea37d6a67d8f",
+      "id": "a7cd5886-89af-4295-bcb0-9dc388401415",
+      "keywords": [
+        "axum",
+        "MCP",
+        "REST",
+        "auth",
+        "bearer token",
+        "OpenAPI",
+        "health",
+        "serve",
+        "worker",
+        "eval"
+      ],
+      "last_written_at": "2026-08-05T08:15:55.176263400+00:00",
+      "name": "server-api-core",
+      "pinned": false,
+      "tech_stack": [
+        "Rust",
+        "axum",
+        "tokio",
+        "utoipa",
+        "clap",
+        "serde",
+        "anyhow"
+      ]
+    },
+    {
+      "api_surface": "GET /v1/docs, GET /v1/docs/{slug}, GET /v1/library/standards, GET /v1/library/skills/{slug}, POST /v1/library/adopt, GET /v1/reviews/promotions, POST /v1/onboard, GET /v1/projects, POST /v1/sweeps, GET /v1/alerts",
+      "business_feature": "Domain Feature API Handlers",
+      "category": "api",
+      "cross_refs": [
+        "core-algorithms",
+        "store-data-plane",
+        "server-api-core",
+        "knowledge-publish",
+        "ingestion-pipeline"
+      ],
+      "db_tables": [
+        "documents",
+        "document_revisions",
+        "library_standards",
+        "library_skills",
+        "library_proposals",
+        "library_usage_events",
+        "orgs",
+        "identities",
+        "api_tokens",
+        "promotions",
+        "contradictions",
+        "publish_targets"
+      ],
+      "description": "All domain-specific HTTP handlers beyond the core memory surface: knowledge-base document reads, library standards/skills distribution, org onboarding and provisioning, project management, divergence sweeps, alerts, console proxy, and demand tracking. Every route resolves a bearer principal and runs under a scoped RLS transaction; the library surface enforces adopt-only serving and per-team (never per-person) usage telemetry.",
+      "entry_points": [
+        "crates/brainiac-server/src/docs.rs",
+        "crates/brainiac-server/src/library.rs",
         "crates/brainiac-server/src/onboard.rs"
       ],
       "file_paths": [
-        "crates/brainiac-store/src/onboard.rs",
-        "crates/brainiac-server/src/onboard.rs",
-        "crates/brainiac-server/src/provision.rs",
-        "crates/brainiac-server/tests/onboard_pg.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "c265c2b4-441a-4db3-9507-f667cad58789",
-      "keywords": [
-        "onboard",
-        "device-flow",
-        "pairing",
-        "approval",
-        "provision",
-        "agent",
-        "mcp",
-        "requests"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.373505100+00:00",
-      "name": "onboarding",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "axum",
-        "sqlx"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Org Management",
-      "category": "data",
-      "cross_refs": [
-        "auth-middleware",
-        "api-keys",
-        "projects"
-      ],
-      "db_tables": [
-        "orgs",
-        "users",
-        "identities"
-      ],
-      "description": "Foundational identity plane storing the org registry, user directory, and identity linking records that all RLS policies reference. No business logic — purely a data-access module that other contexts query to resolve org_id and user_id for transaction stamping.",
-      "entry_points": [
-        "crates/brainiac-store/src/orgs.rs"
-      ],
-      "file_paths": [
-        "crates/brainiac-store/src/orgs.rs",
-        "crates/brainiac-store/src/identities.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "a0799a5c-d4ed-49fb-ac28-fdf48529f333",
-      "keywords": [
-        "org",
-        "user",
-        "directory",
-        "identity",
-        "rls",
-        "scoping",
-        "tenant"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.938083400+00:00",
-      "name": "org-directory",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "sqlx"
-      ]
-    },
-    {
-      "api_surface": "GET /v1/analytics/practice-divergence",
-      "business_feature": "Practice Divergence Dashboard",
-      "category": "ui",
-      "cross_refs": [
-        "sweep-pipeline",
-        "standards-governance",
-        "analytics-dashboard"
-      ],
-      "db_tables": [
-        "practice_divergences",
-        "divergence_axis"
-      ],
-      "description": "Surfaces where the org's actual practices (from memory patterns) diverge from stated standards, rendering a divergence matrix, variant board, and scale visualization. Fed by the divergence sweep pipeline; the console module and src/divergence/ components handle all rendering of clusters and variant comparisons.",
-      "entry_points": [
-        "console/src/divergence/PracticeDivergence.tsx"
-      ],
-      "file_paths": [
-        "console/src/divergence/PracticeDivergence.tsx",
-        "console/src/divergence/divergence-data.ts",
-        "console/src/divergence/divergence-scale.ts",
-        "console/src/divergence/variants/StandardsVariantBoard.tsx",
-        "console/src/divergence/variants/StandardsVariantMatrix.tsx"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "554a9ca0-6097-4ec6-9eba-2047565ef12d",
-      "keywords": [
-        "divergence",
-        "practice",
-        "standards",
-        "variant",
-        "matrix",
-        "board",
-        "scale",
-        "clusters"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.373894200+00:00",
-      "name": "practice-divergence-ui",
-      "pinned": false,
-      "tech_stack": [
-        "Next.js",
-        "React",
-        "TypeScript",
-        "Tailwind"
-      ]
-    },
-    {
-      "api_surface": "GET/POST /v1/projects, PUT /v1/projects/{id}/isolation, POST/DELETE /v1/projects/{id}/repos",
-      "business_feature": "Project Registry",
-      "category": "api",
-      "cross_refs": [
-        "org-directory",
-        "memory-ledger",
-        "auth-middleware"
-      ],
-      "db_tables": [
-        "projects",
-        "project_repos"
-      ],
-      "description": "Project registry enabling memory scoping and per-project RLS isolation. Projects link to source repositories with optional path-prefix scoping, so memories extracted from a repo are automatically stamped with the correct project. The console shows project list and isolation status; operators toggle isolation and manage repo links.",
-      "entry_points": [
-        "crates/brainiac-store/src/projects.rs",
-        "console/src/app/console/modules/projects/Module.tsx"
-      ],
-      "file_paths": [
-        "crates/brainiac-store/src/projects.rs",
-        "crates/brainiac-server/src/projects.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "fd18229a-df7e-4a11-9cb8-c0017d4fa717",
-      "keywords": [
-        "projects",
-        "scoping",
-        "isolation",
-        "rls",
-        "repos",
-        "path-prefix",
-        "registry",
-        "stamping"
-      ],
-      "last_written_at": "2026-07-23T12:14:02.374182500+00:00",
-      "name": "projects",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "axum",
-        "sqlx",
-        "Next.js",
-        "TypeScript"
-      ]
-    },
-    {
-      "api_surface": "GET /openapi.json, GET /health, all registered route groups",
-      "business_feature": "HTTP Server & MCP",
-      "category": "api",
-      "cross_refs": [
-        "auth-middleware",
-        "extraction-pipeline",
-        "document-wiki",
-        "standards-governance"
-      ],
-      "db_tables": [],
-      "description": "Axum HTTP server bootstrap, routing, MCP (Model Context Protocol) surface, and OpenAPI spec serving. main.rs wires the clap CLI subcommands (serve/worker/mcp/eval); lib.rs builds the router; console.rs registers the governance REST routes; mcp.rs exposes the MCP tool surface for agent clients.",
-      "entry_points": [
-        "crates/brainiac-server/src/main.rs",
-        "crates/brainiac-server/src/lib.rs"
-      ],
-      "file_paths": [
-        "crates/brainiac-server/src/lib.rs",
-        "crates/brainiac-server/src/main.rs",
-        "crates/brainiac-server/src/openapi.rs",
-        "crates/brainiac-server/src/mcp.rs",
+        "crates/brainiac-server/src/alerts.rs",
         "crates/brainiac-server/src/console.rs",
-        "crates/brainiac-server/tests/mcp_pg.rs",
-        "crates/brainiac-server/tests/http_smoke.rs",
-        "openapi.json"
+        "crates/brainiac-server/src/demand.rs",
+        "crates/brainiac-server/src/docs.rs",
+        "crates/brainiac-server/src/library.rs",
+        "crates/brainiac-server/src/onboard.rs",
+        "crates/brainiac-server/src/projects.rs",
+        "crates/brainiac-server/src/provision.rs",
+        "crates/brainiac-server/src/sweeps.rs",
+        "crates/brainiac-server/tests/console_pg.rs",
+        "crates/brainiac-server/tests/contradiction_siblings_pg.rs",
+        "crates/brainiac-server/tests/contradictions_pg.rs",
+        "crates/brainiac-server/tests/doc_edit_pg.rs",
+        "crates/brainiac-server/tests/docs_pg.rs",
+        "crates/brainiac-server/tests/feedback_pg.rs",
+        "crates/brainiac-server/tests/feedback_queue_pg.rs",
+        "crates/brainiac-server/tests/graph_pushdown_pg.rs",
+        "crates/brainiac-server/tests/library_mining_event_pg.rs",
+        "crates/brainiac-server/tests/library_pg.rs",
+        "crates/brainiac-server/tests/library_skill_bundles_pg.rs",
+        "crates/brainiac-server/tests/library_skills_publish_pg.rs",
+        "crates/brainiac-server/tests/library_standards_triage_pg.rs",
+        "crates/brainiac-server/tests/onboard_pg.rs",
+        "crates/brainiac-server/tests/promotions_pg.rs",
+        "crates/brainiac-server/tests/publish_pg.rs"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "f9ecb13d-2634-42a5-a5b3-598fc1813298",
+      "group": "API Surface",
+      "group_id": "ab67ee8a-b26d-43c0-ab5f-ea37d6a67d8f",
+      "id": "27a52da3-8690-4fa1-9cc0-7e7171a9ab8d",
       "keywords": [
-        "server",
-        "axum",
-        "http",
-        "mcp",
-        "model-context-protocol",
-        "openapi",
-        "router",
-        "cli",
-        "clap"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.940187600+00:00",
-      "name": "server-core",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "axum",
-        "utoipa",
-        "clap",
-        "tokio"
-      ]
-    },
-    {
-      "api_surface": null,
-      "business_feature": "Domain Primitives",
-      "category": "lib",
-      "cross_refs": [
-        "memory-ledger",
-        "memory-retrieval",
-        "auth-middleware"
-      ],
-      "db_tables": [],
-      "description": "Domain primitives and cross-cutting infrastructure shared across all Rust crates: health domain types, observability metrics, PII redaction, and the RLS-enforced store connection pool. test_support.rs provides database setup helpers for integration tests. These have no business logic — they are the load-bearing substrate every other crate builds on.",
-      "entry_points": [
-        "crates/brainiac-core/src/lib.rs",
-        "crates/brainiac-store/src/lib.rs"
-      ],
-      "file_paths": [
-        "crates/brainiac-core/src/lib.rs",
-        "crates/brainiac-core/src/health.rs",
-        "crates/brainiac-core/src/metrics.rs",
-        "crates/brainiac-core/src/redact.rs",
-        "crates/brainiac-store/src/lib.rs",
-        "crates/brainiac-store/src/test_support.rs"
-      ],
-      "group": null,
-      "group_id": null,
-      "id": "335ba837-4621-44ce-8298-8bdbfb922119",
-      "keywords": [
-        "core",
-        "health",
-        "metrics",
-        "redact",
-        "pii",
-        "rls",
-        "pool",
-        "primitives",
-        "shared"
-      ],
-      "last_written_at": "2026-07-23T12:13:51.940637900+00:00",
-      "name": "shared-core",
-      "pinned": false,
-      "tech_stack": [
-        "Rust",
-        "sqlx",
-        "tokio",
-        "tracing"
-      ]
-    },
-    {
-      "api_surface": "GET /v1/library/skills, GET /v1/library/usage",
-      "business_feature": "Skills Catalog",
-      "category": "ui",
-      "cross_refs": [
-        "library-core",
-        "sweep-pipeline"
-      ],
-      "db_tables": [
-        "library_skills",
-        "library_usage"
-      ],
-      "description": "Manages the org's reusable skill bundles from mined candidates to adopted skills that agents can reference when executing tasks. The console catalog lets operators browse, adopt, and track skill usage across the org. Backed by the library-core data layer and the library sweep pipeline.",
-      "entry_points": [
-        "console/src/app/console/modules/skills/Module.tsx"
-      ],
-      "file_paths": [],
-      "group": null,
-      "group_id": null,
-      "id": "253500c9-c6d2-4200-8f17-eb3a8a4fec58",
-      "keywords": [
+        "docs",
+        "library",
+        "standards",
         "skills",
-        "catalog",
-        "adopted",
-        "proposals",
-        "agents",
-        "usage",
-        "bundles"
+        "onboard",
+        "provision",
+        "projects",
+        "sweeps",
+        "alerts",
+        "demand",
+        "contradictions"
       ],
-      "last_written_at": "2026-07-23T12:14:02.374684400+00:00",
-      "name": "skills-catalog",
+      "last_written_at": "2026-08-05T08:15:55.176580200+00:00",
+      "name": "server-feature-modules",
       "pinned": false,
       "tech_stack": [
-        "Next.js",
-        "React",
-        "TypeScript"
+        "Rust",
+        "axum",
+        "tokio",
+        "utoipa",
+        "serde",
+        "anyhow"
       ]
     },
     {
-      "api_surface": "GET/POST /v1/library/standards, POST /v1/library/divergences/{id}/ratify",
+      "api_surface": "standards and divergence endpoints via api-client",
       "business_feature": "Standards Board",
       "category": "ui",
       "cross_refs": [
-        "library-core",
-        "practice-divergence-ui",
-        "sweep-pipeline"
+        "api-client",
+        "governance-worklist"
       ],
       "db_tables": [
-        "library_standards",
-        "library_proposals",
-        "standards_pages"
+        "standards",
+        "divergence_scores"
       ],
-      "description": "Lets org operators govern adopted standards — triaging proposals, ratifying divergences, and publishing auto-generated standards pages derived from memory patterns. The Rust server crate exposes the library API; the pipeline worker generates standards pages; the console module provides the full governance UI with rule detail and triage controls.",
+      "description": "Lets operators browse, triage, and act on the organisation's normative standards (rules an org expects agents to follow). The StandardsBoard renders a tree of rules with a detail panel; triage helpers score incoming memories against standards; the divergence sub-surface visualises how practices across teams have drifted from declared norms using a board and matrix view.",
       "entry_points": [
-        "crates/brainiac-server/src/library.rs",
-        "console/src/app/console/modules/standards/Module.tsx"
+        "console/app/console/modules/standards/Module.tsx",
+        "console/src/divergence/PracticeDivergence.tsx"
       ],
       "file_paths": [
-        "crates/brainiac-pipeline/src/standards_page.rs",
-        "crates/brainiac-server/src/library.rs",
-        "crates/brainiac-server/tests/library_pg.rs",
-        "crates/brainiac-pipeline/tests/standards_page_pg.rs"
+        "console/app/console/modules/standards/Module.tsx",
+        "console/app/console/modules/standards/Skeleton.tsx",
+        "console/app/console/modules/standards/actions.ts",
+        "console/app/console/modules/standards/RuleDetail.tsx",
+        "console/app/console/modules/standards/StandardsBoard.tsx",
+        "console/app/console/modules/standards/standards-data.ts",
+        "console/app/console/modules/standards/tree.ts",
+        "console/app/console/modules/standards/tree.test.ts",
+        "console/app/console/modules/standards/triage.ts",
+        "console/app/console/modules/standards/TriageControls.tsx",
+        "console/app/console/modules/divergence/Module.tsx",
+        "console/app/console/modules/divergence/Skeleton.tsx",
+        "console/src/divergence/divergence-data.ts",
+        "console/src/divergence/divergence-scale.ts",
+        "console/src/divergence/PracticeDivergence.tsx",
+        "console/src/divergence/variants/StandardsVariantBoard.tsx",
+        "console/src/divergence/variants/StandardsVariantMatrix.tsx"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "99486da5-5771-444e-9379-c7fe99ea1d0a",
+      "group": "Standards & Compliance",
+      "group_id": "4e2af2d2-ad2d-4b15-8cb4-4109481dc463",
+      "id": "0063f1d5-dae0-4cf9-b9f6-6bbe3a4dc4ed",
       "keywords": [
         "standards",
-        "governance",
-        "triage",
-        "ratify",
-        "divergence",
-        "proposals",
         "rules",
-        "board",
-        "pages"
+        "divergence",
+        "compliance",
+        "triage",
+        "norms",
+        "practices",
+        "drift"
       ],
-      "last_written_at": "2026-07-23T12:14:02.375085200+00:00",
-      "name": "standards-governance",
+      "last_written_at": "2026-08-05T08:16:04.200220300+00:00",
+      "name": "standards-board",
       "pinned": false,
       "tech_stack": [
-        "Rust",
-        "axum",
-        "Next.js",
-        "React",
-        "TypeScript"
+        "Next.js 15.3",
+        "React 19.1",
+        "TypeScript",
+        "Tailwind 4"
       ]
     },
     {
-      "api_surface": "GET /v1/ops/sweeps, POST /v1/ops/sweeps/{kind}/run",
-      "business_feature": "Background Sweeps",
-      "category": "lib",
+      "api_surface": "",
+      "business_feature": "Organizational Memory Storage",
+      "category": "data",
       "cross_refs": [
-        "practice-divergence-ui",
-        "standards-governance",
-        "skills-catalog",
-        "llm-gateway"
+        "core-algorithms"
       ],
       "db_tables": [
-        "sweep_schedules",
-        "practice_divergences"
+        "memories",
+        "memory_embeddings",
+        "embedding_versions",
+        "sources",
+        "promotions",
+        "contradictions",
+        "entities",
+        "entity_relations",
+        "documents",
+        "document_revisions",
+        "feedback",
+        "orgs",
+        "identities",
+        "api_tokens",
+        "library_standards",
+        "library_skills",
+        "library_proposals",
+        "library_usage_events",
+        "publish_targets",
+        "publications",
+        "ingest_queue",
+        "retrieval_events"
       ],
-      "description": "Scheduled background sweeps that mine the memory corpus for practice divergences, library skill candidates, TTL-expired raw memories, and OKF ingest targets. Sweep schedules are persisted and can be triggered on-demand via the ops API; alerts fire on significant divergences detected. The server sweeps.rs registers routes and the pipeline modules do the actual work.",
+      "description": "The entire Postgres data plane: every aggregate repository (memories, entities, governance, retrieval, documents, library standards/skills/proposals, publishing, org/identity/token management, job queue, and archive) under a strict RLS discipline. The runtime pool drops to the brainiac_app constrained role so all queries run through scoped_tx stamped with the caller's org_id/user_id; there is no unscoped read path for tenant data.",
       "entry_points": [
-        "crates/brainiac-pipeline/src/divergence.rs",
-        "crates/brainiac-server/src/sweeps.rs"
+        "crates/brainiac-store/src/lib.rs",
+        "crates/brainiac-store/src/memories.rs",
+        "crates/brainiac-store/src/retrieval.rs"
       ],
       "file_paths": [
-        "crates/brainiac-pipeline/src/divergence.rs",
-        "crates/brainiac-pipeline/src/library_sweep.rs",
-        "crates/brainiac-pipeline/src/okf_ingest.rs",
-        "crates/brainiac-server/src/sweeps.rs",
-        "crates/brainiac-server/src/alerts.rs",
-        "crates/brainiac-pipeline/tests/library_sweep_pg.rs"
+        "crates/brainiac-store/src/lib.rs",
+        "crates/brainiac-store/src/archive.rs",
+        "crates/brainiac-store/src/documents.rs",
+        "crates/brainiac-store/src/entities.rs",
+        "crates/brainiac-store/src/feedback.rs",
+        "crates/brainiac-store/src/governance.rs",
+        "crates/brainiac-store/src/identities.rs",
+        "crates/brainiac-store/src/memories.rs",
+        "crates/brainiac-store/src/onboard.rs",
+        "crates/brainiac-store/src/orgs.rs",
+        "crates/brainiac-store/src/projects.rs",
+        "crates/brainiac-store/src/publishing.rs",
+        "crates/brainiac-store/src/queue.rs",
+        "crates/brainiac-store/src/retrieval.rs",
+        "crates/brainiac-store/src/retrieval_events.rs",
+        "crates/brainiac-store/src/test_support.rs",
+        "crates/brainiac-store/src/tokens.rs",
+        "crates/brainiac-store/src/library/mod.rs",
+        "crates/brainiac-store/src/library/bridge.rs",
+        "crates/brainiac-store/src/library/proposals.rs",
+        "crates/brainiac-store/src/library/skills.rs",
+        "crates/brainiac-store/src/library/standards.rs",
+        "crates/brainiac-store/src/library/usage.rs",
+        "crates/brainiac-store/tests/archive_pg.rs",
+        "crates/brainiac-store/tests/docs_browse_pg.rs",
+        "crates/brainiac-store/tests/store_pg.rs"
       ],
-      "group": null,
-      "group_id": null,
-      "id": "61dd5a63-4435-424f-b375-e14ce672438e",
+      "group": "Data Persistence",
+      "group_id": "d1a2545f-c630-46c2-89ca-f02089c7cc13",
+      "id": "abdaf2ac-797b-471a-befc-94ed5c0717c4",
       "keywords": [
-        "sweep",
-        "divergence",
-        "library-mining",
-        "okf",
-        "ttl",
-        "scheduled",
-        "alerts",
-        "background"
+        "RLS",
+        "scoped_tx",
+        "memories",
+        "retrieval",
+        "pgvector",
+        "FTS",
+        "governance",
+        "promotions",
+        "library",
+        "queue"
       ],
-      "last_written_at": "2026-07-23T12:13:51.938640900+00:00",
-      "name": "sweep-pipeline",
+      "last_written_at": "2026-08-05T08:15:55.175025200+00:00",
+      "name": "store-data-plane",
       "pinned": false,
       "tech_stack": [
         "Rust",
+        "sqlx",
+        "Postgres 16",
+        "pgvector",
         "tokio",
-        "sqlx"
+        "anyhow"
       ]
     }
   ],
-  "generated_at": "2026-07-23T12:14:02.555995400+00:00",
+  "generated_at": "2026-08-05T08:27:26.691134400+00:00",
   "generator": "personas-context-scan",
-  "groups": [],
+  "groups": [
+    {
+      "color": "amber",
+      "context_count": 3,
+      "domain": "data",
+      "id": "891ee10c-1376-4ca9-bb0d-4f2988a893a4",
+      "name": "Database Schema"
+    },
+    {
+      "color": "violet",
+      "context_count": 1,
+      "domain": "shared",
+      "id": "af5857e0-782d-4380-80ab-0c9269211e98",
+      "name": "Core Intelligence"
+    },
+    {
+      "color": "orange",
+      "context_count": 1,
+      "domain": "integration",
+      "id": "52dbd1bf-d4c8-4d9d-a85c-87ceeb275bb4",
+      "name": "LLM Provider Gateway"
+    },
+    {
+      "color": "blue",
+      "context_count": 1,
+      "domain": "data",
+      "id": "d1a2545f-c630-46c2-89ca-f02089c7cc13",
+      "name": "Data Persistence"
+    },
+    {
+      "color": "emerald",
+      "context_count": 2,
+      "domain": "feature",
+      "id": "db7baa9b-3054-4113-9323-8c2cc85040de",
+      "name": "Knowledge Pipeline"
+    },
+    {
+      "color": "indigo",
+      "context_count": 2,
+      "domain": "infrastructure",
+      "id": "ab67ee8a-b26d-43c0-ab5f-ea37d6a67d8f",
+      "name": "API Surface"
+    },
+    {
+      "color": "amber",
+      "context_count": 3,
+      "domain": "infrastructure",
+      "id": "5b901e0a-3ebd-469c-abae-c5e95ee9c95d",
+      "name": "Quality Assurance"
+    },
+    {
+      "color": "emerald",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "04618d93-e001-403c-931d-63a6531d877b",
+      "name": "Memory Intelligence"
+    },
+    {
+      "color": "amber",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "20bd9431-1837-4497-8dbb-62e8a8985e65",
+      "name": "Governance & Reviews"
+    },
+    {
+      "color": "indigo",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "4e2af2d2-ad2d-4b15-8cb4-4109481dc463",
+      "name": "Standards & Compliance"
+    },
+    {
+      "color": "violet",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "ae644f28-8175-41f2-8958-5391eab98c20",
+      "name": "Knowledge Graph"
+    },
+    {
+      "color": "orange",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "9ea07450-a90b-4881-b134-0774196a8a54",
+      "name": "Content Pipeline"
+    },
+    {
+      "color": "blue",
+      "context_count": 2,
+      "domain": "feature",
+      "id": "5dc484dd-7273-4d8e-9775-c566efd857f5",
+      "name": "Documents & Knowledge Base"
+    },
+    {
+      "color": "red",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "e7028b7f-5265-44a2-b12f-4204176b4dca",
+      "name": "Access Control & Projects"
+    },
+    {
+      "color": "pink",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "23708691-7095-4cfe-93a8-cf43971032c7",
+      "name": "Library & Skills"
+    },
+    {
+      "color": "amber",
+      "context_count": 4,
+      "domain": "infrastructure",
+      "id": "7dc44e47-ad8b-417b-bf36-4f23b27bcf46",
+      "name": "App Shell & Auth"
+    },
+    {
+      "color": "violet",
+      "context_count": 1,
+      "domain": "feature",
+      "id": "00c1b01e-cc90-46e2-bc34-b579b703530c",
+      "name": "Demo & Marketing"
+    }
+  ],
   "project": {
     "id": "cbe16611-de98-476a-b901-b2153bc15186",
     "name": "brainiac",
     "root": "C:\\Users\\mkdol\\dolla\\brainiac"
   },
   "provenance": {
-    "git_commit": "59ec459d54ecba475f40e112b19e4fab59d9ee2c",
-    "git_commit_count": 235
+    "git_commit": "a552bcb9e56aa8941f1ab2b5ab584610bdb23a58",
+    "git_commit_count": 281
   },
   "stats": {
-    "contexts": 25,
-    "files": 258,
-    "groups": 0,
+    "contexts": 27,
+    "files": 419,
+    "groups": 17,
     "use_cases": 0
   },
   "taxonomy": {
