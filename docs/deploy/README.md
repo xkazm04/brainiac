@@ -120,8 +120,27 @@ docker compose -f docker-compose.deploy.yml --env-file .env.deploy up -d
 ./scripts/first-boot.sh
 ```
 
-Open port 80 (console) in the host firewall / security group. Front it with a
-reverse proxy (Caddy/nginx) for TLS if you have a domain.
+### TLS
+
+The stack ships its own terminator — a `caddy` service (`deploy/Caddyfile`) that
+owns 80/443 and is the **only** publicly bound container. The console listens on
+the Docker network only, so there is no port that bypasses TLS.
+
+| `BRAINIAC_DOMAIN` in `.env.deploy` | What you get |
+| --- | --- |
+| unset / empty | Plain HTTP on port 80. The only option for a bare-IP host — no public CA issues certificates for an IP address. |
+| `memory.acme.com` | Caddy obtains **and renews** a Let's Encrypt certificate automatically, serves HTTPS on 443, and redirects 80 → 443. No certbot, no cron, no cert paths, no compose edit. |
+
+So going from HTTP to HTTPS is a DNS record plus one env var. Prerequisites for
+the domain mode: the A/AAAA record must **already** resolve to the host before
+you start the stack, and both **80 and 443** must be open (ACME validates over
+80 — opening only 443 fails issuance). Set `BRAINIAC_CONSOLE_URL` to the
+`https://…` form too, so onboarding approval links match.
+
+Open **80** and **443** in the firewall / security group; leave the server's
+**8600** closed (it never leaves the Docker network). Certificates live in the
+`caddy-data` volume — keep it across redeploys, or every restart re-requests a
+certificate and burns Let's Encrypt rate limit.
 
 ## What's cloud-specific vs portable
 
