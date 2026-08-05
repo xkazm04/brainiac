@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-05",
+  "generatedBy": "personas mvp",
+  "verdict": "no-go",
+  "launchShape": "cloud-signup-first",
+  "blockers": [
+    "No production deployment exists. The stack is now rehearsed end-to-end locally (compose up, migrations, first-boot, smoke 5/6, deliberate tag-pin rollback executed and restored) and a Caddy TLS terminator is wired and config-validated, but no host, domain or certificate exists. Operator deferred provisioning by choice this run."
+  ],
+  "killerFeatures": [
+    "Permission-aware retrieval enforced by Postgres RLS inside the vector scan, not as a post-filter",
+    "Provenance plus review gate: agents propose, humans promote, every canonical fact traces to its session",
+    "Contradiction adjudication and temporal validity, so facts are resolved and know when they stopped being true"
+  ],
+  "acceptedRisks": [
+    "RUSTSEC-2023-0071 (Marvin timing side-channel in rsa): dated reasoned deny.toml ignore. Reachable from one call site that SIGNS a service-account JWT with a local key; the attack targets PKCS#1 v1.5 decryption, which this workspace never performs. No upgrade exists upstream and openssl-sys is banned. Removal condition written into the entry.",
+    "Console operator gate is a single shared passcode with no per-user identity. Bounded this run (minting can no longer name a principal that is not an org member) but not replaced. OIDC/SCIM is already the stated target in docs/ARCHITECTURE.md 2.1.",
+    "Console session cookie max-age is 400 days and the brute-force throttle is per-instance in-memory."
+  ],
+  "phases": {
+    "P0": "partial",
+    "P1": "green",
+    "P2": "partial",
+    "P3": "green",
+    "P4": "green",
+    "P5": "partial",
+    "P6": "partial"
+  },
+  "items": {
+    "value-case": { "level": "partial", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "Three killer features cut from the pitch's six mechanisms and now stated on the landing hero. Retrieval was walked end-to-end live via scripts/verify-retrieval.sh; the review-gate and contradiction features were not walked this run." },
+    "monetization": { "level": "met", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "Free during beta, one project per Google account, stated on the landing page and in signup copy. Revisit trigger: first paid inbound or sustained cloud project growth." },
+    "artifacts": { "level": "met", "tool": "project-populate", "skippedByChoice": false, "acceptedPartial": false, "note": "Context map re-swept subtree-by-subtree to 27 contexts / 17 groups / 419 of 420 source files. 12 use-case proposals and 16 KPI proposals; 8 KPIs active, 8 paused. Use cases await operator review in Projects, Factory, Overview." },
+    "milestone": { "level": "met", "tool": "Personas Ship", "skippedByChoice": false, "acceptedPartial": false, "note": "Launch MVP milestone active with 7 phase-linked criteria and all 21 checklist items." },
+    "notes": { "level": "met", "tool": "memory outbox", "skippedByChoice": false, "acceptedPartial": false, "note": ".personas/memory-outbox.jsonl created and verified end-to-end through ingest." },
+    "fleet": { "level": "met", "tool": "Personas Fleet", "skippedByChoice": false, "acceptedPartial": false, "note": "A dispatched headless session completed the full loop: dispatch, work, outbox append, ingest, ledger. project-populate installed, closing the ingest-caller gap." },
+    "cicd": { "level": "met", "tool": "GitHub Actions", "skippedByChoice": false, "acceptedPartial": false, "note": "All workflows green; ci had been red on every push since 2026-07-15. Eight stacked root causes. Branch protection requires test, console, cargo-deny, npm-audit, deploy-test. Prod promotion stays manual on a v* tag." },
+    "deploy": { "level": "partial", "tool": "Docker Compose + Caddy", "skippedByChoice": false, "acceptedPartial": true, "note": "Operator chose local rehearsal over provisioning a host. Stack verified up with migrations applied, rollback executed and restored with the volume intact, Caddy TLS added and validated in all three domain states. v0.1.0 cut, first tag in repo history; GHCR images now exist and are public. No live host, domain or certificate. Images are linux/amd64 only." },
+    "observability": { "level": "partial", "tool": "Sentry + LightTrack + Plausible", "skippedByChoice": false, "acceptedPartial": true, "note": "Console Dockerfile and release workflow now pass the Sentry and Plausible build args, closing a bug that shipped every published console image with the DSN compiled out. Embeddings are now metered through the widened gateway chokepoint. Dashboard arrival remains UNVERIFIED: no host exists and the NEXT_PUBLIC_SENTRY_DSN repository variable is unset." },
+    "code-quality": { "level": "met", "tool": "cargo + ESLint + Vitest", "skippedByChoice": false, "acceptedPartial": false, "note": "cargo fmt and clippy -D warnings clean, ESLint added at 0 errors, 261 console tests pass, workspace tests green, builds succeed. Debt logged: 28 shipped components over 200 LOC." },
+    "auth": { "level": "partial", "tool": "Google OIDC + scoped tokens", "skippedByChoice": false, "acceptedPartial": true, "note": "End-user lifecycle complete via Google OIDC with email_verified enforced; password reset is genuinely N/A as there are no passwords. Console operator gate accepted for MVP with named residual risks. Rate limiting on the signup route was accepted but NOT implemented this run." },
+    "security": { "level": "met", "tool": "cargo-deny + npm audit + CSP", "skippedByChoice": false, "acceptedPartial": false, "note": "8 high npm advisories closed including the Next Server Actions SSRF and Server Function disclosure, which matter because login and signup are Server Actions. Baseline security headers verified violation-free in a real browser across all public routes. Key minting can no longer name a non-member, fixed both at the console and at its root in the Rust handler. Three proxy routes fixed where an unvalidated path segment could redirect the privileged proxy." },
+    "design-system": { "level": "met", "tool": "theme.ts tokens", "skippedByChoice": false, "acceptedPartial": false, "note": "116 controls migrated to shared Button and field primitives with a token-driven focus-visible ring; hex literals on shipped routes cut from ~200 to 13. Dark-only recorded as a deliberate decision. Focus was verified structurally against compiled CSS, NOT by a human pressing Tab." },
+    "i18n": { "level": "met", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "English-only recorded as an explicit launch decision. No framework exists and none was added." },
+    "onboarding": { "level": "met", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "Fresh-DB first run now renders a first-run panel promoting the real onboarding flow instead of empty analytics, verified against an empty database. docs/QUICKSTART.md linearises operator to key to skill to first retrieval, linked from the top of README. scripts/verify-retrieval.sh proves retrieval works rather than proving a page renders." },
+    "feedback": { "level": "met", "tool": "GitHub Issues", "skippedByChoice": false, "acceptedPartial": false, "note": "Footer link on the public shell plus a README section pointing at the issue tracker." },
+    "landing": { "level": "met", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "Hero rewritten to a single plain statement with the three killer features as a named block and an outcome-shaped CTA; beta terms stated inline. Wave field kept as demonstration below the statement." },
+    "seo": { "level": "met", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "metadataBase, opengraph-image, icon, sitemap over 8 public routes, robots. All verified 200 against a production build with the OG PNG visually inspected, not just status-checked. NEXT_PUBLIC_SITE_URL must be set AT BUILD TIME when a domain exists; sitemap and robots are prerendered." },
+    "legal": { "level": "met", "tool": null, "skippedByChoice": false, "acceptedPartial": false, "note": "Privacy and terms written against the implementation and cited to it, including plain disclosure that memory content leaves for Qwen/DashScope. Both serve 200 anonymously with zero Set-Cookie. Cookie position verified: one httpOnly operator-session cookie, analytics is cookieless Plausible, so no consent banner. Operator identity placeholders in src/legal/entity.ts still need filling." },
+    "analytics": { "level": "partial", "tool": "Plausible", "skippedByChoice": false, "acceptedPartial": true, "note": "Three funnel events wired and tested on both halves: landing_view, signup_complete, and activation fired server-side on an org's first memory across REST, bulk, idempotency and MCP transports, with no identifiers and no IP forwarding. No data flows until NEXT_PUBLIC_PLAUSIBLE_DOMAIN is set at build time and a host exists, so the dashboard question is not yet answerable." },
+    "launch-gate": { "level": "partial", "tool": "smoke-test-env.sh", "skippedByChoice": false, "acceptedPartial": true, "note": "The smoke suite now RUNS in CI via the deploy-test job, which builds the stack from source and passes all 6 checks credential-free; previously the harness existed but no workflow invoked it. It runs against the isolated test stack, not a production URL, because no production exists. Go/no-go recorded: no-go on deploy." }
+  },
+  "operatorFollowUps": [
+    "Provision a host, point a domain at it, set BRAINIAC_DOMAIN for Caddy, and re-run the smoke pass against production.",
+    "Set repository variables NEXT_PUBLIC_SENTRY_DSN and NEXT_PUBLIC_PLAUSIBLE_DOMAIN so published images carry them; both are inlined at build time.",
+    "Fill the operator identity placeholders in console/src/legal/entity.ts.",
+    "Review the 12 use-case proposals and re-check the 8 adopted KPIs in Projects, Factory, Overview.",
+    "Decide on the team-membership follow-up: the teamless-write guard rejects a NULL team, but a non-NULL team the writer has no team_members row for is equally unreadable and still passes silently.",
+    "Add rate limiting to the signup route (accepted this run, not implemented).",
+    "Publish arm64 images if arm64 hosts are a target; release currently builds linux/amd64 only."
+  ]
+}
