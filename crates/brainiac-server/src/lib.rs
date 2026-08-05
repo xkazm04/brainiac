@@ -3,6 +3,7 @@
 //! boot the same router directly.
 
 pub mod alerts;
+pub mod analytics;
 pub mod auth;
 pub mod console;
 pub mod demand;

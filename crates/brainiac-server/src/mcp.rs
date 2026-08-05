@@ -1480,7 +1480,17 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
         effective_project_id,
     )
     .await?;
+    // ACTIVATION (launch funnel step 3 of 3), the MCP twin of the REST check in
+    // http.rs::ingest_source. A cloud-signup user's agent reaches this server by
+    // MCP just as readily as by REST, and instrumenting only one of the two
+    // would under-count activation by whichever transport that cohort happens to
+    // prefer. First source per org only; see crate::analytics.
+    let first =
+        crate::analytics::is_first_source(&mut tx, state.principal.org_id, source_id).await;
     tx.commit().await?;
+    if first {
+        crate::analytics::track_activation_memory_add();
+    }
     let job_id =
         brainiac_pipeline::worker::enqueue_source(&state.store, state.principal.org_id, source_id)
             .await?;

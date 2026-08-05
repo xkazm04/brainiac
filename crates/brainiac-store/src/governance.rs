@@ -72,6 +72,33 @@ pub async fn insert_source_idempotent(
     Ok(row.map(|r| r.get::<Uuid, _>("id")))
 }
 
+/// Does this org hold any source OTHER than `source_id`?
+///
+/// Called immediately after an insert, inside the SAME transaction, to answer
+/// "was that the org's first ingest ever?" — the activation signal the launch
+/// funnel needs (`brainiac-server::analytics`). `false` ⇒ the row just written
+/// is the only one, i.e. this was the first.
+///
+/// Deliberately `EXISTS` with an `id <>` guard rather than a count or an
+/// ordered scan: it stops at the first other row, so on an org with a million
+/// sources it costs an index probe instead of a sort. The org filter is
+/// redundant under RLS (`sources_org`) and written out anyway so the intent
+/// survives a policy change.
+pub async fn org_has_other_sources(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    source_id: Uuid,
+) -> Result<bool> {
+    let row = sqlx::query(
+        "SELECT EXISTS (SELECT 1 FROM sources WHERE org_id = $1 AND id <> $2) AS has_other",
+    )
+    .bind(org_id)
+    .bind(source_id)
+    .fetch_one(conn)
+    .await?;
+    Ok(row.get::<bool, _>("has_other"))
+}
+
 /// The id of the source that already claims `(org_id, idempotency_key)` under
 /// the caller's RLS — the replay target when [`insert_source_idempotent`]
 /// reports a conflict. `None` only if the row is invisible to the caller

@@ -671,7 +671,19 @@ async fn ingest_source(
     )
     .await
     .map_err(internal)?;
+    // ACTIVATION (launch funnel step 3 of 3) — asked inside the writing
+    // transaction, answered only for the org's very first source. The console
+    // instruments its own two write paths, but a cloud-signup user never uses
+    // the console: they get a project + a device key from /v1/provision and
+    // their agent posts here. This is the only place that observes THAT
+    // activation. See crate::analytics.
+    let first = crate::analytics::is_first_source(&mut tx, principal.org_id, source_id).await;
     tx.commit().await.map_err(internal)?;
+    if first {
+        // After the commit, and fire-and-forget: a beacon can never delay or
+        // fail the write the caller is waiting on.
+        crate::analytics::track_activation_memory_add();
+    }
     let job_id =
         brainiac_pipeline::worker::enqueue_source(&state.store, principal.org_id, source_id)
             .await
@@ -729,7 +741,16 @@ pub(crate) async fn memory_add(
     match inserted {
         // Fresh key: this call wrote the source — enqueue and return the receipt.
         Some(id) => {
+            // Same activation check as the unkeyed path. Deliberately NOT in
+            // the `None` arm below: that arm is a REPLAY of a source an earlier
+            // call already wrote, and the replayed source is still the org's
+            // only one — counting it would report one org's activation on every
+            // retry of its first write.
+            let first = crate::analytics::is_first_source(&mut tx, principal.org_id, id).await;
             tx.commit().await.map_err(internal)?;
+            if first {
+                crate::analytics::track_activation_memory_add();
+            }
             let job_id =
                 brainiac_pipeline::worker::enqueue_source(&state.store, principal.org_id, id)
                     .await

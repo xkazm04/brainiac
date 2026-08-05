@@ -34,7 +34,10 @@ utoipa = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 sqlx = { workspace = true }
-reqwest = { workspace = true }
+# `blocking` for the product-analytics beacon (src/analytics.rs), which posts
+# from a dedicated thread exactly as brainiac-gateway's lighttrack.rs does —
+# telemetry that owns no part of the async request path cannot delay it.
+reqwest = { workspace = true, features = ["blocking"] }
 # Error tracking (test/production only; see init_sentry in main.rs). rustls-only
 # to match the workspace TLS choice and avoid pulling native-tls/openssl.
 sentry = { version = "0.48", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }

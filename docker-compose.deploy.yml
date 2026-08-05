@@ -137,6 +137,15 @@ services:
       LIGHTTRACK_URL: ${LIGHTTRACK_URL:-}
       LIGHTTRACK_KEY: ${LIGHTTRACK_KEY:-}
       LIGHTTRACK_PROJECT: ${LIGHTTRACK_PROJECT:-}
+      # Plausible, the SERVER half of the launch funnel. The console reports
+      # landing_view and signup_complete from the browser, but a cloud-signup
+      # user never returns to the console — their agent writes straight to
+      # /v1/memories — so the `activation` event for that cohort can only be
+      # emitted here (crates/brainiac-server/src/analytics.rs). Read at RUNTIME,
+      # unlike the console's NEXT_PUBLIC_* twin, so a PULLED image picks this up
+      # from .env.deploy with no rebuild. Unset ⇒ off entirely.
+      PLAUSIBLE_DOMAIN: ${PLAUSIBLE_DOMAIN:-}
+      PLAUSIBLE_HOST: ${PLAUSIBLE_HOST:-}
     command: ["brainiac", "serve", "--bind", "0.0.0.0:8600", "--with-worker"]
     expose:
       - "8600"
