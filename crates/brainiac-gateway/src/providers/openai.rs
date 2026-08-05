@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{build_http_client, first_env, meter};
+use super::{build_http_client, first_env, meter, meter_embedding, EmbedUsage};
 use crate::resilience::Resilience;
 use crate::{ChatProvider, ChatRequest, ChatResponse};
 
@@ -296,6 +296,16 @@ impl OpenAiCompatEmbedder {
         )
     }
 
+    /// LightTrack rollup key for this embedder's vendor.
+    ///
+    /// `model_name` is built as `<provider>:<model>` by every constructor above
+    /// (`qwen:text-embedding-v4`, `openai:text-embedding-3-small`), so the
+    /// vendor half is the tag — the same per-vendor tag the chat providers pass,
+    /// never a generic label.
+    fn provider_tag(&self) -> &str {
+        self.model_name.split(':').next().unwrap_or("openai")
+    }
+
     async fn request(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         #[derive(Deserialize)]
         struct EmbeddingRow {
@@ -303,41 +313,73 @@ impl OpenAiCompatEmbedder {
             embedding: Vec<f32>,
         }
         #[derive(Deserialize)]
+        struct EmbeddingUsage {
+            #[serde(default)]
+            prompt_tokens: u64,
+        }
+        #[derive(Deserialize)]
         struct EmbeddingResponse {
             data: Vec<EmbeddingRow>,
+            #[serde(default)]
+            usage: Option<EmbeddingUsage>,
         }
-        let req = self
-            .http
-            .post(format!("{}/embeddings", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&json!({
-                "model": self.model,
-                "input": texts,
-                "dimensions": self.dim,
-                "encoding_format": "float",
-            }));
-        let body = self.resilience.send(req, &self.wire_label).await?;
-        let parsed: EmbeddingResponse =
-            serde_json::from_str(&body).with_context(|| format!("{} parse", self.wire_label))?;
-        anyhow::ensure!(
-            parsed.data.len() == texts.len(),
-            "{} returned {} embeddings for {} inputs",
-            self.wire_label,
-            parsed.data.len(),
-            texts.len()
-        );
-        let mut rows = parsed.data;
-        rows.sort_by_key(|r| r.index);
-        for r in &rows {
+        // Metered like every chat call: same chokepoint, same fire-and-forget
+        // delivery, same environment tag — `operation="embedding"` so this
+        // vendor-billed traffic rolls up on its own line. Before this, the
+        // embedding lane hit a paid endpoint and reported nothing at all.
+        Ok(meter_embedding(self.provider_tag(), &self.model, async {
+            let req = self
+                .http
+                .post(format!("{}/embeddings", self.base_url))
+                .bearer_auth(&self.api_key)
+                .json(&json!({
+                    "model": self.model,
+                    "input": texts,
+                    "dimensions": self.dim,
+                    "encoding_format": "float",
+                }));
+            let body = self.resilience.send(req, &self.wire_label).await?;
+            let parsed: EmbeddingResponse = serde_json::from_str(&body)
+                .with_context(|| format!("{} parse", self.wire_label))?;
             anyhow::ensure!(
-                r.embedding.len() == self.dim,
-                "{} returned dim {} (expected {})",
+                parsed.data.len() == texts.len(),
+                "{} returned {} embeddings for {} inputs",
                 self.wire_label,
-                r.embedding.len(),
-                self.dim
+                parsed.data.len(),
+                texts.len()
             );
-        }
-        Ok(rows.into_iter().map(|r| r.embedding).collect())
+            // A missing `usage` means "cost unknown", not "cost zero" — mirror
+            // the chat path and log the drift instead of silently metering 0.
+            let input_tokens = match parsed.usage.as_ref() {
+                Some(u) => u.prompt_tokens,
+                None => {
+                    tracing::warn!(
+                        provider = %self.provider_tag(),
+                        model = %self.model,
+                        "{} returned no usage block; metering 0 input tokens",
+                        self.wire_label
+                    );
+                    0
+                }
+            };
+            let mut rows = parsed.data;
+            rows.sort_by_key(|r| r.index);
+            for r in &rows {
+                anyhow::ensure!(
+                    r.embedding.len() == self.dim,
+                    "{} returned dim {} (expected {})",
+                    self.wire_label,
+                    r.embedding.len(),
+                    self.dim
+                );
+            }
+            Ok(EmbedUsage {
+                value: rows.into_iter().map(|r| r.embedding).collect::<Vec<_>>(),
+                input_tokens,
+            })
+        })
+        .await?
+        .value)
     }
 }
 

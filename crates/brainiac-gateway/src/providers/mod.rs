@@ -61,6 +61,41 @@ pub(crate) fn first_env(keys: &[&str]) -> Option<String> {
     })
 }
 
+/// What [`meter`] needs from a completed provider call in order to report usage.
+///
+/// The chokepoint used to be hard-typed to [`ChatResponse`], which silently made
+/// "metered" mean "chat only" — every embedding call went to a paid vendor
+/// endpoint and was never reported, so the LightTrack cost rollup understated
+/// spend by the entire embedding lane. Widening the bound (rather than adding a
+/// second, parallel timing helper) keeps the single-chokepoint property: there
+/// is still exactly one place that times a provider call and emits an event.
+pub(crate) trait Metered {
+    /// `(input_tokens, output_tokens)` actually billed by the vendor.
+    fn tokens(&self) -> (u64, u64);
+}
+
+impl Metered for ChatResponse {
+    fn tokens(&self) -> (u64, u64) {
+        (self.input_tokens, self.output_tokens)
+    }
+}
+
+/// An embedding result plus the prompt tokens the vendor billed for it.
+///
+/// Embeddings have no completion side — vendors bill input only — so the output
+/// half is always 0. The wrapper exists so the value a provider actually wants
+/// to return can ride through [`meter_embedding`] alongside its usage.
+pub(crate) struct EmbedUsage<T> {
+    pub value: T,
+    pub input_tokens: u64,
+}
+
+impl<T> Metered for EmbedUsage<T> {
+    fn tokens(&self) -> (u64, u64) {
+        (self.input_tokens, 0)
+    }
+}
+
 /// Single telemetry chokepoint shared by every provider. Times `fut`, then
 /// records the completed LLM call to LightTrack (best-effort, disabled unless
 /// `LIGHTTRACK_URL` is set). `provider`/`model` are the LightTrack rollup keys,
@@ -68,20 +103,47 @@ pub(crate) fn first_env(keys: &[&str]) -> Option<String> {
 /// passes its OWN vendor tag here (`openai`/`anthropic`/`google`/`bedrock`/
 /// `vertex`/`qwen`), never a generic label. A failed call meters as 0 tokens
 /// with `status=error`, preserving the "cost unknown ≠ cost zero" contract.
-pub(crate) async fn meter<F>(provider: &str, model: &str, fut: F) -> anyhow::Result<ChatResponse>
+pub(crate) async fn meter<T, F>(provider: &str, model: &str, fut: F) -> anyhow::Result<T>
 where
-    F: Future<Output = anyhow::Result<ChatResponse>>,
+    T: Metered,
+    F: Future<Output = anyhow::Result<T>>,
+{
+    meter_op(provider, model, "chat", fut).await
+}
+
+/// [`meter`] for the embedding lane. Emits `operation="embedding"` so embedding
+/// spend rolls up separately from chat instead of inflating the chat line —
+/// same timing, same fire-and-forget delivery, same environment tag.
+pub(crate) async fn meter_embedding<T, F>(
+    provider: &str,
+    model: &str,
+    fut: F,
+) -> anyhow::Result<EmbedUsage<T>>
+where
+    F: Future<Output = anyhow::Result<EmbedUsage<T>>>,
+{
+    meter_op(provider, model, "embedding", fut).await
+}
+
+async fn meter_op<T, F>(provider: &str, model: &str, operation: &str, fut: F) -> anyhow::Result<T>
+where
+    T: Metered,
+    F: Future<Output = anyhow::Result<T>>,
 {
     let started = std::time::Instant::now();
     let result = fut.await;
     let latency_ms = started.elapsed().as_millis() as u64;
     let (input_tokens, output_tokens, ok) = match &result {
-        Ok(r) => (r.input_tokens, r.output_tokens, true),
+        Ok(r) => {
+            let (i, o) = r.tokens();
+            (i, o, true)
+        }
         Err(_) => (0, 0, false),
     };
     crate::lighttrack::record(
         provider,
         model,
+        operation,
         None,
         input_tokens,
         output_tokens,

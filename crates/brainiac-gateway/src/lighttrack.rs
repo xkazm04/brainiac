@@ -99,9 +99,13 @@ fn environment() -> String {
 
 /// Record one completed LLM call (best-effort, non-blocking). A no-op when the
 /// client is disabled. `name` is the stage/use-case rollup key when reachable.
+/// `operation` is the vendor endpoint class (`chat` / `embedding`) — it keeps
+/// embedding spend in its own rollup line instead of inflating chat.
+#[allow(clippy::too_many_arguments)] // one wire record, assembled in one place
 pub fn record(
     provider: &str,
     model: &str,
+    operation: &str,
     name: Option<&str>,
     input_tokens: u64,
     output_tokens: u64,
@@ -112,6 +116,7 @@ pub fn record(
     let ev = event(
         provider,
         model,
+        operation,
         name,
         input_tokens,
         output_tokens,
@@ -134,6 +139,7 @@ pub fn record(
 fn event(
     provider: &str,
     model: &str,
+    operation: &str,
     name: Option<&str>,
     input_tokens: u64,
     output_tokens: u64,
@@ -145,7 +151,7 @@ fn event(
     let mut ev = json!({
         "provider": provider,
         "model": model,
-        "operation": "chat",
+        "operation": operation,
         "usage": { "input": input_tokens, "output": output_tokens },
         "latency_ms": latency_ms,
         "status": if ok { "success" } else { "error" },
@@ -170,6 +176,7 @@ mod tests {
         let ev = event(
             "qwen",
             "qwen-plus",
+            "chat",
             None,
             10,
             20,
@@ -179,6 +186,7 @@ mod tests {
             "production",
         );
         assert_eq!(ev["environment"], "production");
+        assert_eq!(ev["operation"], "chat");
         assert_eq!(ev["provider"], "qwen");
         assert_eq!(ev["model"], "qwen-plus");
         assert_eq!(ev["usage"]["input"], 10);
@@ -196,6 +204,7 @@ mod tests {
         let ev = event(
             "openai",
             "gpt-4o-mini",
+            "chat",
             Some("extract"),
             0,
             0,
@@ -209,5 +218,28 @@ mod tests {
         assert_eq!(ev["name"], "extract");
         assert_eq!(ev["project_id"], "brainiac");
         assert_eq!(ev["environment"], "local");
+    }
+
+    /// Embedding calls must not roll up as chat: they are a separate vendor
+    /// endpoint with input-only billing, and merging them would make the chat
+    /// line unusable for cost attribution.
+    #[test]
+    fn embedding_calls_carry_their_own_operation_and_bill_input_only() {
+        let ev = event(
+            "qwen",
+            "text-embedding-v4",
+            "embedding",
+            None,
+            512,
+            0,
+            31,
+            true,
+            None,
+            "production",
+        );
+        assert_eq!(ev["operation"], "embedding");
+        assert_eq!(ev["usage"]["input"], 512);
+        assert_eq!(ev["usage"]["output"], 0);
+        assert_eq!(ev["status"], "success");
     }
 }
