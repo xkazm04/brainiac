@@ -118,13 +118,33 @@ export function contentSecurityPolicy(): string {
     "frame-ancestors": ["'none'"],
   };
 
-  const serialized = Object.entries(directives)
+  return Object.entries(directives)
     .map(([name, values]) => `${name} ${values.join(" ")}`)
     .join("; ");
-  // Only meaningful over https and only in production, where every URL the
-  // console emits should already be https.
-  return isDev ? serialized : `${serialized}; upgrade-insecure-requests`;
 }
+
+/*
+ * NO `upgrade-insecure-requests`, deliberately — it was here and was removed
+ * after watching what it actually did.
+ *
+ * Its only job is rescuing pages that reference http:// subresources. This
+ * console references none: every asset is same-origin and relative, and the
+ * single external URL in any served page is a link to the GitHub issue tracker.
+ * So the directive had nothing to fix.
+ *
+ * What it did instead, observed in Chromium against the production build: it
+ * upgraded Next's same-origin router prefetch of /login to https and the
+ * request died with ERR_SSL_PROTOCOL_ERROR. The localhost exemption people
+ * assume covers this does not apply to that request. That matters because the
+ * deploy stack still supports a plain-HTTP posture on purpose — BRAINIAC_DOMAIN
+ * unset keeps Caddy on :80 for a bare-IP host — and headers() is evaluated at
+ * BUILD time, so the config cannot know which posture the image will run in.
+ * Emitting it unconditionally means shipping one build that breaks one of the
+ * two supported deployments.
+ *
+ * HSTS carries the "https only" intent instead, and correctly: browsers ignore
+ * it over plain http, so it costs the bare-IP deployment nothing.
+ */
 
 export interface HeaderPair {
   key: string;

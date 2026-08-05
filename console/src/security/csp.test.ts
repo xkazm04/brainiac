@@ -59,6 +59,14 @@ describe("contentSecurityPolicy", () => {
     ).toBe(false);
   });
 
+  it("does not emit upgrade-insecure-requests", () => {
+    // Not an oversight — see the block comment in csp.ts. It has nothing to fix
+    // here (no http:// subresources anywhere) and it was observed killing Next's
+    // same-origin /login prefetch with ERR_SSL_PROTOCOL_ERROR on the plain-HTTP
+    // deployment posture the stack still supports. HSTS carries the intent.
+    expect(contentSecurityPolicy()).not.toContain("upgrade-insecure-requests");
+  });
+
   it("keeps the directives that actually bound an injection", () => {
     const p = contentSecurityPolicy();
     expect(directive(p, "object-src")).toEqual(["'none'"]);
