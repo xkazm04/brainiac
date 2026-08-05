@@ -41,9 +41,33 @@ yanked = "deny"
 # Flag unmaintained crates anywhere in the tree, not just direct deps —
 # unmaintained transitive crypto/parsing crates are exactly the risk here.
 unmaintained = "all"
-# Deliberately empty. See docs/ for open findings; do not add an entry without
-# a package, an advisory id, a reason, and the condition for removing it.
-ignore = []
+# Near-empty by design. Do not add an entry without a package, an advisory id,
+# a dated reason, and the condition for removing it.
+ignore = [
+    # RUSTSEC-2023-0071 — "Marvin Attack": a timing side-channel in the `rsa`
+    # crate. Accepted 2026-08-05 by the repo owner; revisit on every dependency
+    # sweep and delete this entry the moment the condition below is met.
+    #
+    #   Upgrade path: none. RustCrypto/RSA#626 is still open; cargo-deny itself
+    #   reports "No safe upgrade is available!". The workspace bans openssl-sys
+    #   (see [bans] below), so swapping to an OpenSSL-backed signer is not an
+    #   option, and `ring`/`aws-lc-rs` would reintroduce the C toolchain that
+    #   the pure-Rust build story depends on.
+    #
+    #   Reachability: `rsa` is used at exactly one call site —
+    #   crates/brainiac-gateway/src/providers/vertex.rs:210 — to sign a Vertex
+    #   service-account JWT (RS256, `Pkcs1v15Sign`) with a LOCAL private key
+    #   read from our own service-account file. Marvin is a chosen-ciphertext
+    #   timing attack against PKCS#1 v1.5 *decryption*; we never decrypt, never
+    #   accept attacker-supplied ciphertext, and the only key involved is one
+    #   the operator already holds. The advisory does not describe a reachable
+    #   path in this workspace.
+    #
+    #   Remove when: RustCrypto/RSA ships a constant-time release (rsa >= 0.10
+    #   with the Marvin mitigation) — bump and delete this entry — OR the Vertex
+    #   provider stops signing JWTs locally.
+    { id = "RUSTSEC-2023-0071", reason = "rsa is used only to sign a Vertex service-account JWT with a local key; Marvin targets PKCS#1 v1.5 decryption, which this workspace never performs. No safe upgrade exists (RustCrypto/RSA#626)." },
+]
 
 # ---------------------------------------------------------------------------
 # Licenses — derived from `cargo deny list`, not from a template.
