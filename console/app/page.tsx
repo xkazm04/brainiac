@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { FUNNEL } from "@/analytics/config";
+import TrackView from "@/analytics/TrackView";
 import Home from "@/home/Home";
 
 // The public landing page: the console home (the wave field), rendered in its
@@ -16,5 +18,17 @@ export const metadata: Metadata = {
 };
 
 export default function LandingPage() {
-  return <Home live={null} variant="public" />;
+  return (
+    <>
+      {/*
+        Funnel step 1 of 3 (landing → signup → activation). Fired as an explicit
+        custom event rather than read off the pageview report, so the funnel's
+        three steps are three goals of the same kind and stay comparable even if
+        the landing route is ever split or renamed. No-op unless a Plausible
+        domain is configured.
+      */}
+      <TrackView event={FUNNEL.landingView} />
+      <Home live={null} variant="public" />
+    </>
+  );
 }

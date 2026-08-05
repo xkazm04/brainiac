@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { FUNNEL } from "@/analytics/config";
+import { track } from "@/analytics/track";
 import Button from "@/components/ui/Button";
 import { signInWithGoogle } from "@/lib/firebase/client";
 import { FONT_MONO, GOLD, INK_DIM, LABEL, MAGENTA } from "@/design/theme";
@@ -31,7 +33,17 @@ export default function SignupClient({ configured }: { configured: boolean }) {
         setResult({ ok: false, message: "Google sign-in is not configured here." });
         return;
       }
-      setResult(await claimProjectWithGoogle(idToken, issueKey));
+      const outcome = await claimProjectWithGoogle(idToken, issueKey);
+      setResult(outcome);
+      // Funnel step 2 of 3. Fired on the SERVER-VERIFIED outcome, not on the
+      // button press: a Google popup that succeeded but whose token failed
+      // verification, or whose provisioning call errored, is not a signup. The
+      // `created` prop separates a first project from a returning account
+      // re-issuing a key — the funnel needs the former, and counting the two
+      // together would silently inflate conversion. No identifiers ride along.
+      if (outcome.ok) {
+        track(FUNNEL.signupComplete, { created: outcome.created === true });
+      }
     } catch (e) {
       // A popup the user closed is the common case and is not an error worth
       // shouting about.

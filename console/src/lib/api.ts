@@ -5,6 +5,8 @@
 
 import "server-only";
 
+import { trackActivation } from "@/analytics/server";
+
 import type {
   AddedRepo,
   Analytics,
@@ -158,7 +160,19 @@ export async function reviewPromotion(
   id: string,
   action: "approve" | "reject",
 ): Promise<ReviewedPromotion> {
-  return call(cfg, "POST", `/v1/reviews/promotions/${id}/${action}`);
+  const out = await call<ReviewedPromotion>(
+    cfg,
+    "POST",
+    `/v1/reviews/promotions/${id}/${action}`,
+  );
+  // ACTIVATION (funnel step 3 of 3): knowledge was ratified into canon.
+  // Instrumented here, after the backend accepted the write, rather than in the
+  // server action — a rejected or raced approval is not an activation, and only
+  // this line has seen the outcome. Rejections are not activation. Fire-and-
+  // forget and a no-op unless a Plausible domain is configured; it carries no
+  // id of any kind (src/analytics/server.ts).
+  if (action === "approve") trackActivation("promotion");
+  return out;
 }
 
 export async function listContradictions(cfg: ApiConfig): Promise<Contradiction[]> {
@@ -276,7 +290,17 @@ export async function submitMemory(
   cfg: ApiConfig,
   content: string,
 ): Promise<{ source_id: string; job_id: number }> {
-  return call(cfg, "POST", "/v1/memories", { content });
+  const out = await call<{ source_id: string; job_id: number }>(
+    cfg,
+    "POST",
+    "/v1/memories",
+    { content },
+  );
+  // ACTIVATION (funnel step 3 of 3): the other shape it takes — content
+  // actually arrived. Same posture as reviewPromotion above: after the accept,
+  // no ids, no-op unless configured. The memory's CONTENT is never touched.
+  trackActivation("memory_add");
+  return out;
 }
 
 export async function listTokens(cfg: ApiConfig): Promise<ApiToken[]> {
