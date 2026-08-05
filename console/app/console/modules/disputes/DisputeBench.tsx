@@ -28,7 +28,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 
-import { band, bandGlow, FONT_MONO, LABEL, MAGENTA, withAlpha } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { band, bandGlow, FONT_MONO, INK, LABEL, MAGENTA, withAlpha } from "@/design/theme";
 
 import type { DecisionResult } from "./actions";
 import DecisionBar from "./DecisionBar";
@@ -195,20 +196,43 @@ export default function DisputeBench({
             const tone = BAND_TONE[b.value as DecayBand];
             const label = DECAY_BANDS.find((d) => d.band === b.value)?.label ?? b.value;
             return (
-              <button
+              // A segment is a real filter control, so it goes through the
+              // shared Button — but on the `quiet` variant, which contributes
+              // shape and focus and nothing else. The capsule variants would
+              // fight this: a segment's whole geometry is `flexGrow ∝ count`
+              // inside one clipped bar, so it can carry neither a radius nor
+              // capsule padding.
+              //
+              // Three things are forced back inline, because inline is the only
+              // declaration that beats both a Tailwind utility and controlStyle:
+              //  - the 10px type scale (the xs bucket is 11px);
+              //  - opacity/cursor, so the tour's disabled strip still reads at
+              //    full strength instead of the primitive's 40% "unavailable" —
+              //    in demo mode these are dark by design, not broken;
+              //  - the selected edge, which used to be `outline: 1px solid` and
+              //    is now an inset ring. That is not cosmetic: an inline
+              //    `outline` (including the `outline: none` every UNSELECTED
+              //    segment carried) outranks the unlayered :focus-visible rule
+              //    in globals.css, so the strip was the one filter row a
+              //    keyboard operator could tab through completely blind.
+              <Button
                 key={b.value}
-                type="button"
+                variant="quiet"
+                size="xs"
                 disabled={demo}
+                selected={on}
                 onClick={() => toggle("band", b.value)}
-                aria-pressed={on}
                 title={demo ? `${label} · ${b.count}` : `${label} · ${b.count} — click to filter`}
-                className={`${FONT_MONO} relative min-w-[2.5rem] border-r border-black/30 text-[10px] transition last:border-r-0 ${demo ? "cursor-default" : ""}`}
+                className="relative min-w-[2.5rem] border-r border-black/30 last:border-r-0"
                 style={{
                   flexGrow: b.count,
                   flexBasis: 0,
+                  fontSize: "10px",
+                  opacity: 1,
+                  cursor: demo ? "default" : "pointer",
                   background: withAlpha(tone, on ? 0.5 : 0.18),
                   color: on ? "#0b0b12" : tone,
-                  outline: on ? `1px solid ${tone}` : "none",
+                  boxShadow: on ? `inset 0 0 0 1px ${tone}` : undefined,
                 }}
               >
                 <span className="pointer-events-none px-1">
@@ -217,7 +241,7 @@ export default function DisputeBench({
                     <span className="ml-1 opacity-70">{label}</span>
                   )}
                 </span>
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -275,17 +299,25 @@ export default function DisputeBench({
               />
             ))}
             {activeFilterCount > 0 && (
-              <button
-                type="button"
+              // xs is already px-2.5/11px; only the tighter block padding and
+              // the ink tone (was the raw `#e9edff/50` literal — INK) need
+              // saying, and both go inline so no utility can outrank them.
+              <Button
+                size="xs"
                 onClick={() =>
                   setParams((p) => {
                     ["kind", "team", "project", "band", "minClaims", "minAge"].forEach((k) => p.delete(k));
                   })
                 }
-                className={`${FONT_MONO} ml-auto rounded-full border border-white/15 px-2.5 py-0.5 text-[11px] text-[#e9edff]/50 transition hover:bg-white/5`}
+                className="ml-auto"
+                style={{
+                  paddingBlock: "0.125rem",
+                  borderColor: "rgba(255,255,255,0.15)",
+                  color: withAlpha(INK, 0.5),
+                }}
               >
                 clear {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -300,11 +332,24 @@ export default function DisputeBench({
             const tone = m.claims.wrong > 0 ? MAGENTA : BAND_TONE[mband];
             return (
               <li key={m.memory_id}>
-                <button
-                  type="button"
+                {/* Selectable list row — but NOT the `row` variant. That one is
+                    shaped for a single line (flex + gap + items-center) and a
+                    dispute row is two stacked blocks: the claim line and the
+                    decay track under it. Turning it into a flex container would
+                    put the track beside the title instead of below it. So it
+                    takes `quiet` — shape-free, focus included — and keeps the
+                    geometry it already had. `selected` still carries the state
+                    to assistive tech; the per-row decay tone stays inline
+                    because it is data, not an accent. */}
+                <Button
+                  variant="quiet"
+                  size="md"
+                  // The claim itself is prose, set in the display face — the
+                  // mono default would retype every row.
+                  mono={false}
                   onClick={() => setSelected(m.memory_id)}
-                  aria-pressed={isSel}
-                  className="w-full rounded-lg border px-3 py-2.5 text-left transition hover:bg-white/[0.03]"
+                  selected={isSel}
+                  className="w-full rounded-lg border px-3 py-2.5 text-left hover:bg-white/[0.03]"
                   style={{
                     borderColor: isSel ? withAlpha(tone, 0.5) : "rgba(255,255,255,0.07)",
                     background: isSel ? withAlpha(tone, 0.08) : "transparent",
@@ -348,7 +393,7 @@ export default function DisputeBench({
                       />
                     )}
                   </div>
-                </button>
+                </Button>
               </li>
             );
           })}
@@ -362,25 +407,37 @@ export default function DisputeBench({
         {/* paging — the backlog past row 50 is reachable */}
         {pages > 1 && (
           <div className={`${FONT_MONO} mt-4 flex items-center justify-between text-[11px] text-[#e9edff]/45`}>
-            <button
-              type="button"
+            {/* `color: inherit` keeps the pager on the row's own ink (the
+                primitive would otherwise impose INK_DIM), and the wider
+                horizontal padding is inline so it cannot lose a utility-order
+                coin flip against the xs bucket's px-2.5. */}
+            <Button
+              size="xs"
               disabled={page <= 0}
               onClick={() => gotoPage(page - 1)}
-              className="rounded-full border border-white/15 px-3 py-1 transition disabled:opacity-30 hover:enabled:bg-white/5"
+              style={{
+                paddingInline: "0.75rem",
+                borderColor: "rgba(255,255,255,0.15)",
+                color: "inherit",
+              }}
             >
               ← prev
-            </button>
+            </Button>
             <span>
               page {page + 1} of {pages} · {total} disputed
             </span>
-            <button
-              type="button"
+            <Button
+              size="xs"
               disabled={page >= pages - 1}
               onClick={() => gotoPage(page + 1)}
-              className="rounded-full border border-white/15 px-3 py-1 transition disabled:opacity-30 hover:enabled:bg-white/5"
+              style={{
+                paddingInline: "0.75rem",
+                borderColor: "rgba(255,255,255,0.15)",
+                color: "inherit",
+              }}
             >
               next →
-            </button>
+            </Button>
           </div>
         )}
 
@@ -506,14 +563,20 @@ export default function DisputeBench({
           }}
         >
           <span className="flex-1">{receipt.message}</span>
-          <button
-            type="button"
+          {/* `style={{ color: undefined }}` is deliberate, not leftover: the
+              icon variant returns a colour from controlStyle, and an inline
+              colour outranks the `hover:text-…` utility that gives this glyph
+              its only hover feedback. Blanking it hands the tone back to the
+              two classes. */}
+          <Button
+            variant="icon"
             onClick={() => setReceipt(null)}
-            className="text-[#e9edff]/40 transition hover:text-[#e9edff]/80"
             aria-label="dismiss"
+            className="text-[#e9edff]/40 hover:text-[#e9edff]/80"
+            style={{ color: undefined }}
           >
             ×
-          </button>
+          </Button>
         </div>
       )}
 
@@ -526,21 +589,27 @@ export default function DisputeBench({
   );
 }
 
+/* The facet chip. `selected` replaces the hand-written aria-pressed, but the
+ * colours stay explicit: an unselected chip is neutral ink here, where the
+ * primitive's accent-tinted default would light every facet in theta at once
+ * and lose the one distinction the row exists to draw. `style` merges over
+ * controlStyle, so what is written here is what renders. */
 function Chip({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
   return (
-    <button
-      type="button"
+    <Button
+      size="xs"
       onClick={onClick}
-      aria-pressed={on}
-      className={`${FONT_MONO} rounded-full border px-2 py-0.5 text-[11px] transition hover:bg-white/5`}
+      selected={on}
       style={{
+        paddingInline: "0.5rem",
+        paddingBlock: "0.125rem",
         borderColor: on ? withAlpha(THETA, 0.55) : "rgba(233,237,255,0.12)",
         color: on ? THETA : "rgba(233,237,255,0.5)",
         background: on ? withAlpha(THETA, 0.1) : "transparent",
       }}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 

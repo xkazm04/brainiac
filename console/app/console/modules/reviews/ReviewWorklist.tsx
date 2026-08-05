@@ -40,6 +40,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   FONT_DISPLAY,
@@ -116,20 +117,33 @@ function FilterChip({
   tone: string;
   onClick: () => void;
 }) {
+  // `selected` in place of the hand-written aria-pressed; the shared pill's xs
+  // bucket is already this chip's geometry (px-2.5 py-1), so only the 12px type
+  // scale is restated — inline, because two competing Tailwind font-size
+  // utilities resolve by stylesheet order rather than className order.
+  //
+  // The colours stay explicit rather than moving to `accent`. A facet chip is
+  // NEUTRAL until it is chosen: tinting every inactive chip alpha would make
+  // the row read as fully filtered when nothing is.
   return (
-    <button
-      type="button"
+    <Button
+      size="xs"
       onClick={onClick}
-      aria-pressed={active}
-      className={`${FONT_MONO} cursor-pointer rounded-full border px-2.5 py-1 text-xs transition hover:bg-white/5`}
+      selected={active}
       style={
         active
-          ? { borderColor: withAlpha(tone, 0.7), background: withAlpha(tone, 0.08), color: tone }
-          : { borderColor: HAIR, color: DIM }
+          ? {
+              fontSize: "0.75rem",
+              lineHeight: "1rem",
+              borderColor: withAlpha(tone, 0.7),
+              background: withAlpha(tone, 0.08),
+              color: tone,
+            }
+          : { fontSize: "0.75rem", lineHeight: "1rem", borderColor: HAIR, color: DIM }
       }
     >
       {label} · {count}
-    </button>
+    </Button>
   );
 }
 
@@ -452,14 +466,16 @@ export default function ReviewWorklist({
           onClick={toggleStale}
         />
         {filtering && (
-          <button
-            type="button"
+          // `quiet` — a text-only action that must not compete with the chips
+          // it sits beside. Its sm bucket is text-xs, the size this already was.
+          <Button
+            variant="quiet"
             onClick={clearAll}
-            className={`${FONT_MONO} ml-1 cursor-pointer text-xs underline underline-offset-2 transition hover:text-white`}
+            className="ml-1 underline underline-offset-2"
             style={{ color: FAINT }}
           >
             clear
-          </button>
+          </Button>
         )}
       </div>
 
@@ -475,15 +491,14 @@ export default function ReviewWorklist({
               {matched.length} of {promotions.length}
               {!scope.whole && <> on page · {scope.total} in all</>}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="quiet"
               onClick={() => setSelected(new Set(matched.map((p) => p.id)))}
               disabled={matched.length === 0}
-              className={`${FONT_MONO} cursor-pointer text-xs transition hover:text-white disabled:cursor-not-allowed disabled:opacity-40`}
               style={{ color: DIM }}
             >
               select all {matched.length}
-            </button>
+            </Button>
           </div>
 
           {selected.size > 0 && (
@@ -502,57 +517,66 @@ export default function ReviewWorklist({
                   <span className={`${FONT_MONO} text-xs`} style={{ color: GOLD }}>
                     {confirm} {selected.size} claims? each is signed in your name.
                   </span>
-                  <button
-                    type="button"
+                  {/* The armed pill keeps its own colours: at 0.7/0.1 it is
+                      deliberately louder than the resting approve/reject beside
+                      it, which is the whole point of the confirmation step.
+                      Padding and type scale are inline for the usual reason —
+                      an inline value cannot lose a utility-order coin flip. */}
+                  <Button
+                    size="xs"
                     disabled={busy}
                     onClick={() => void runBulk([...selected], confirm)}
-                    className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
                     style={{
+                      paddingInline: "0.75rem",
+                      fontSize: "0.75rem",
+                      lineHeight: "1rem",
                       borderColor: withAlpha(confirm === "approve" ? GOLD : MAGENTA, 0.7),
                       background: withAlpha(confirm === "approve" ? GOLD : MAGENTA, 0.1),
                       color: confirm === "approve" ? GOLD : MAGENTA,
                     }}
                   >
                     {busy ? "signing…" : `yes, ${confirm} ${selected.size}`}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="quiet"
                     disabled={busy}
                     onClick={() => setConfirm(null)}
-                    className={`${FONT_MONO} cursor-pointer text-xs transition hover:text-white disabled:opacity-40`}
                     style={{ color: FAINT }}
                   >
                     cancel
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>
-                  <button
-                    type="button"
+                  {/* These two DO take an accent: gold/magenta at 0.4 is
+                      exactly what `controlStyle` derives, so the colour is now
+                      stated once as intent rather than twice as arithmetic. */}
+                  <Button
+                    size="xs"
+                    accent={GOLD}
                     disabled={!onBulk || busy}
                     onClick={() => requestBulk("approve")}
-                    className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
-                    style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
+                    style={{ paddingInline: "0.75rem", fontSize: "0.75rem", lineHeight: "1rem" }}
                   >
                     approve {selected.size}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    size="xs"
+                    accent={MAGENTA}
                     disabled={!onBulk || busy}
                     onClick={() => requestBulk("reject")}
-                    className={`${FONT_MONO} cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40`}
-                    style={{ borderColor: withAlpha(MAGENTA, 0.4), color: MAGENTA }}
+                    style={{ paddingInline: "0.75rem", fontSize: "0.75rem", lineHeight: "1rem" }}
                   >
                     reject {selected.size}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="quiet"
                     onClick={() => setSelected(new Set())}
-                    className={`${FONT_MONO} ml-auto cursor-pointer text-xs transition hover:text-white`}
+                    className="ml-auto"
                     style={{ color: FAINT }}
                   >
                     clear
-                  </button>
+                  </Button>
                 </>
               )}
               {!onBulk && (
@@ -624,12 +648,17 @@ export default function ReviewWorklist({
                             : "transparent",
                     }}
                   >
-                    <button
-                      type="button"
-                      aria-pressed={sel}
+                    {/* The checkbox cell: a square hit area around a glyph, so
+                        `icon`. It keeps its fixed 28px column; the variant
+                        supplies the centring, the hover wash and — new here —
+                        the ring, which is what made this cell reachable but
+                        invisible from the keyboard. */}
+                    <Button
+                      variant="icon"
+                      selected={sel}
                       aria-label={`Select promotion ${p.id}`}
                       onClick={() => toggleSel(p.id)}
-                      className="grid w-7 shrink-0 cursor-pointer place-items-center transition hover:bg-white/5"
+                      className="w-7 shrink-0"
                     >
                       <span
                         className="block h-3 w-3 rounded-[3px] border transition"
@@ -638,12 +667,23 @@ export default function ReviewWorklist({
                           background: sel ? GOLD : "transparent",
                         }}
                       />
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    {/* The claim cell. Not the `row` variant, even though it
+                        looks like its use case: `row` is a w-full capsule, and
+                        this row is already split into the checkbox column plus
+                        a `flex-1` remainder. w-full against flex-1 is the exact
+                        conflict control-styles.ts documents, and the capsule's
+                        left padding would push the age column off its grid. So
+                        it takes `quiet` — focus and cursor, no shape — and
+                        keeps the geometry it had. */}
+                    <Button
+                      variant="quiet"
+                      // Columns set their own faces; the claim text is prose in
+                      // the display font, so the mono default is off.
+                      mono={false}
                       onClick={() => setFocusId(p.id)}
                       aria-current={focused ? "true" : undefined}
-                      className="flex min-w-0 flex-1 cursor-pointer items-baseline gap-2 py-1.5 pr-2.5 text-left transition hover:bg-white/5"
+                      className="flex min-w-0 flex-1 items-baseline gap-2 py-1.5 pr-2.5 text-left hover:bg-white/5"
                     >
                       <span
                         className={`${FONT_MONO} w-9 shrink-0 text-xs tabular-nums`}
@@ -673,7 +713,7 @@ export default function ReviewWorklist({
                           ? `${(p.memory.confidence * 100).toFixed(0)}%`
                           : "·"}
                       </span>
-                    </button>
+                    </Button>
                   </div>
                   {note && (
                     // A row the last batch refused, explained where it sits —
@@ -692,15 +732,18 @@ export default function ReviewWorklist({
           </div>
 
           {rows.length < matched.length && (
-            <button
-              type="button"
+            // A full-width footer action rather than a capsule, so `quiet`
+            // carries it: sm is already text-xs, and the border/padding it draws
+            // as the rail's bottom edge stay in className.
+            <Button
+              variant="quiet"
               onClick={() => setLimit((l) => l + RAIL_WINDOW)}
-              className={`${FONT_MONO} w-full cursor-pointer border-t px-3 py-2 text-xs transition hover:bg-white/5`}
+              className="w-full border-t px-3 py-2 hover:bg-white/5"
               style={{ borderColor: "rgba(233,237,255,0.08)", color: DIM }}
             >
               show {Math.min(RAIL_WINDOW, matched.length - rows.length)} more ·{" "}
               {rows.length}/{matched.length} mounted
-            </button>
+            </Button>
           )}
 
           {/*
@@ -899,19 +942,28 @@ export default function ReviewWorklist({
                 {label}
               </Link>
             ) : (
-              <button
+              // Deliberately NOT `selected`: the sibling branch of this ternary
+              // is a <Link>, which can only say aria-current, and a tab strip
+              // that announces itself two different ways depending on whether
+              // the host wired hrefs or callbacks is worse than one that always
+              // says aria-current. tabStyle keeps the alpha treatment; only the
+              // wider padding and the tab's inherited 12px are restated inline.
+              <Button
                 key={t.key}
-                type="button"
+                size="xs"
                 aria-current={on ? "true" : undefined}
                 onClick={() => {
                   onStatusChange?.(t.key);
                   setClim(CONTRA_WINDOW);
                 }}
-                className="cursor-pointer rounded-full border px-3 py-1 transition"
-                style={tabStyle(on)}
+                style={{
+                  paddingInline: "0.75rem",
+                  fontSize: "inherit",
+                  ...tabStyle(on),
+                }}
               >
                 {label}
-              </button>
+              </Button>
             );
           })}
         </nav>
@@ -973,14 +1025,14 @@ export default function ReviewWorklist({
               );
             })}
             {clim < contradictions.length && (
-              <button
-                type="button"
+              <Button
+                variant="quiet"
                 onClick={() => setClim((n) => n + CONTRA_WINDOW)}
-                className={`${FONT_MONO} w-full cursor-pointer px-3 py-2 text-xs transition hover:bg-white/5`}
+                className="w-full px-3 py-2 hover:bg-white/5"
                 style={{ color: DIM }}
               >
                 show more · {clim}/{contradictions.length} mounted
-              </button>
+              </Button>
             )}
           </div>
         )}

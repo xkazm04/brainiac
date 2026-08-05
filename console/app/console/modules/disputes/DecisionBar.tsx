@@ -14,6 +14,7 @@
 
 import { useState, useTransition } from "react";
 
+import Button from "@/components/ui/Button";
 import { band, FONT_MONO, MAGENTA, withAlpha } from "@/design/theme";
 
 import { resolveDisputeAction, type DecisionResult } from "./actions";
@@ -49,23 +50,34 @@ export default function DecisionBar({
       onResult?.(r, memoryId);
     });
 
-  const pad = size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm";
+  // The bar's two densities map onto the shared pill's size buckets: `md` is
+  // exactly `pill/sm` (px-3.5 py-1.5 text-sm) and `sm` is exactly `pill/xs`
+  // (px-2.5 py-1) apart from the type scale — xs is 11px where this bar has
+  // always been 12px. That one pixel goes through `style` rather than a
+  // `text-xs` className: Tailwind resolves two competing font-size utilities by
+  // stylesheet order, not className order (the same trap control-styles.ts
+  // documents for width), so an inline value is the only deterministic way to
+  // land on the size this bar had before.
+  const btnSize = size === "sm" ? "xs" : "sm";
+  const typeScale = size === "sm" ? { fontSize: "0.75rem", lineHeight: "1rem" } : undefined;
 
   return (
     <div className={`${FONT_MONO} flex flex-col gap-2.5`}>
       <div className="flex flex-wrap items-center gap-2">
         {DECISIONS.map((dcn) => (
-          <button
+          // `accent` derives the tinted edge + text this bar used to spell out
+          // as `withAlpha(TONE, 0.4)` / `TONE` — same colour, one input.
+          <Button
             key={dcn.id}
-            type="button"
+            size={btnSize}
+            accent={TONE[dcn.id]}
             disabled={pending || !live}
             title={live ? dcn.gloss : "demo data — connect the API to answer claims"}
             onClick={() => decide(dcn.id)}
-            className={`rounded-full border ${pad} transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/5`}
-            style={{ borderColor: withAlpha(TONE[dcn.id], 0.4), color: TONE[dcn.id] }}
+            style={typeScale}
           >
             {dcn.verb}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -77,21 +89,31 @@ export default function DecisionBar({
         {EXTEND_CHOICES.map((c) => {
           const on = c.days === days;
           return (
-            <button
+            // `selected` rather than a hand-rolled pressed look, so the state is
+            // announced (aria-pressed) and not only drawn. The colours stay
+            // explicit: the primitive's unselected treatment tints the edge with
+            // the accent, and these budget chips are deliberately NEUTRAL until
+            // chosen — gamma on all four would read as four live answers rather
+            // than one budget. `style` merges over controlStyle, so the explicit
+            // values win. Padding is inline for a different reason (px-2 py-0.5
+            // vs the xs bucket's px-2.5 py-1): competing Tailwind utilities
+            // resolve by stylesheet order, an inline value does not.
+            <Button
               key={c.label}
-              type="button"
+              size="xs"
               disabled={pending || !live}
-              aria-pressed={on}
+              selected={on}
               onClick={() => setDays(c.days)}
-              className="rounded-full border px-2 py-0.5 transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/5"
               style={{
+                paddingInline: "0.5rem",
+                paddingBlock: "0.125rem",
                 borderColor: on ? withAlpha(band("gamma"), 0.55) : "rgba(233,237,255,0.12)",
                 color: on ? band("gamma") : "rgba(233,237,255,0.45)",
                 background: on ? withAlpha(band("gamma"), 0.1) : "transparent",
               }}
             >
               {c.label}
-            </button>
+            </Button>
           );
         })}
       </div>

@@ -3,27 +3,29 @@
 /*
  * The maintainer's affordances on the review queue. Pure presentation over the
  * server actions in ./actions (unchanged): promotions get approve (constructive
- * gamma) / reject (neutral), contradictions get the four resolutions. Pill
- * styling matches the disputes DecisionBar so every governance surface answers
- * the same way.
+ * gamma) / reject (neutral), contradictions get the four resolutions.
+ *
+ * Every control here is the shared <Button variant="pill" size="sm">. That
+ * bucket is byte-for-byte the local `PILL` constant this file used to carry
+ * (rounded-full border px-3.5 py-1.5 text-sm, the same hover wash and the same
+ * disabled treatment), so the migration was a swap and not a restyle — the one
+ * thing it adds is the focus ring, which none of these buttons had. The accents
+ * are equally unchanged: `accent` derives `borderColor: withAlpha(x, 0.4)` +
+ * `color: x`, which is exactly what each call site spelled out by hand, and the
+ * neutral pair (reject / dismiss) omits `accent` to land on the same
+ * rgba(233,237,255,0.2) edge over INK_DIM text.
+ *
+ * The disputes DecisionBar answers through the same primitive, so the two
+ * governance surfaces still match by construction rather than by copy-paste.
  */
 
 import { useState, useTransition } from "react";
 
 import type { ActionResult } from "./actions";
 import { resolveContradictionAction, reviewPromotionAction } from "./actions";
-import {
-  band,
-  FONT_MONO,
-  GOLD,
-  INK_DIM,
-  MAGENTA,
-  withAlpha,
-} from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { band, FONT_MONO, GOLD, MAGENTA } from "@/design/theme";
 import type { ContradictionResolution } from "@/lib/types";
-
-const PILL =
-  "rounded-full border px-3.5 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/5";
 
 function useAction() {
   const [pending, startTransition] = useTransition();
@@ -50,24 +52,21 @@ export function PromotionButtons({ promotionId }: { promotionId: string }) {
   const { pending, result, run } = useAction();
   return (
     <div className={`${FONT_MONO} flex flex-wrap items-center gap-2`}>
-      <button
-        type="button"
+      <Button
         disabled={pending}
+        accent={GOLD}
         onClick={() => run(() => reviewPromotionAction(promotionId, "approve"))}
-        className={PILL}
-        style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
       >
         approve
-      </button>
-      <button
-        type="button"
+      </Button>
+      {/* No accent: reject is the neutral answer, and the neutral ink edge is
+          what `controlStyle` already returns when none is given. */}
+      <Button
         disabled={pending}
         onClick={() => run(() => reviewPromotionAction(promotionId, "reject"))}
-        className={PILL}
-        style={{ borderColor: "rgba(233,237,255,0.2)", color: INK_DIM }}
       >
         reject
-      </button>
+      </Button>
       <ResultNote result={result} />
     </div>
   );
@@ -88,46 +87,39 @@ export function ContradictionButtons({
     run(() => resolveContradictionAction(contradictionId, resolution, winner));
   return (
     <div className={`${FONT_MONO} flex flex-wrap items-center gap-2`}>
-      <button
-        type="button"
+      <Button
         disabled={pending}
+        accent={GOLD}
         title="A supersedes B"
         onClick={() => resolve("supersede", memoryAId)}
-        className={PILL}
-        style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
       >
         A wins
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
         disabled={pending}
+        accent={GOLD}
         title="B supersedes A"
         onClick={() => resolve("supersede", memoryBId)}
-        className={PILL}
-        style={{ borderColor: withAlpha(GOLD, 0.4), color: GOLD }}
       >
         B wins
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
         disabled={pending}
+        accent={ALPHA}
         title="Both stand — no contradiction"
         onClick={() => resolve("coexist")}
-        className={PILL}
-        style={{ borderColor: withAlpha(ALPHA, 0.4), color: ALPHA }}
       >
         coexist
-      </button>
-      <button
-        type="button"
+      </Button>
+      {/* Dismiss is the neutral answer here, so it drops the accent — same
+          reason as reject above. */}
+      <Button
         disabled={pending}
         title="Dismiss — not a real contradiction"
         onClick={() => resolve("dismiss")}
-        className={PILL}
-        style={{ borderColor: "rgba(233,237,255,0.2)", color: INK_DIM }}
       >
         dismiss
-      </button>
+      </Button>
       <ResultNote result={result} />
     </div>
   );
