@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ApiError, configFromEnv, getGraphCanonical } from "@/lib/api";
+import { isUuid } from "@/lib/scopes";
 
 // Client-side drill-down proxy: the browser never sees the bearer token.
 export async function GET(
@@ -8,7 +9,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!isUuid(id)) {
     return NextResponse.json({ error: "bad id" }, { status: 400 });
   }
   try {

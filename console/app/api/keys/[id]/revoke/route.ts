@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { ApiError, configFromEnv, revokeToken } from "@/lib/api";
+import { isUuid } from "@/lib/scopes";
 
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!isUuid(id)) {
     return NextResponse.json({ error: "bad id" }, { status: 400 });
   }
   try {
