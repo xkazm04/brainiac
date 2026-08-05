@@ -24,6 +24,21 @@ ARG NEXT_PUBLIC_SENTRY_DSN=""
 ARG NEXT_PUBLIC_BRAINIAC_ENV=""
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_BRAINIAC_ENV=$NEXT_PUBLIC_BRAINIAC_ENV
+# ── Plausible wiring — same build-time trap, same fix ───────────────────────
+# The funnel (landing_view → signup_complete → activation) is read from
+# `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` by src/analytics/config.ts, which Next inlines
+# at build time exactly like the DSN above. Without these ARGs a host that sets
+# the variable on a PULLED image gets silence: no tracker script, no events, no
+# error — the worst failure shape there is, a metric that reads zero and looks
+# like a product problem rather than a wiring problem. Optional as ever: unset
+# ⇒ empty ⇒ `analyticsEnabled()` is false and nothing is emitted.
+# NOTE: the Rust server reads its own `PLAUSIBLE_DOMAIN` at RUNTIME (it emits
+# the activation event for cloud-signup users, who never touch the console —
+# crates/brainiac-server/src/analytics.rs). That one needs no build arg.
+ARG NEXT_PUBLIC_PLAUSIBLE_DOMAIN=""
+ARG NEXT_PUBLIC_PLAUSIBLE_HOST=""
+ENV NEXT_PUBLIC_PLAUSIBLE_DOMAIN=$NEXT_PUBLIC_PLAUSIBLE_DOMAIN
+ENV NEXT_PUBLIC_PLAUSIBLE_HOST=$NEXT_PUBLIC_PLAUSIBLE_HOST
 # The build must not need the API — pages are force-dynamic and every fetch
 # has a demo fallback.
 RUN npm run build

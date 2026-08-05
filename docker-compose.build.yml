@@ -34,7 +34,15 @@ services:
       # unset ⇒ empty ⇒ `if (dsn)` stays false and Sentry never initializes.
       # They reuse the SAME .env.deploy vars the Rust server reads at runtime,
       # so one DSN + one environment tag covers both halves of the stack.
+      #
+      # The same is true of Plausible: the console's funnel domain is inlined by
+      # `next build`, so it can only arrive here. It reuses the SAME
+      # PLAUSIBLE_DOMAIN / PLAUSIBLE_HOST vars the Rust server reads at runtime
+      # for its own activation event — one site, one host, both halves of the
+      # funnel, configured once in .env.deploy. Unset ⇒ empty ⇒ analytics off.
       args:
         NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}
         NEXT_PUBLIC_BRAINIAC_ENV: ${BRAINIAC_ENV:-production}
+        NEXT_PUBLIC_PLAUSIBLE_DOMAIN: ${PLAUSIBLE_DOMAIN:-}
+        NEXT_PUBLIC_PLAUSIBLE_HOST: ${PLAUSIBLE_HOST:-}
     image: ghcr.io/xkazm04/brainiac-console:${BRAINIAC_IMAGE_TAG:-latest}
