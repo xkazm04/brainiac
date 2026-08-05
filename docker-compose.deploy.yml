@@ -164,22 +164,59 @@ services:
       # fails closed here instead. Generate with: openssl rand -base64 32
       CONSOLE_SESSION_SECRET: ${CONSOLE_SESSION_SECRET:?set CONSOLE_SESSION_SECRET (openssl rand -base64 32) — without it the session cookie is keyed on CONSOLE_PASSCODE, so a guessed passcode forges a session without hitting the login rate limiter}
       NODE_OPTIONS: --max-old-space-size=256
-      # NOT WIRED, deliberately: NEXT_PUBLIC_SENTRY_DSN / NEXT_PUBLIC_BRAINIAC_ENV.
-      # Next.js substitutes `NEXT_PUBLIC_*` at BUILD time (both the browser and
-      # the server bundles), and console/Dockerfile declares no matching ARG/ENV
-      # in its build stage — so in a released image the reads in
-      # instrumentation-client.ts / sentry.{server,edge}.config.ts are already
-      # compiled to `undefined` and every `if (dsn)` is dead code. Listing the
-      # vars here would change nothing at runtime while implying console error
-      # tracking works, so they are left out until console/Dockerfile grows the
-      # build args (out of scope for this file). The Rust server's Sentry above
-      # is unaffected — it reads its DSN at runtime.
-    ports:
-      - "80:3100"
+      # Console Sentry is a BUILD-time concern, not a runtime one: Next.js
+      # substitutes `NEXT_PUBLIC_*` into both bundles when `npm run build` runs,
+      # so setting them here would do nothing. console/Dockerfile now declares
+      # the matching ARGs and docker-compose.build.yml passes them through, so
+      # the wiring lives on the build path — see SENTRY_DSN / BRAINIAC_ENV in
+      # .env.deploy. A PULLED image carries whatever DSN it was built with
+      # (the release workflow's), which is why a self-hosted operator wanting
+      # console error tracking must build from source with their own DSN.
+      # The Rust server's Sentry above is unaffected — it reads its DSN at
+      # runtime, so pulled images pick it up from .env.deploy directly.
+    # No host ports: Caddy below is the only public surface, and it reaches the
+    # console over the Docker network. Publishing 3100 here would bypass TLS.
+    expose:
+      - "3100"
     deploy:
       resources:
         limits:
           memory: 320M
 
+  # TLS terminator + the only publicly bound service.
+  #
+  # Set BRAINIAC_DOMAIN in .env.deploy and Caddy provisions/renews a Let's
+  # Encrypt certificate automatically and redirects 80 → 443. Leave it unset and
+  # the site address falls back to ":80" — plain HTTP, identical to the
+  # pre-Caddy behaviour, which is the only thing a bare-IP host can do anyway.
+  # Either way the deploy command is unchanged; see deploy/Caddyfile.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - console
+    environment:
+      # `:-` (not `-`) so an EMPTY BRAINIAC_DOMAIN in .env.deploy — the common
+      # "I have no domain yet" state — also falls back. Caddy's own
+      # `{$VAR:default}` only fires when the var is UNSET, and compose always
+      # sets it, so an empty value would otherwise expand to an empty site
+      # address and Caddy would fail to parse the file at startup.
+      BRAINIAC_DOMAIN: ${BRAINIAC_DOMAIN:-:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates + the ACME account key. Losing this volume means every
+      # restart re-requests a certificate and burns Let's Encrypt rate limit.
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "${BRAINIAC_HTTP_PORT:-80}:80"
+      - "${BRAINIAC_HTTPS_PORT:-443}:443"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
 volumes:
   brainiac-pg:
+  caddy-data:
+  caddy-config:

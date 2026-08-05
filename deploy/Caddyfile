@@ -1,0 +1,40 @@
+# Brainiac — TLS terminator in front of the console.
+#
+# Mounted read-only into the `caddy` service by docker-compose.deploy.yml.
+# The console itself listens on 3100 inside the Docker network and is NOT
+# published to the host; Caddy owns 80/443 and is the only public surface.
+#
+# ONE variable decides the whole posture — BRAINIAC_DOMAIN in .env.deploy:
+#
+#   unset            → site address ":80" — plain HTTP on port 80, exactly the
+#                      behaviour before Caddy existed. This is the correct mode
+#                      for an IP-only box (a bare IP cannot get a public cert)
+#                      and for local rehearsal.
+#   memory.acme.com  → Caddy provisions and renews a Let's Encrypt certificate
+#                      automatically over HTTP-01/TLS-ALPN, serves HTTPS on 443,
+#                      and redirects 80 → 443. Nothing else to configure: no
+#                      certbot, no cron, no cert paths.
+#
+# So standing up TLS on a real host is a DNS record + one env var, not a design
+# change. Requirements for the domain mode: the A/AAAA record must already point
+# at the host, and 80 + 443 must both be open (ACME validates over 80).
+#
+# Certificates and ACME account keys live in the `caddy-data` volume — keep it,
+# or every restart re-requests a cert and burns Let's Encrypt rate limit.
+#
+# The `::80` is the fallback when BRAINIAC_DOMAIN is entirely UNSET (running
+# this file with plain `caddy run`). Under compose the var is always set, so the
+# EMPTY case is handled there instead — `${BRAINIAC_DOMAIN:-:80}` — because
+# Caddy's own default does not fire for a set-but-empty variable, and an empty
+# site address is a startup parse error rather than a graceful fallback.
+
+{$BRAINIAC_DOMAIN::80} {
+	encode zstd gzip
+
+	# The console is a Next.js standalone server. Long timeouts are unnecessary;
+	# what matters is passing the real client IP through so the console's login
+	# rate limiter buckets per-client instead of per-proxy.
+	reverse_proxy console:3100 {
+		header_up X-Real-IP {remote_host}
+	}
+}
