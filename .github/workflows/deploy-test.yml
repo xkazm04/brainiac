@@ -1,0 +1,103 @@
+# Deploy-to-TEST: bring the real container stack up from this commit and prove
+# it is alive.
+#
+# WHY THIS IS SEPARATE FROM ci.yml
+# ci.yml proves the code compiles, lints, passes its tests and holds the eval
+# regression gates — all of that runs against the source tree. None of it runs
+# the thing we actually ship: two Docker images, a Postgres with migrations
+# applied at boot, token auth switched on and a fail-closed console gate. Those
+# are the parts that break on a deploy, and until now nothing exercised them
+# before a `v*` tag went out.
+#
+# WHAT IT IS NOT
+# This is NOT a promotion path. Production is still only ever reached by
+# release.yml, which publishes GHCR images on a `v*` tag that a human pushes.
+# Nothing here writes to a registry, and nothing here touches a real host — the
+# stack lives and dies inside the runner.
+#
+# It reuses the artifacts an operator uses by hand, on purpose, so this job and
+# the documented manual procedure (docs/deploy/test-env.md) cannot drift:
+#   docker-compose.test.yml   the isolated `brainiac-test` project (5434/8601/3200)
+#   scripts/smoke-test-env.sh the same 6 checks a human runs after `up -d`
+#
+# CREDENTIALS: none. Every secret the stack demands is generated per-run below
+# and dies with the runner. The LLM provider is `mock` and the embedder is
+# `deterministic` — the only two backends that need no vendor key — because the
+# smoke checks exercise liveness, migrations, auth and the console gate, none
+# of which involve a model call. That keeps this job runnable on a fork PR and
+# free of any "CI needs the production API key" pressure.
+name: deploy-test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# Two stack builds racing on one runner pool is wasted money; the newest commit
+# is the only one whose deployability we care about.
+concurrency:
+  group: deploy-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    # The Rust image is a release build of the whole workspace. Cold, that is
+    # the bulk of the wall clock; the default 360-minute timeout would let a
+    # hung `up` burn an hour, so cap it at something a human would wait for.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # docker-compose.test.yml declares every one of these with `:?`, so a
+      # missing value fails the `up` rather than silently starting a weakened
+      # stack. Generated, never stored: this file exists for ~5 minutes.
+      - name: write .env.test
+        run: |
+          set -euo pipefail
+          token="ci-$(openssl rand -hex 16)"
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "BRAINIAC_TOKENS={\"$token\":{\"org\":\"00000000-0000-0000-0000-0000000000c1\",\"user\":\"00000000-0000-0000-0000-0000000000c2\",\"teams\":[]}}"
+            echo "BRAINIAC_API_TOKEN=$token"
+            echo "CONSOLE_PASSCODE=$(openssl rand -hex 16)"
+            echo "CONSOLE_SESSION_SECRET=$(openssl rand -base64 32)"
+            # No vendor key is present, so anything else would fail at boot:
+            # embedder=qwen calls QwenEmbedder::from_env() in main.rs and
+            # provider=qwen calls qwen_key_from_env() in the gateway.
+            echo "BRAINIAC_PROVIDER=mock"
+            echo "BRAINIAC_EMBEDDER=deterministic"
+            echo "BRAINIAC_CONSOLE_URL=http://localhost:3200"
+          } > .env.test
+
+      - name: build the stack
+        run: docker compose -f docker-compose.test.yml --env-file .env.test build
+
+      - name: up
+        run: docker compose -f docker-compose.test.yml --env-file .env.test up -d
+
+      # The same script an operator runs. It waits for /health itself, so the
+      # only thing this step adds is the environment it reads the token from.
+      - name: smoke
+        run: ./scripts/smoke-test-env.sh
+        env:
+          ENV_FILE: ./.env.test
+          # The console image is a Next standalone build; first paint after a
+          # cold container start is slower than the server's, so allow more
+          # than the 60s default before calling it dead.
+          SMOKE_RETRIES: "180"
+
+      # A red smoke check is useless without the reason. Dump every container's
+      # log so the failure is diagnosable from the run page alone.
+      - name: logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml --env-file .env.test logs --tail 200
+
+      - name: down
+        if: always()
+        run: |
+          docker compose -f docker-compose.test.yml --env-file .env.test down -v
+          rm -f .env.test
