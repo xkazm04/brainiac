@@ -38,6 +38,18 @@ jobs:
           - name: brainiac-console
             context: ./console
             dockerfile: console/Dockerfile
+            # Next inlines NEXT_PUBLIC_* at BUILD time, so a value supplied at
+            # `docker run` never reaches the browser bundle — console/Dockerfile
+            # declares these as ARGs for exactly that reason. Without passing
+            # them here, every published console image ships with the DSN
+            # compiled to "" and browser-side Sentry silently does nothing.
+            # NEXT_PUBLIC_SENTRY_DSN is a publishable identifier (it ends up in
+            # the client bundle by design), but it is still repo configuration,
+            # so it comes from a repository variable/secret rather than a
+            # literal. An unset var yields "" — the previous behaviour.
+            build-args: |
+              NEXT_PUBLIC_SENTRY_DSN=${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+              NEXT_PUBLIC_BRAINIAC_ENV=production
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +83,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Empty for the Rust image; see the console matrix entry for why the
+          # console needs build-time (not run-time) NEXT_PUBLIC_* values.
+          build-args: ${{ matrix.build-args }}
           # Buildx layer cache in the Actions cache — the Rust dependency layer
           # is the expensive one and it changes only when Cargo.lock does.
           # Scoped per image so the two builds don't evict each other.

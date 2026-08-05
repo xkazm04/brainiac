@@ -41,7 +41,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  stack:
+  # Named for the check context it publishes — `deploy-test` is what a branch
+  # protection rule or a PR checks list has to reference.
+  deploy-test:
     runs-on: ubuntu-latest
     # The Rust image is a release build of the whole workspace. Cold, that is
     # the bulk of the wall clock; the default 360-minute timeout would let a
