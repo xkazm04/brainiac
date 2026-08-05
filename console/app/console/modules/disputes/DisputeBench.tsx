@@ -187,7 +187,7 @@ export default function DisputeBench({
             each a filter. Scales to any N; never a smear. */}
         <div className="mt-4 flex h-9 overflow-hidden rounded-lg border border-white/10">
           {facets.bands.length === 0 && (
-            <div className={`${FONT_MONO} grid w-full place-items-center text-[11px] text-[#e9edff]/35`}>
+            <div className={`${FONT_MONO} grid w-full place-items-center text-[11px] text-[var(--ink)]/35`}>
               nothing under dispute
             </div>
           )}
@@ -360,7 +360,7 @@ export default function DisputeBench({
                       className="h-2.5 w-2.5 shrink-0 rounded-full"
                       style={{ background: withAlpha(tone, 0.85), boxShadow: `0 0 6px ${withAlpha(tone, 0.5)}` }}
                     />
-                    <span className="min-w-0 flex-1 truncate text-sm text-[#e9edff]/90">
+                    <span className="min-w-0 flex-1 truncate text-sm text-[var(--ink)]/90">
                       {m.title ?? m.content}
                     </span>
                     <span className={`${FONT_MONO} shrink-0 text-[11px]`} style={{ color: MAGENTA }}>
@@ -373,7 +373,7 @@ export default function DisputeBench({
                     >
                       {m.reporters}&#8226;rp
                     </span>
-                    <span className={`${FONT_MONO} w-10 shrink-0 text-right text-[11px] text-[#e9edff]/35`}>
+                    <span className={`${FONT_MONO} w-10 shrink-0 text-right text-[11px] text-[var(--ink)]/35`}>
                       {ageLabel(m.oldest_claim_secs)}
                     </span>
                   </div>
@@ -398,7 +398,7 @@ export default function DisputeBench({
             );
           })}
           {rows.length === 0 && (
-            <li className={`${FONT_MONO} grid place-items-center py-10 text-sm text-[#e9edff]/45`}>
+            <li className={`${FONT_MONO} grid place-items-center py-10 text-sm text-[var(--ink)]/45`}>
               {activeFilterCount > 0 ? "no disputes match this filter" : "nothing decaying under dispute"}
             </li>
           )}
@@ -406,7 +406,7 @@ export default function DisputeBench({
 
         {/* paging — the backlog past row 50 is reachable */}
         {pages > 1 && (
-          <div className={`${FONT_MONO} mt-4 flex items-center justify-between text-[11px] text-[#e9edff]/45`}>
+          <div className={`${FONT_MONO} mt-4 flex items-center justify-between text-[11px] text-[var(--ink)]/45`}>
             {/* `color: inherit` keeps the pager on the row's own ink (the
                 primitive would otherwise impose INK_DIM), and the wider
                 horizontal padding is inline so it cannot lose a utility-order
@@ -441,7 +441,7 @@ export default function DisputeBench({
           </div>
         )}
 
-        <div className={`${FONT_MONO} mt-5 flex flex-wrap items-center gap-4 text-[11px] text-[#e9edff]/35`}>
+        <div className={`${FONT_MONO} mt-5 flex flex-wrap items-center gap-4 text-[11px] text-[var(--ink)]/35`}>
           <span>✗ wrong · ◷ outdated · rp = distinct reporters</span>
           <span className="ml-auto">↑↓/jk select · [ ] page</span>
         </div>
@@ -475,9 +475,9 @@ export default function DisputeBench({
           </div>
 
           {active.title && (
-            <h2 className="mt-2 text-lg font-medium text-[#e9edff]/95">{active.title}</h2>
+            <h2 className="mt-2 text-lg font-medium text-[var(--ink)]/95">{active.title}</h2>
           )}
-          <p className="mt-2 text-base leading-relaxed text-[#e9edff]/90">{active.content}</p>
+          <p className="mt-2 text-base leading-relaxed text-[var(--ink)]/90">{active.content}</p>
 
           <div
             className={`${FONT_MONO} mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]`}
@@ -526,13 +526,13 @@ export default function DisputeBench({
                     <span style={{ color: "rgba(233,237,255,0.3)" }}>{ageLabel(r.age_secs)} ago</span>
                   </div>
                   {r.note && (
-                    <p className={`${FONT_MONO} text-sm text-[#e9edff]/65`}>“{r.note}”</p>
+                    <p className={`${FONT_MONO} text-sm text-[var(--ink)]/65`}>“{r.note}”</p>
                   )}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className={`${FONT_MONO} mt-2 text-sm text-[#e9edff]/35`}>
+            <p className={`${FONT_MONO} mt-2 text-sm text-[var(--ink)]/35`}>
               reported without a note — the verdict is the whole signal
             </p>
           )}
@@ -544,7 +544,7 @@ export default function DisputeBench({
       ) : (
         rows.length > 0 && (
           <div
-            className={`${FONT_MONO} mt-4 grid place-items-center rounded-xl border border-dashed border-white/10 py-8 text-sm text-[#e9edff]/35`}
+            className={`${FONT_MONO} mt-4 grid place-items-center rounded-xl border border-dashed border-white/10 py-8 text-sm text-[var(--ink)]/35`}
           >
             {selected
               ? "that dispute left the queue — pick another to answer"
@@ -572,7 +572,7 @@ export default function DisputeBench({
             variant="icon"
             onClick={() => setReceipt(null)}
             aria-label="dismiss"
-            className="text-[#e9edff]/40 hover:text-[#e9edff]/80"
+            className="text-[var(--ink)]/40 hover:text-[var(--ink)]/80"
             style={{ color: undefined }}
           >
             ×

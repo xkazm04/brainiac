@@ -174,7 +174,7 @@ export function Select({
         // opaque background rather than the translucent panel wash.
         className={fieldClass(
           size,
-          `${FONT_MONO} bg-[#0a090f] ${className ?? ""}`.trim(),
+          `${FONT_MONO} bg-[var(--surface-solid)] ${className ?? ""}`.trim(),
           fullWidth,
         )}
         style={{ ...fieldStyle(invalid), ...style }}

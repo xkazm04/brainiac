@@ -121,7 +121,7 @@ export default function AuditLedger({
               key={t.key}
               href={pageHref(t.key === "all" ? undefined : t.key, 0)}
               className={`${FONT_MONO} rounded-full border px-3 py-1 text-xs uppercase tracking-[0.12em] transition ${
-                active ? "" : "border-white/15 text-[#e9edff]/50 hover:border-white/40 hover:text-white"
+                active ? "" : "border-white/15 text-[var(--ink)]/50 hover:border-white/40 hover:text-white"
               }`}
               style={active ? { borderColor: ALPHA, color: ALPHA, background: withAlpha(ALPHA, 0.1) } : undefined}
             >

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { band, FONT_MONO } from "@/design/theme";
+import { AMBER, band, FONT_MONO } from "@/design/theme";
 
 interface Status {
   live: boolean;
@@ -43,7 +43,7 @@ export default function NavStatus() {
 
   if (!status) return null;
   const waiting = status.pending + status.contradictions + status.flagged;
-  const dotColor = status.live ? band("beta") : "#f0b429";
+  const dotColor = status.live ? band("beta") : AMBER;
   const label = status.live ? "live" : "demo data";
   return (
     <span className={`${FONT_MONO} flex items-center gap-3`}>
@@ -57,7 +57,7 @@ export default function NavStatus() {
           {waiting} to review
         </Link>
       )}
-      <span className="flex items-center gap-1.5 text-[#e9edff]/45" title={`connection: ${label}`}>
+      <span className="flex items-center gap-1.5 text-[var(--ink)]/45" title={`connection: ${label}`}>
         <span
           aria-hidden
           className="inline-block h-1.5 w-1.5 rounded-full"

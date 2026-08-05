@@ -140,7 +140,7 @@ export default function SectionRail({
 
         <Link
           href={cta.href}
-          className={`${FONT_MONO} hidden shrink-0 rounded-full border px-4 py-1.5 text-xs transition hover:text-[#f3c74f] lg:block`}
+          className={`${FONT_MONO} hidden shrink-0 rounded-full border px-4 py-1.5 text-xs transition hover:text-[var(--gold)] lg:block`}
           style={{ borderColor: "rgba(233,237,255,0.18)", color: dim(0.7) }}
         >
           {cta.label}

@@ -366,7 +366,7 @@ export default function ReviewWorklist({
       <h1 className="mt-1 text-3xl font-semibold tracking-tight text-white">
         Sign what the org will remember.
       </h1>
-      <p className={`${FONT_MONO} mt-2 max-w-2xl text-sm leading-relaxed text-[#e9edff]/55`}>
+      <p className={`${FONT_MONO} mt-2 max-w-2xl text-sm leading-relaxed text-[var(--ink)]/55`}>
         {promotionsTotal} promotions waiting · {facets.stale} past the 48h SLO
         {!scope.whole && <> on this page</>}
         {restricted > 0 && <> · {restricted} outside your scope</>}. Every decision here is
@@ -609,7 +609,7 @@ export default function ReviewWorklist({
             style={{ scrollbarWidth: "thin" }}
           >
             {rows.length === 0 ? (
-              <div className={`${FONT_MONO} px-4 py-12 text-center text-sm text-[#e9edff]/45`}>
+              <div className={`${FONT_MONO} px-4 py-12 text-center text-sm text-[var(--ink)]/45`}>
                 {promotionsTotal === 0 ? (
                   <>
                     <span className="block" style={{ color: GOLD }}>
@@ -807,11 +807,11 @@ export default function ReviewWorklist({
               </div>
 
               {active.memory ? (
-                <p className="mt-3 text-[15px] leading-relaxed text-[#e9edff]/90">
+                <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink)]/90">
                   {active.memory.content}
                 </p>
               ) : (
-                <p className={`${FONT_MONO} mt-3 text-sm leading-relaxed text-[#e9edff]/45`}>
+                <p className={`${FONT_MONO} mt-3 text-sm leading-relaxed text-[var(--ink)]/45`}>
                   memory not visible to you
                   <span className="mt-2 block text-sm" style={{ color: ALPHA }}>
                     row-level security is doing this, not the UI — the reviewer can see that a
@@ -858,7 +858,7 @@ export default function ReviewWorklist({
               </div>
 
               {active.provenance ? (
-                <p className={`${FONT_MONO} mt-3 text-sm leading-relaxed text-[#e9edff]/45`}>
+                <p className={`${FONT_MONO} mt-3 text-sm leading-relaxed text-[var(--ink)]/45`}>
                   via {active.provenance.actor_kind} {active.provenance.actor_id}
                   {active.provenance.model_ref && <> · {active.provenance.model_ref}</>}
                   {active.provenance.source_kind && (
@@ -870,7 +870,7 @@ export default function ReviewWorklist({
                   )}
                 </p>
               ) : (
-                <p className={`${FONT_MONO} mt-3 text-sm text-[#e9edff]/35`}>
+                <p className={`${FONT_MONO} mt-3 text-sm text-[var(--ink)]/35`}>
                   provenance not visible to you
                 </p>
               )}
@@ -881,7 +881,7 @@ export default function ReviewWorklist({
             </motion.article>
           ) : (
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
-              <p className={`${FONT_MONO} text-sm text-[#e9edff]/45`}>
+              <p className={`${FONT_MONO} text-sm text-[var(--ink)]/45`}>
                 Nothing focused — the rail is empty under this filter.
               </p>
             </div>
@@ -984,7 +984,7 @@ export default function ReviewWorklist({
             <span className={FONT_MONO} style={{ color: GOLD }}>
               ◉ constructive
             </span>
-            <p className={`${FONT_MONO} text-sm text-[#e9edff]/55`}>
+            <p className={`${FONT_MONO} text-sm text-[var(--ink)]/55`}>
               {cstatus === "open"
                 ? "No open contradictions — every source in phase."
                 : "Nothing under this filter."}
@@ -997,17 +997,17 @@ export default function ReviewWorklist({
               return (
                 <div key={c.id} className="px-4 py-3" style={{ borderColor: "rgba(233,237,255,0.07)" }}>
                   <div className="grid gap-1.5 md:grid-cols-2 md:gap-4">
-                    <p className="min-w-0 truncate text-sm text-[#e9edff]/85">
+                    <p className="min-w-0 truncate text-sm text-[var(--ink)]/85">
                       {c.memory_a.content ?? (
-                        <span className="text-[#e9edff]/40">(not visible to you)</span>
+                        <span className="text-[var(--ink)]/40">(not visible to you)</span>
                       )}
                     </p>
                     <p
-                      className="min-w-0 truncate text-sm text-[#e9edff]/85 md:border-l md:pl-4"
+                      className="min-w-0 truncate text-sm text-[var(--ink)]/85 md:border-l md:pl-4"
                       style={{ borderColor: withAlpha(MAGENTA, 0.18) }}
                     >
                       {c.memory_b.content ?? (
-                        <span className="text-[#e9edff]/40">(not visible to you)</span>
+                        <span className="text-[var(--ink)]/40">(not visible to you)</span>
                       )}
                     </p>
                   </div>

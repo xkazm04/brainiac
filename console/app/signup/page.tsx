@@ -29,14 +29,14 @@ export default function SignupPage() {
         >
           Give your agent a memory.
         </h1>
-        <p className={`${FONT_MONO} mt-3 mb-7 text-sm leading-relaxed text-[#e9edff]/50`}>
+        <p className={`${FONT_MONO} mt-3 mb-7 text-sm leading-relaxed text-[var(--ink)]/50`}>
           Sign in with Google and get a project of your own, plus a key your local
           agent uses to reach it. One project per account while this is free.
         </p>
 
         <SignupClient configured={configured} />
 
-        <p className={`${FONT_MONO} mt-8 text-[11px] leading-relaxed text-[#e9edff]/30`}>
+        <p className={`${FONT_MONO} mt-8 text-[11px] leading-relaxed text-[var(--ink)]/30`}>
           This is not the operator console. Signing in here creates a workspace in
           the cloud service — it does not unlock an existing deployment&apos;s
           console, which has its own gate.

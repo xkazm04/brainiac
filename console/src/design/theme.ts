@@ -87,6 +87,22 @@ export const withAlpha = (color: string, a: number): string => {
 export const bandGlow = (key: BandKey, alpha = 0.35) =>
   `hsla(${BAND_HUES[key]}, 90%, 60%, ${alpha})`;
 
+/**
+ * Warning — the third governance tone, after gamma (constructive) and magenta
+ * (contradiction). Deliberately outside the band spectrum for the same reason
+ * GROUND is: a warning is not a frequency of thought, it is a condition of the
+ * instrument. It had been spelled `#f0b429` by hand in eight places (throttled
+ * logins, revoke failures, sky-search errors, the demo-data banner) with no
+ * name attached, which is why nothing ever rendered it consistently.
+ */
+export const AMBER = "#f0b429";
+
+/**
+ * The one opaque surface. Native <select> popups and any panel that must be
+ * readable over artwork cannot use PANEL, which is a translucent wash.
+ */
+export const SURFACE_SOLID = "#0a090f";
+
 /** Brand accents (gamma = canonical/constructive; magenta = contradiction). */
 export const GOLD = band("gamma");
 export const GOLD_GLOW = bandGlow("gamma");

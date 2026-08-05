@@ -253,15 +253,15 @@ export default function StarChartView({ data }: { data: CortexData }) {
             className="mt-4 rounded-xl border p-5"
             style={{ borderColor: "hsla(46,90%,68%,0.3)", background: "hsla(46,90%,60%,0.04)" }}
           >
-            {loading && <div className={`${FONT_MONO} text-sm text-[#e9edff]/40`}>focusing…</div>}
-            {error && <div className={`${FONT_MONO} text-sm text-[#f0b429]`}>{error}</div>}
+            {loading && <div className={`${FONT_MONO} text-sm text-[var(--ink)]/40`}>focusing…</div>}
+            {error && <div className={`${FONT_MONO} text-sm text-[var(--amber)]`}>{error}</div>}
             {detail && (
               <div className="grid gap-6 lg:grid-cols-3">
                 <div className="space-y-4">
                   <div className="flex items-baseline justify-between">
                     <h2 className={`${FONT_DISPLAY} text-2xl font-semibold text-white`}>
                       {detail.canonical.name}
-                      <span className={`${FONT_MONO} ml-2 text-xs text-[#e9edff]/40`}>{detail.canonical.kind}</span>
+                      <span className={`${FONT_MONO} ml-2 text-xs text-[var(--ink)]/40`}>{detail.canonical.kind}</span>
                     </h2>
                     {/* `quiet` — text-only, and sm already matches its type
                         scale and its hover. The aria-label is new: a lone ✕
@@ -272,7 +272,7 @@ export default function StarChartView({ data }: { data: CortexData }) {
                       onClick={() => setSelected(null)}
                       aria-label="Close"
                       style={{ color: undefined }}
-                      className="text-[#e9edff]/40"
+                      className="text-[var(--ink)]/40"
                     >
                       ✕
                     </Button>

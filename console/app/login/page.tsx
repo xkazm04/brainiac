@@ -4,6 +4,7 @@ import Button from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { isMisconfigured } from "@/lib/auth";
 import {
+  AMBER,
   BG,
   FONT_DISPLAY,
   FONT_MONO,
@@ -97,7 +98,7 @@ export default async function LoginPage({
             )}
 
             {err === "throttled" && (
-              <p className={`${FONT_MONO} text-xs`} style={{ color: "#f0b429" }}>
+              <p className={`${FONT_MONO} text-xs`} style={{ color: AMBER }}>
                 Too many attempts. Wait a few minutes and try again.
               </p>
             )}

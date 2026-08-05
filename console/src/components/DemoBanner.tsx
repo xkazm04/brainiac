@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import Button from "@/components/ui/Button";
-import { band, FONT_MONO, LABEL } from "@/design/theme";
+import { AMBER, band, FONT_MONO, LABEL } from "@/design/theme";
 
 const DISMISS_KEY = "brainiac-demo-banner-dismissed";
 
@@ -26,10 +26,10 @@ export default function DemoBanner() {
         style={{ borderColor: "rgba(240,180,41,0.4)", background: "rgba(240,180,41,0.06)" }}
       >
         <div>
-          <span className={LABEL} style={{ color: "#f0b429" }}>
+          <span className={LABEL} style={{ color: AMBER }}>
             demo data
           </span>
-          <p className={`${FONT_MONO} mt-1 text-sm text-[#e9edff]/70`}>
+          <p className={`${FONT_MONO} mt-1 text-sm text-[var(--ink)]/70`}>
             The brainiac server is unreachable — these numbers are the Meridian fixture
             org. Start it (<code>brainiac-server serve</code>) and set{" "}
             <code>BRAINIAC_API_URL</code> + <code>BRAINIAC_API_TOKEN</code> to go live.

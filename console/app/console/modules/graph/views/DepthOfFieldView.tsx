@@ -41,13 +41,13 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
           size="sm"
           onClick={() => setSelected(null)}
           style={{ color: undefined }}
-          className={focused ? "text-[#e9edff]/40 hover:text-white" : "text-white"}
+          className={focused ? "text-[var(--ink)]/40 hover:text-white" : "text-white"}
         >
           org meridian
         </Button>
         {focused && (
           <>
-            <span className="text-[#e9edff]/25">▸</span>
+            <span className="text-[var(--ink)]/25">▸</span>
             <span style={{ color: GOLD }}>{selectedName ?? "…"}</span>
           </>
         )}
@@ -63,7 +63,7 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
             <div className={LABEL} style={{ color: teamColor(i, 74) }}>
               {t.name}
             </div>
-            <div className={`${FONT_MONO} mt-0.5 text-sm text-[#e9edff]/60`}>
+            <div className={`${FONT_MONO} mt-0.5 text-sm text-[var(--ink)]/60`}>
               {t.memories} memories · {t.entities} entities
             </div>
           </div>
@@ -99,12 +99,12 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
                 }}
               >
                 <div className="flex items-baseline justify-between">
-                  <span className={`${FONT_DISPLAY} text-lg font-semibold text-white group-hover:text-[#f3c74f]`}>
+                  <span className={`${FONT_DISPLAY} text-lg font-semibold text-white group-hover:text-[var(--gold)]`}>
                     {c.name}
                   </span>
-                  <span className={`${FONT_MONO} text-xs text-[#e9edff]/35`}>{c.kind}</span>
+                  <span className={`${FONT_MONO} text-xs text-[var(--ink)]/35`}>{c.kind}</span>
                 </div>
-                <div className={`${FONT_MONO} mt-2 text-xs text-[#e9edff]/50`}>
+                <div className={`${FONT_MONO} mt-2 text-xs text-[var(--ink)]/50`}>
                   {c.memories} memories
                 </div>
                 <div className="mt-2 flex gap-1.5">
@@ -135,15 +135,15 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
               transition={{ duration: 0.3 }}
               className="absolute inset-x-0 top-0 z-10"
             >
-              <div className="rounded-xl border bg-[#0a090f]/95 p-6 shadow-2xl backdrop-blur" style={{ borderColor: "hsla(46,90%,68%,0.35)" }}>
-                {loading && <div className={`${FONT_MONO} text-sm text-[#e9edff]/40`}>pulling into focus…</div>}
-                {error && <div className={`${FONT_MONO} text-sm text-[#f0b429]`}>{error}</div>}
+              <div className="rounded-xl border bg-[var(--surface-solid)]/95 p-6 shadow-2xl backdrop-blur" style={{ borderColor: "hsla(46,90%,68%,0.35)" }}>
+                {loading && <div className={`${FONT_MONO} text-sm text-[var(--ink)]/40`}>pulling into focus…</div>}
+                {error && <div className={`${FONT_MONO} text-sm text-[var(--amber)]`}>{error}</div>}
                 {detail && (
                   <div className="space-y-6">
                     <div className="flex items-baseline justify-between">
                       <h2 className={`${FONT_DISPLAY} text-3xl font-semibold tracking-tight text-white`}>
                         {detail.canonical.name}
-                        <span className={`${FONT_MONO} ml-3 text-sm text-[#e9edff]/40`}>{detail.canonical.kind} · canonical</span>
+                        <span className={`${FONT_MONO} ml-3 text-sm text-[var(--ink)]/40`}>{detail.canonical.kind} · canonical</span>
                       </h2>
                       {/* `pill` — the bordered capsule this already was. px-4
                           beats the variant's px-3.5 on stylesheet order so it
@@ -156,7 +156,7 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
                         size="sm"
                         onClick={() => setSelected(null)}
                         style={{ borderColor: undefined, color: undefined, fontSize: "0.75rem" }}
-                        className="border-white/15 px-4 text-[#e9edff]/60 hover:border-white/40 hover:text-white"
+                        className="border-white/15 px-4 text-[var(--ink)]/60 hover:border-white/40 hover:text-white"
                       >
                         esc · defocus
                       </Button>

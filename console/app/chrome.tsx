@@ -97,7 +97,7 @@ export default function Chrome() {
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-t border-white/[0.06] py-2.5">
         <nav
           aria-label="Primary"
-          className="flex flex-wrap items-stretch gap-x-5 gap-y-3 text-xs uppercase tracking-widest text-[#e9edff]/45"
+          className="flex flex-wrap items-stretch gap-x-5 gap-y-3 text-xs uppercase tracking-widest text-[var(--ink)]/45"
         >
           {NAV_GROUPS.map((g, i) => (
             <div key={g.id} className="flex items-stretch">

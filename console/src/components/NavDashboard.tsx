@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react";
 
-import { band, FONT_MONO, LABEL } from "@/design/theme";
+import { AMBER, band, FONT_MONO, LABEL } from "@/design/theme";
 
 interface Status {
   live: boolean;
@@ -86,7 +86,7 @@ export default function NavDashboard() {
   // not jump under the operator on every navigation.
   if (!status) return <span className="h-5" aria-hidden />;
 
-  const dot = status.live ? MINT : "#f0b429";
+  const dot = status.live ? MINT : AMBER;
   const waiting = status.pending + status.contradictions + status.flagged;
 
   return (

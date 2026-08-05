@@ -97,7 +97,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
         Which repos may join the org&apos;s mind.
       </h1>
 
-      {error && <div className={`${FONT_MONO} mt-3 text-sm text-[#f0b429]`}>{error}</div>}
+      {error && <div className={`${FONT_MONO} mt-3 text-sm text-[var(--amber)]`}>{error}</div>}
 
       <div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         {/* the registry */}
@@ -105,7 +105,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
           {projects.map((p) => (
             <div key={p.id} className="overflow-hidden rounded-xl border border-white/10">
               <div className="flex items-baseline justify-between border-b border-white/10 bg-white/[0.02] px-4 py-2.5">
-                <span className={`${FONT_MONO} text-sm text-[#e9edff]/85`}>{p.name}</span>
+                <span className={`${FONT_MONO} text-sm text-[var(--ink)]/85`}>{p.name}</span>
                 <span className={LABEL} style={{ color: "rgba(233,237,255,0.35)" }}>
                   {p.repos.length} repo{p.repos.length === 1 ? "" : "s"} · created {fmtAgo(p.created_at)}
                 </span>
@@ -115,7 +115,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
                   key={r.id}
                   className={`${FONT_MONO} flex items-center justify-between gap-3 border-b border-white/[0.05] px-4 py-2 text-sm`}
                 >
-                  <span className="truncate text-[#e9edff]/70">{r.remote}</span>
+                  <span className="truncate text-[var(--ink)]/70">{r.remote}</span>
                   {/* Destructive-on-hover: the magenta lives in classes because
                       an inline colour would beat the `hover:` utility, so
                       controlStyle's inline pair is cleared. */}
@@ -124,7 +124,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
                     size="xs"
                     onClick={() => onRemoveRepo(p.id, r.id)}
                     disabled={!data.live || busy !== null}
-                    className="border-white/12 px-2 py-0.5 text-[10px] uppercase tracking-widest text-[#e9edff]/40 hover:border-[#ff5da2]/60 hover:text-[#ff5da2]"
+                    className="border-white/12 px-2 py-0.5 text-[10px] uppercase tracking-widest text-[var(--ink)]/40 hover:border-[var(--magenta)]/60 hover:text-[var(--magenta)]"
                     style={{ borderColor: undefined, color: undefined }}
                   >
                     remove
@@ -132,7 +132,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
                 </div>
               ))}
               {p.repos.length === 0 && (
-                <p className={`${FONT_MONO} px-4 py-3 text-xs text-[#e9edff]/35`}>
+                <p className={`${FONT_MONO} px-4 py-3 text-xs text-[var(--ink)]/35`}>
                   no repos yet — onboarding cannot match this project until one is registered
                 </p>
               )}
@@ -197,10 +197,10 @@ export default function Projects({ data }: { data: ProjectsData }) {
               <div key={r.id} className="rounded-lg border border-white/10 p-3">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className={`${FONT_MONO} text-lg tracking-[0.2em] text-white`}>{r.user_code}</span>
-                  <span className={`${FONT_MONO} text-[10px] text-[#e9edff]/40`}>{fmtAgo(r.created_at)}</span>
+                  <span className={`${FONT_MONO} text-[10px] text-[var(--ink)]/40`}>{fmtAgo(r.created_at)}</span>
                 </div>
-                <div className={`${FONT_MONO} mt-1 truncate text-xs text-[#e9edff]/70`}>{r.remote}</div>
-                <div className={`${FONT_MONO} text-[11px] text-[#e9edff]/45`}>from {r.label}</div>
+                <div className={`${FONT_MONO} mt-1 truncate text-xs text-[var(--ink)]/70`}>{r.remote}</div>
+                <div className={`${FONT_MONO} text-[11px] text-[var(--ink)]/45`}>from {r.label}</div>
                 <div className={`${FONT_MONO} mt-1.5 text-[11px]`}>
                   {r.project_name ? (
                     <span style={{ color: GROUND }}>→ project “{r.project_name}” · key: read+write</span>
@@ -226,7 +226,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
                     size="xs"
                     onClick={() => onDecide(r.id, "deny")}
                     disabled={!data.live || busy !== null}
-                    className="border-white/12 px-3.5 text-xs text-[#e9edff]/50 hover:border-[#ff5da2]/60 hover:text-[#ff5da2]"
+                    className="border-white/12 px-3.5 text-xs text-[var(--ink)]/50 hover:border-[var(--magenta)]/60 hover:text-[var(--magenta)]"
                     style={{ borderColor: undefined, color: undefined }}
                   >
                     {busy === `deny-${r.id}` ? "denying…" : "deny"}
@@ -235,7 +235,7 @@ export default function Projects({ data }: { data: ProjectsData }) {
               </div>
             ))}
             {requests.length === 0 && (
-              <p className={`${FONT_MONO} py-6 text-center text-sm text-[#e9edff]/35`}>
+              <p className={`${FONT_MONO} py-6 text-center text-sm text-[var(--ink)]/35`}>
                 no pending pairings — developers start one with the brainiac-onboard skill
               </p>
             )}

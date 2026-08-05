@@ -27,13 +27,13 @@ function OnboardPanel({ apiUrl }: { apiUrl: string }) {
       <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
         onboard a repo — no key handling required
       </div>
-      <p className={`${FONT_MONO} mt-2 text-xs leading-relaxed text-[#e9edff]/55`}>
-        A developer runs this in their checkout, then <span className="text-[#e9edff]/80">/brainiac-onboard</span> in
+      <p className={`${FONT_MONO} mt-2 text-xs leading-relaxed text-[var(--ink)]/55`}>
+        A developer runs this in their checkout, then <span className="text-[var(--ink)]/80">/brainiac-onboard</span> in
         Claude Code. The skill pairs the repo here (approve it in the Projects module), writes a
-        project-scoped key straight into their <span className="text-[#e9edff]/80">.env</span>, and verifies the
+        project-scoped key straight into their <span className="text-[var(--ink)]/80">.env</span>, and verifies the
         round trip.
       </p>
-      <div className={`${FONT_MONO} mt-3 select-all break-all rounded-lg border border-white/15 bg-white/[0.03] p-3 text-xs text-[#e9edff]/80`}>
+      <div className={`${FONT_MONO} mt-3 select-all break-all rounded-lg border border-white/15 bg-white/[0.03] p-3 text-xs text-[var(--ink)]/80`}>
         {cmd}
       </div>
       {/* Ground-band capsule. `accent` carries the text colour; the explicit
@@ -113,8 +113,8 @@ export default function Keys({ data }: { data: KeysData }) {
                 className={`grid grid-cols-[1fr_120px_110px_120px_80px] items-center gap-3 border-b border-white/[0.05] px-4 py-2.5 text-sm ${t.revoked_at ? "opacity-40" : ""}`}
               >
                 <div className="min-w-0">
-                  <div className="truncate text-[#e9edff]/85">{t.name}</div>
-                  <div className="truncate text-[10px] tracking-wider text-[#e9edff]/35">
+                  <div className="truncate text-[var(--ink)]/85">{t.name}</div>
+                  <div className="truncate text-[10px] tracking-wider text-[var(--ink)]/35">
                     {t.prefix}
                     {t.project_name ? (
                       <span style={{ color: GROUND }}> · {t.project_name}</span>
@@ -123,15 +123,15 @@ export default function Keys({ data }: { data: KeysData }) {
                     )}
                   </div>
                 </div>
-                <span className="text-xs text-[#e9edff]/60">
+                <span className="text-xs text-[var(--ink)]/60">
                   {t.scopes.map((s) => (
                     <span key={s} className="mr-1" style={{ color: s === "admin" ? MAGENTA : undefined }}>
                       {s}
                     </span>
                   ))}
                 </span>
-                <span className="text-xs text-[#e9edff]/45">{fmtAgo(t.last_used_at)}</span>
-                <span className="text-xs text-[#e9edff]/45">{fmtAgo(t.created_at)}</span>
+                <span className="text-xs text-[var(--ink)]/45">{fmtAgo(t.last_used_at)}</span>
+                <span className="text-xs text-[var(--ink)]/45">{fmtAgo(t.created_at)}</span>
                 {t.revoked_at ? (
                   <span className={`${LABEL} text-right`} style={{ color: MAGENTA }}>
                     revoked
@@ -158,7 +158,7 @@ export default function Keys({ data }: { data: KeysData }) {
                     size="xs"
                     onClick={() => setConfirming(t.id)}
                     disabled={!data.live}
-                    className="border-white/12 px-2 py-0.5 text-right text-[10px] uppercase tracking-widest text-[#e9edff]/40 hover:border-[#ff5da2]/60 hover:text-[#ff5da2]"
+                    className="border-white/12 px-2 py-0.5 text-right text-[10px] uppercase tracking-widest text-[var(--ink)]/40 hover:border-[var(--magenta)]/60 hover:text-[var(--magenta)]"
                     style={{ borderColor: undefined, color: undefined }}
                   >
                     revoke
@@ -167,11 +167,11 @@ export default function Keys({ data }: { data: KeysData }) {
               </div>
             ))}
             {tokens.length === 0 && (
-              <p className={`${FONT_MONO} py-10 text-center text-sm text-[#e9edff]/35`}>no keys cut yet</p>
+              <p className={`${FONT_MONO} py-10 text-center text-sm text-[var(--ink)]/35`}>no keys cut yet</p>
             )}
           </div>
           {revokeError && (
-            <div className={`${FONT_MONO} mt-2 text-sm text-[#f0b429]`}>{revokeError}</div>
+            <div className={`${FONT_MONO} mt-2 text-sm text-[var(--amber)]`}>{revokeError}</div>
           )}
           <div className={`${LABEL} mt-2`} style={{ color: "rgba(233,237,255,0.3)" }}>
             {active.length} active · {revoked.length} revoked · secrets never stored, only sha256

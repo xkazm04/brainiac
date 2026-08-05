@@ -16,6 +16,8 @@
   --ink: #e9edff;
   --gold: hsla(46, 90%, 68%, 1);
   --magenta: #ff5da2;
+  --amber: #f0b429;
+  --surface-solid: #0a090f;
 }
 
 body {
@@ -41,7 +43,14 @@ body {
    2. `.focus-ring`, the explicit opt-in the shared primitives apply (FOCUS in
       src/design/theme.ts). Carries real specificity so it holds inside
       containers that suppress the baseline. */
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
+/* `[tabindex]` is narrowed to exclude -1 on purpose. A tabindex of -1 marks a
+   focus-management target — a page root or a scroll region something moves
+   focus TO — not a control the user tabbed to. Ringing those draws a box
+   around the whole worklist when a shortcut moves focus into it, which is why
+   both of them carry `outline-none` today. Custom controls that are genuinely
+   keyboard-reachable have tabindex 0 and are still covered. */
+:where(a, button, input, select, textarea, summary,
+  [tabindex]:not([tabindex="-1"])):focus-visible,
 .focus-ring:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: var(--focus-ring-offset);

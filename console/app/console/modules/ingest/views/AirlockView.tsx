@@ -88,18 +88,18 @@ export default function AirlockView({ data: initial }: { data: IngestData }) {
                   >
                     {dense ? (
                       <div className={`${FONT_MONO} flex items-baseline gap-2 text-xs`}>
-                        <span className="truncate text-[#e9edff]/75">{s.external_ref ?? `${s.kind} capture`}</span>
-                        <span className="ml-auto shrink-0 text-[10px] text-[#e9edff]/35">
+                        <span className="truncate text-[var(--ink)]/75">{s.external_ref ?? `${s.kind} capture`}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-[var(--ink)]/35">
                           {s.stuck ? <span style={{ color: MAGENTA }}>{s.status}</span> : ageLabel(s.created_at)}
                           {s.memories > 0 && <span style={{ color: ci === 3 ? band("gamma") : THETA }}> · {s.memories}</span>}
                         </span>
                       </div>
                     ) : (
                       <>
-                        <div className={`${FONT_MONO} truncate text-xs text-[#e9edff]/80`}>
+                        <div className={`${FONT_MONO} truncate text-xs text-[var(--ink)]/80`}>
                           {s.external_ref ?? `${s.kind} capture`}
                         </div>
-                        <div className={`${FONT_MONO} mt-1 text-[10px] uppercase tracking-widest text-[#e9edff]/35`}>
+                        <div className={`${FONT_MONO} mt-1 text-[10px] uppercase tracking-widest text-[var(--ink)]/35`}>
                           {s.team ?? "—"} · {ageLabel(s.created_at)}
                           {s.stuck && <span style={{ color: MAGENTA }}> · {s.status}</span>}
                           {s.memories > 0 && <span style={{ color: ci === 3 ? band("gamma") : THETA }}> · {s.memories} mem</span>}
@@ -109,7 +109,7 @@ export default function AirlockView({ data: initial }: { data: IngestData }) {
                   </motion.div>
                 ))}
                 {c.items.length === 0 && (
-                  <p className={`${FONT_MONO} pt-8 text-center text-xs text-[#e9edff]/25`}>chamber empty</p>
+                  <p className={`${FONT_MONO} pt-8 text-center text-xs text-[var(--ink)]/25`}>chamber empty</p>
                 )}
               </div>
             </div>
@@ -127,14 +127,14 @@ export default function AirlockView({ data: initial }: { data: IngestData }) {
           <div className={`${FONT_DISPLAY} mt-1 text-4xl font-semibold`} style={{ color: data.health.dead_letters > 0 ? MAGENTA : "rgba(233,237,255,0.4)" }}>
             {data.health.dead_letters}
           </div>
-          <div className={`${FONT_MONO} mt-3 space-y-1.5 text-xs text-[#e9edff]/50`}>
+          <div className={`${FONT_MONO} mt-3 space-y-1.5 text-xs text-[var(--ink)]/50`}>
             <div>queue ready: {data.health.ready}</div>
             <div>in flight: {data.health.in_flight}</div>
             <div>oldest wait: {Math.round(data.health.oldest_ready_secs)}s</div>
             <div>archived ok: {data.health.archived.ok}</div>
             <div>archived failed: {data.health.archived.failed}</div>
           </div>
-          <p className={`${FONT_MONO} mt-auto text-[10px] leading-relaxed text-[#e9edff]/30`}>
+          <p className={`${FONT_MONO} mt-auto text-[10px] leading-relaxed text-[var(--ink)]/30`}>
             requeue via <code>POST /v1/queue/dead-letters/:id/requeue</code>
             {!data.live && " · demo data"}
           </p>

@@ -69,19 +69,19 @@ export function EvidenceEdges({ detail }: { detail: CanonicalDetail }) {
       </div>
       <ul className="mt-2 space-y-1.5">
         {shown.map((e, i) => (
-          <li key={i} className={`${FONT_MONO} text-sm text-[#e9edff]/75`}>
+          <li key={i} className={`${FONT_MONO} text-sm text-[var(--ink)]/75`}>
             <span className="text-white">{e.src_name}</span>{" "}
             <em style={{ color: GOLD }}>{e.relation}</em>{" "}
             <span className="text-white">{e.dst_name}</span>
             {e.evidence && (
-              <div className="mt-0.5 truncate pl-3 text-xs text-[#e9edff]/40" title={e.evidence}>
+              <div className="mt-0.5 truncate pl-3 text-xs text-[var(--ink)]/40" title={e.evidence}>
                 ▸ {e.evidence}
               </div>
             )}
           </li>
         ))}
         {detail.edges.length === 0 && (
-          <li className={`${FONT_MONO} text-sm text-[#e9edff]/35`}>no edges recorded yet</li>
+          <li className={`${FONT_MONO} text-sm text-[var(--ink)]/35`}>no edges recorded yet</li>
         )}
       </ul>
     </div>
@@ -100,11 +100,11 @@ export function AnchoredMemories({ detail }: { detail: CanonicalDetail }) {
             <div className={LABEL} style={{ color: GOLD }}>
               {m.kind} · {m.team} · {m.status}
             </div>
-            <p className={`${FONT_MONO} mt-1 text-sm leading-snug text-[#e9edff]/80`}>{m.content}</p>
+            <p className={`${FONT_MONO} mt-1 text-sm leading-snug text-[var(--ink)]/80`}>{m.content}</p>
           </li>
         ))}
         {detail.memories.length === 0 && (
-          <li className={`${FONT_MONO} text-sm text-[#e9edff]/35`}>
+          <li className={`${FONT_MONO} text-sm text-[var(--ink)]/35`}>
             {"nothing you're cleared to read anchors here"}
           </li>
         )}
@@ -148,9 +148,9 @@ export function NeighborHops({
               paddingTop: "0.25rem",
               paddingBottom: "0.25rem",
             }}
-            className="border-white/15 text-[#e9edff]/70 hover:border-[var(--hop-edge)] hover:text-[var(--hop)]"
+            className="border-white/15 text-[var(--ink)]/70 hover:border-[var(--hop-edge)] hover:text-[var(--hop)]"
           >
-            {n.name} <span className="text-[#e9edff]/35">×{n.shared_edges}</span>
+            {n.name} <span className="text-[var(--ink)]/35">×{n.shared_edges}</span>
           </Button>
         ))}
       </div>

@@ -45,14 +45,14 @@ export default function MemoryInspector({
       {/* header facts */}
       <div className={`${FONT_MONO} flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]`}>
         <span style={{ color: statusTone(m.status) }}>{m.status}</span>
-        <span className="text-[#e9edff]/30">·</span>
+        <span className="text-[var(--ink)]/30">·</span>
         <span style={{ color: VIOLET }}>{m.kind}</span>
-        <span className="text-[#e9edff]/30">·</span>
-        <span className="text-[#e9edff]/55">{m.team} / {m.visibility}</span>
+        <span className="text-[var(--ink)]/30">·</span>
+        <span className="text-[var(--ink)]/55">{m.team} / {m.visibility}</span>
         {m.confidence != null && (
           <>
-            <span className="text-[#e9edff]/30">·</span>
-            <span className="text-[#e9edff]/55">conf {m.confidence.toFixed(2)}</span>
+            <span className="text-[var(--ink)]/30">·</span>
+            <span className="text-[var(--ink)]/55">conf {m.confidence.toFixed(2)}</span>
           </>
         )}
       </div>
@@ -65,12 +65,12 @@ export default function MemoryInspector({
           <p className={`${FONT_DISPLAY} text-xl leading-snug text-white`}>{m.title}</p>
         )}
         <p
-          className={`${FONT_DISPLAY} text-xl leading-snug ${m.title?.trim() ? "text-[#e9edff]/70" : "text-white"}`}
+          className={`${FONT_DISPLAY} text-xl leading-snug ${m.title?.trim() ? "text-[var(--ink)]/70" : "text-white"}`}
         >
           {m.content}
         </p>
       </div>
-      <div className={`${FONT_MONO} text-xs text-[#e9edff]/45`}>
+      <div className={`${FONT_MONO} text-xs text-[var(--ink)]/45`}>
         valid {fmtDate(m.valid_from)} → {m.valid_to ? fmtDate(m.valid_to) : "now"} · recorded {fmtDate(m.created_at)}
       </div>
 
@@ -90,7 +90,7 @@ export default function MemoryInspector({
                     style={{ background: current ? VIOLET : "rgba(233,237,255,0.25)" }}
                   />
                   {chain[chain.length - 1] !== c && (
-                    <span className="absolute left-[3.5px] top-5 h-full w-px bg-[#e9edff]/15" />
+                    <span className="absolute left-[3.5px] top-5 h-full w-px bg-[var(--ink)]/15" />
                   )}
                   {/* `quiet` — a text-only hop that must not compete with the
                       claim it renders. Two overrides, both deliberate:
@@ -107,7 +107,7 @@ export default function MemoryInspector({
                     onClick={() => onHop(c.id)}
                     style={{ color: undefined }}
                     className={`pb-3 text-left leading-snug disabled:cursor-default disabled:opacity-100 ${
-                      current ? "text-white" : "text-[#e9edff]/50 transition hover:text-[#c9b6ff]"
+                      current ? "text-white" : "text-[var(--ink)]/50 transition hover:text-[#c9b6ff]"
                     }`}
                   >
                     {c.content}
@@ -128,7 +128,7 @@ export default function MemoryInspector({
           provenance
         </div>
         {detail.provenance ? (
-          <p className={`${FONT_MONO} mt-1.5 text-sm text-[#e9edff]/70`}>
+          <p className={`${FONT_MONO} mt-1.5 text-sm text-[var(--ink)]/70`}>
             {detail.provenance.actor_kind}:{detail.provenance.actor_id}
             {detail.provenance.model_ref && <> · {detail.provenance.model_ref}</>}
             {detail.provenance.source_kind && (
@@ -136,7 +136,7 @@ export default function MemoryInspector({
             )}
           </p>
         ) : (
-          <p className={`${FONT_MONO} mt-1.5 text-sm text-[#e9edff]/35`}>seeded directly — no session provenance</p>
+          <p className={`${FONT_MONO} mt-1.5 text-sm text-[var(--ink)]/35`}>seeded directly — no session provenance</p>
         )}
       </div>
 
@@ -148,12 +148,12 @@ export default function MemoryInspector({
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {detail.entities.map((e) => (
-              <span key={`${e.team}-${e.name}`} className={`${FONT_MONO} rounded-full border border-white/12 px-2.5 py-0.5 text-xs text-[#e9edff]/70`}>
-                {e.name} <span className="text-[#e9edff]/35">· {e.team}</span>
+              <span key={`${e.team}-${e.name}`} className={`${FONT_MONO} rounded-full border border-white/12 px-2.5 py-0.5 text-xs text-[var(--ink)]/70`}>
+                {e.name} <span className="text-[var(--ink)]/35">· {e.team}</span>
               </span>
             ))}
             {detail.entities.length === 0 && (
-              <span className={`${FONT_MONO} text-xs text-[#e9edff]/35`}>none</span>
+              <span className={`${FONT_MONO} text-xs text-[var(--ink)]/35`}>none</span>
             )}
           </div>
         </div>
@@ -161,14 +161,14 @@ export default function MemoryInspector({
           <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
             promotion history
           </div>
-          <ul className={`${FONT_MONO} mt-2 space-y-1 text-xs text-[#e9edff]/60`}>
+          <ul className={`${FONT_MONO} mt-2 space-y-1 text-xs text-[var(--ink)]/60`}>
             {detail.promotions.map((p, i) => (
               <li key={i}>
                 {fmtDate(p.created_at)} · {p.from_status} → <span style={{ color: statusTone(p.to_status) }}>{p.to_status}</span>{" "}
-                <span className="text-[#e9edff]/35">({p.policy_decision}{p.policy_rule ? ` · ${p.policy_rule}` : ""})</span>
+                <span className="text-[var(--ink)]/35">({p.policy_decision}{p.policy_rule ? ` · ${p.policy_rule}` : ""})</span>
               </li>
             ))}
-            {detail.promotions.length === 0 && <li className="text-[#e9edff]/35">no ledger entries yet</li>}
+            {detail.promotions.length === 0 && <li className="text-[var(--ink)]/35">no ledger entries yet</li>}
           </ul>
         </div>
       </div>

@@ -53,13 +53,13 @@ export default function DemoShell({ children }: { children: React.ReactNode }) {
             className={`${FONT_MONO} flex flex-wrap items-center gap-x-5 gap-y-2 text-xs uppercase tracking-widest`}
             style={{ color: "rgba(233,237,255,0.45)" }}
           >
-            <Link href="/pitch" className="transition hover:text-[#f3c74f]">
+            <Link href="/pitch" className="transition hover:text-[var(--gold)]">
               the pitch
             </Link>
-            <Link href="/kb" className="transition hover:text-[#f3c74f]">
+            <Link href="/kb" className="transition hover:text-[var(--gold)]">
               knowledge base
             </Link>
-            <Link href="/console" className="transition hover:text-[#f3c74f]">
+            <Link href="/console" className="transition hover:text-[var(--gold)]">
               console →
             </Link>
           </nav>
@@ -76,7 +76,7 @@ export default function DemoShell({ children }: { children: React.ReactNode }) {
         <span>
           every surface here is the real console component, running on the fixture org
         </span>
-        <Link href="/pitch" className="transition hover:text-[#f3c74f]">
+        <Link href="/pitch" className="transition hover:text-[var(--gold)]">
           → why this exists
         </Link>
       </footer>

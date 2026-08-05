@@ -13,7 +13,16 @@ import { AnimatePresence, motion } from "framer-motion";
 import type { MintedToken, OrgUser, TokenPreview } from "@/lib/types";
 import Button from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
-import { band, FONT_DISPLAY, FONT_MONO, GROUND, GROUND_DIM, LABEL, MAGENTA } from "@/design/theme";
+import {
+  band,
+  FONT_DISPLAY,
+  FONT_MONO,
+  GROUND,
+  GROUND_DIM,
+  LABEL,
+  MAGENTA,
+  SURFACE_SOLID,
+} from "@/design/theme";
 
 import { demoPreview, fetchPreview, mintKey, SCOPES } from "./keys-data";
 
@@ -63,16 +72,16 @@ export function BlastRings({ preview }: { preview: TokenPreview }) {
         <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
           {preview.email} · {preview.teams.join(" + ") || "no team"}
         </div>
-        <div className="text-[#e9edff]/70">
+        <div className="text-[var(--ink)]/70">
           <span style={{ color: GROUND }}>{org}</span> org-wide
         </div>
-        <div className="text-[#e9edff]/70">
+        <div className="text-[var(--ink)]/70">
           <span style={{ color: band("alpha") }}>{team}</span> team-tier
         </div>
-        <div className="text-[#e9edff]/70">
+        <div className="text-[var(--ink)]/70">
           <span style={{ color: band("delta") }}>{priv}</span> private (their own)
         </div>
-        <div className="pt-1 text-xs text-[#e9edff]/40">{preview.visible.canonical} canonical among them</div>
+        <div className="pt-1 text-xs text-[var(--ink)]/40">{preview.visible.canonical} canonical among them</div>
       </div>
     </div>
   );
@@ -167,9 +176,9 @@ export function MintPanel({
             className={`px-3 text-xs ${
               scopes.includes(s)
                 ? s === "admin"
-                  ? "border-[#ff5da2]/70 text-[#ff5da2]"
+                  ? "border-[var(--magenta)]/70 text-[var(--magenta)]"
                   : "border-white/50 text-white"
-                : "border-white/12 text-[#e9edff]/40 hover:border-white/30"
+                : "border-white/12 text-[var(--ink)]/40 hover:border-white/30"
             }`}
             style={{ borderColor: undefined, color: undefined, background: undefined }}
           >
@@ -201,7 +210,7 @@ export function MintPanel({
         {state === "minting" ? "cutting…" : state === "error" ? "mint failed" : "◈ mint key"}
       </Button>
       {!live && (
-        <p className={`${FONT_MONO} text-xs text-[#e9edff]/35`}>demo mode — minting needs the live server</p>
+        <p className={`${FONT_MONO} text-xs text-[var(--ink)]/35`}>demo mode — minting needs the live server</p>
       )}
 
       {/* one-time secret reveal */}
@@ -220,13 +229,13 @@ export function MintPanel({
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               className="w-full max-w-lg rounded-xl border p-6"
-              style={{ borderColor: GROUND_DIM, background: "#0a090f" }}
+              style={{ borderColor: GROUND_DIM, background: SURFACE_SOLID }}
             >
               <div className={LABEL} style={{ color: GROUND }}>
                 key cut · shown exactly once
               </div>
               <h2 className={`${FONT_DISPLAY} mt-2 text-2xl font-semibold text-white`}>{minted.name}</h2>
-              <p className={`${FONT_MONO} mt-1 text-xs text-[#e9edff]/45`}>
+              <p className={`${FONT_MONO} mt-1 text-xs text-[var(--ink)]/45`}>
                 scopes: {minted.scopes.join(", ")} · this secret is not stored — copy it now.
               </p>
               <div className={`${FONT_MONO} mt-4 select-all break-all rounded-lg border border-white/15 bg-white/[0.03] p-3 text-sm text-white`}>
@@ -265,7 +274,7 @@ export function MintPanel({
                     setCopied(false);
                     onMinted();
                   }}
-                  className="border-white/15 px-4 text-[#e9edff]/60 hover:border-white/40 hover:text-white"
+                  className="border-white/15 px-4 text-[var(--ink)]/60 hover:border-white/40 hover:text-white"
                   style={{ borderColor: undefined, color: undefined }}
                 >
                   done — I stored it

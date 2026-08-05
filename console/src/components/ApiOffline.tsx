@@ -21,14 +21,14 @@ export default function ApiOffline({
       <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
         The brainiac server is not answering.
       </h1>
-      <p className={`${FONT_MONO} mt-4 text-sm leading-relaxed text-[#e9edff]/55`}>
-        Start it with <code className="text-[#f3c74f]">brainiac serve</code> and set{" "}
-        <code className="text-[#f3c74f]">BRAINIAC_API_URL</code> /{" "}
-        <code className="text-[#f3c74f]">BRAINIAC_API_TOKEN</code> for the console
+      <p className={`${FONT_MONO} mt-4 text-sm leading-relaxed text-[var(--ink)]/55`}>
+        Start it with <code className="text-[var(--gold)]">brainiac serve</code> and set{" "}
+        <code className="text-[var(--gold)]">BRAINIAC_API_URL</code> /{" "}
+        <code className="text-[var(--gold)]">BRAINIAC_API_TOKEN</code> for the console
         (console/.env.local), then reload.
       </p>
       {error && (
-        <p className={`${FONT_MONO} mt-3 text-xs text-[#e9edff]/30`}>{error}</p>
+        <p className={`${FONT_MONO} mt-3 text-xs text-[var(--ink)]/30`}>{error}</p>
       )}
       {onRetry && (
         <Button

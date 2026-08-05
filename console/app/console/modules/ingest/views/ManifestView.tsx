@@ -80,14 +80,14 @@ export default function ManifestView({ data: initial }: { data: IngestData }) {
             className={`px-3 text-xs ${
               filter === f
                 ? "border-[#7fa8f5]/70 bg-[#7fa8f5]/[0.08] text-[#a8c4f8]"
-                : "border-white/12 text-[#e9edff]/50 hover:border-white/30 hover:text-white"
+                : "border-white/12 text-[var(--ink)]/50 hover:border-white/30 hover:text-white"
             }`}
             style={{ borderColor: undefined, color: undefined, background: undefined }}
           >
             {f === "attention" ? `needs attention · ${attentionCount}` : f}
           </Button>
         ))}
-        <span className="ml-auto text-[#e9edff]/35">
+        <span className="ml-auto text-[var(--ink)]/35">
           {rows.length} / {data.sources.length} shipments · attention floats first
         </span>
       </div>
@@ -111,8 +111,8 @@ export default function ManifestView({ data: initial }: { data: IngestData }) {
               className="grid grid-cols-[1fr_110px_190px_140px] items-center gap-3 border-b border-white/[0.05] px-4 py-2.5 text-sm transition hover:bg-white/[0.02] max-sm:grid-cols-1"
             >
               <div className="min-w-0">
-                <div className="truncate text-[#e9edff]/85">{s.external_ref ?? `${s.kind} capture`}</div>
-                <div className="text-[10px] uppercase tracking-widest text-[#e9edff]/30">
+                <div className="truncate text-[var(--ink)]/85">{s.external_ref ?? `${s.kind} capture`}</div>
+                <div className="text-[10px] uppercase tracking-widest text-[var(--ink)]/30">
                   {s.team ?? "—"} · {ageLabel(s.created_at)} ago
                   {(s.attempts ?? 0) > 0 && <span style={{ color: MAGENTA }}> · attempt {s.attempts}</span>}
                 </div>
@@ -140,7 +140,7 @@ export default function ManifestView({ data: initial }: { data: IngestData }) {
                   </span>
                 ))}
               </div>
-              <span className="text-right text-xs text-[#e9edff]/55">
+              <span className="text-right text-xs text-[var(--ink)]/55">
                 {s.memories} mem · {s.promoted}↑{s.pending_review > 0 && <span style={{ color: THETA }}> · {s.pending_review} review</span>}
               </span>
             </motion.div>
@@ -154,19 +154,19 @@ export default function ManifestView({ data: initial }: { data: IngestData }) {
           <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>depot log · pipeline runs</div>
           <ul className={`${FONT_MONO} mt-2 space-y-1.5 text-xs`}>
             {data.runs.slice(0, 8).map((r) => (
-              <li key={r.id} className="flex items-baseline gap-2 text-[#e9edff]/60">
+              <li key={r.id} className="flex items-baseline gap-2 text-[var(--ink)]/60">
                 <span style={{ color: r.status === "ok" ? THETA : MAGENTA }}>{r.status === "ok" ? "●" : "✕"}</span>
-                <span className="text-[#e9edff]/80">{r.stage}</span>
+                <span className="text-[var(--ink)]/80">{r.stage}</span>
                 <span className="truncate">{r.detail ?? ""}</span>
-                <span className="ml-auto shrink-0 text-[#e9edff]/30">{r.duration_secs}s · {ageLabel(r.started_at)}</span>
+                <span className="ml-auto shrink-0 text-[var(--ink)]/30">{r.duration_secs}s · {ageLabel(r.started_at)}</span>
               </li>
             ))}
-            {data.runs.length === 0 && <li className="text-[#e9edff]/35">no runs recorded — is the worker running?</li>}
+            {data.runs.length === 0 && <li className="text-[var(--ink)]/35">no runs recorded — is the worker running?</li>}
           </ul>
         </div>
         <div className={`${FONT_MONO} rounded-xl border border-white/10 bg-white/[0.015] p-4 text-sm`}>
           <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>dock status</div>
-          <div className="mt-2 grid grid-cols-2 gap-y-1.5 text-[#e9edff]/70">
+          <div className="mt-2 grid grid-cols-2 gap-y-1.5 text-[var(--ink)]/70">
             <span>waiting at dock</span><span style={{ color: data.health.ready > 3 ? MAGENTA : THETA }}>{data.health.ready}</span>
             <span>being unloaded</span><span>{data.health.in_flight}</span>
             <span>delivered ok</span><span>{data.health.archived.ok}</span>

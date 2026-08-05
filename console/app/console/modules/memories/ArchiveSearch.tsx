@@ -50,7 +50,7 @@ export default function ArchiveSearch({
         }}
         placeholder="search titles, claims, services, teams…"
         aria-label="Search the archive"
-        className={`${FONT_MONO} min-w-0 flex-1 bg-transparent text-sm text-white placeholder:text-[#e9edff]/25`}
+        className={`${FONT_MONO} min-w-0 flex-1 bg-transparent text-sm text-white placeholder:text-[var(--ink)]/25`}
       />
       {value && (
         <>
