@@ -28,6 +28,7 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   type BandKey,
@@ -376,10 +377,22 @@ export default function StandardsVariantMatrix({ data }: { data: PracticeDiverge
                       className="sticky left-0 z-10 p-0 text-left font-normal"
                       style={{ ...stickyBg(wash), borderBottom: `1px solid ${BORDER}` }}
                     >
-                      <button
-                        type="button"
+                      {/* The frozen practice column is a selectable list row —
+                          `row` is exactly that variant. `selected` carries the
+                          aria-pressed the grid never announced; its wash is
+                          suppressed because the <th> already paints the
+                          selection behind the sticky cell, and two washes
+                          stacked read as a seam. */}
+                      <Button
+                        variant="row"
+                        size="sm"
+                        selected={on}
                         onClick={() => setSel(i)}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-white/[0.04]"
+                        style={{
+                          paddingLeft: "0.75rem",
+                          paddingRight: "0.75rem",
+                          background: undefined,
+                        }}
                         title={r.d.practice}
                       >
                         {/* The lane read survives a horizontal scroll, which is
@@ -398,7 +411,7 @@ export default function StandardsVariantMatrix({ data }: { data: PracticeDiverge
                         >
                           {r.d.practice}
                         </span>
-                      </button>
+                      </Button>
                     </th>
 
                     {roster.map((t) => {
@@ -413,11 +426,26 @@ export default function StandardsVariantMatrix({ data }: { data: PracticeDiverge
                           }}
                         >
                           {has ? (
-                            <button
-                              type="button"
+                            /* A square hit area around a glyph — `icon`, the
+                               one variant that REQUIRES an aria-label, which
+                               this cell already carried (it is the only thing
+                               naming which team/practice a coloured square
+                               belongs to). Radius is squared off and the cell's
+                               own padding kept, so the field still reads as a
+                               grid rather than a row of chips. */
+                            <Button
+                              variant="icon"
+                              size="sm"
                               onClick={() => setSel(i)}
                               aria-label={`${r.d.practice} — ${t}'s approach, ${r.d.impact} impact`}
-                              className="flex h-full w-full items-center justify-center px-2 py-1.5 transition hover:bg-white/[0.05]"
+                              className="h-full w-full"
+                              style={{
+                                borderRadius: 0,
+                                paddingLeft: "0.5rem",
+                                paddingRight: "0.5rem",
+                                paddingTop: "0.375rem",
+                                paddingBottom: "0.375rem",
+                              }}
                             >
                               <span
                                 aria-hidden
@@ -428,7 +456,7 @@ export default function StandardsVariantMatrix({ data }: { data: PracticeDiverge
                                   boxShadow: hue.glow ? `0 0 9px ${hue.glow}` : undefined,
                                 }}
                               />
-                            </button>
+                            </Button>
                           ) : (
                             <span
                               aria-hidden

@@ -11,6 +11,7 @@
 
 import { useState, useTransition } from "react";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   BORDER,
@@ -18,6 +19,7 @@ import {
   INK,
   INK_DIM,
   LABEL,
+  MAGENTA,
   withAlpha,
 } from "@/design/theme";
 
@@ -57,24 +59,29 @@ export default function ApproveRevision({
             still shows the published revision
           </p>
         </div>
-        <button
-          type="button"
+        {/* The one gate on this layer. px-5 py-2 text-sm is exactly the `pill`
+            md bucket, so all that stays local is the edge alpha; the disabled
+            treatment (which this banner leans on twice — while publishing, and
+            forever after it has published) now comes from the primitive. */}
+        <Button
+          variant="pill"
+          size="md"
+          accent={accent}
           disabled={pending || result?.ok === true}
           onClick={() =>
             start(async () => {
               setResult(await approve(revisionId));
             })
           }
-          className={`${FONT_MONO} rounded-full border px-5 py-2 text-sm transition hover:bg-white/5 disabled:opacity-50`}
-          style={{ borderColor: withAlpha(accent, 0.47), color: accent }}
+          style={{ borderColor: withAlpha(accent, 0.47) }}
         >
           {pending ? "publishing…" : result?.ok ? "published" : "approve & publish"}
-        </button>
+        </Button>
       </div>
       {result && (
         <p
           className={`${FONT_MONO} mt-3 border-t pt-3 text-[12px]`}
-          style={{ borderColor: BORDER, color: result.ok ? band("beta") : "#ff5da2" }}
+          style={{ borderColor: BORDER, color: result.ok ? band("beta") : MAGENTA }}
         >
           {result.message}
         </p>

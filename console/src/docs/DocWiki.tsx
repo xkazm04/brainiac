@@ -31,6 +31,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import Link from "next/link";
 
+import Button from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import {
   band,
   BORDER,
@@ -53,7 +55,16 @@ const GOLD_GLOW = band("gamma", 60, 0.35);
 const REVIEW = band("gamma");
 const DIRTY = band("theta");
 
-const CHIP = `${FONT_MONO} shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-[0.14em] transition`;
+/* The chips and the rail rows are `Button`s now (variant pill / row), so the
+ * capsule, the cursor, the disabled treatment and — the part that was missing —
+ * the keyboard focus ring all come from the primitive. What stays local is the
+ * geometry the shared size buckets do not have: this module's chips are py-0.5
+ * where `pill` is py-1, and the rail is py-1.5 where `row` is py-1. Those
+ * overrides ride in `style` rather than `className` on purpose — Tailwind
+ * resolves two competing padding utilities by stylesheet order, not by the
+ * order they appear in a className, which is the same trap `fullWidth`
+ * documents in control-styles.ts. */
+const CHIP_PAD = { paddingTop: "0.125rem", paddingBottom: "0.125rem" } as const;
 const META = `${FONT_MONO} text-[11px] uppercase tracking-[0.14em]`;
 
 const when = (iso: string): string =>
@@ -175,21 +186,27 @@ export default function DocWiki({ data }: DocWikiProps) {
           const n = tabCounts[t.id];
           const on = tab === t.id;
           return (
-            <button
+            <Button
               key={t.id}
-              type="button"
+              variant="pill"
+              size="xs"
+              // `selected` is what emits aria-pressed, so the toggle announces
+              // itself; the tint/edge come from the accent, not from hand-rolled
+              // borderColor arithmetic.
+              accent={on ? t.accent : undefined}
+              selected={on}
               onClick={() => pickTab(t.id)}
-              aria-pressed={on}
-              className={`${CHIP} ${on ? "" : "border-white/15 hover:border-white/40"}`}
+              className={`shrink-0 uppercase tracking-[0.14em] ${on ? "" : "border-white/15 hover:border-white/40"}`}
+              // Off-state hands borderColor back to the classNames: an inline
+              // colour would beat `hover:border-white/40` and the chip would
+              // stop responding to the pointer.
               style={
-                on
-                  ? { color: t.accent, borderColor: withAlpha(t.accent, 0.55), background: withAlpha(t.accent, 0.1) }
-                  : { color: n === 0 ? FAINT : DIM }
+                on ? CHIP_PAD : { ...CHIP_PAD, borderColor: undefined, color: n === 0 ? FAINT : DIM }
               }
             >
               {t.label}
               {t.id !== "all" && <span className="ml-2 tabular-nums">{n}</span>}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -208,17 +225,28 @@ export default function DocWiki({ data }: DocWikiProps) {
           transition={{ duration: 0.3 }}
           className="lg:sticky lg:top-4 lg:self-start"
         >
-          <label className={LABEL} style={{ color: FAINT }} htmlFor="wiki-q">
-            search pages
-          </label>
-          <input
+          {/* `label` on the primitive is the same LABEL/INK_FAINT caption this
+              used to render by hand, wired to the input's id for free.
+              This field used to smuggle GOLD in through a `--gold` custom
+              property purely so a `focus:border-[var(--gold)]` utility had
+              something to reach — next to an `outline-none` that removed the
+              KEYBOARD ring along with the pointer one. Both are gone: the ring
+              is `.focus-ring`, which sits outside Tailwind's cascade layers and
+              cannot be suppressed by a stray utility. */}
+          <Input
             id="wiki-q"
             key={q ?? ""}
+            label="search pages"
             defaultValue={q ?? ""}
             onChange={(e) => onSearch(e.target.value)}
             placeholder="gateway, chargeback, psp…"
-            className={`${FONT_MONO} mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1.5 text-sm outline-none transition placeholder:text-[#e9edff]/25 focus:border-[var(--gold)]`}
-            style={{ color: INK, "--gold": GOLD } as React.CSSProperties}
+            style={{
+              color: INK,
+              paddingLeft: "0.625rem",
+              paddingRight: "0.625rem",
+              paddingTop: "0.375rem",
+              paddingBottom: "0.375rem",
+            }}
           />
 
           <div className="mt-4 flex items-baseline justify-between gap-2">
@@ -226,14 +254,15 @@ export default function DocWiki({ data }: DocWikiProps) {
               spaces
             </span>
             {activeSpace && (
-              <button
-                type="button"
+              <Button
+                variant="quiet"
+                size="xs"
+                accent={GOLD}
                 onClick={clearSpace}
-                className={`${META} underline underline-offset-4 transition hover:brightness-125`}
-                style={{ color: GOLD }}
+                className="uppercase tracking-[0.14em] underline underline-offset-4 hover:brightness-125"
               >
                 all spaces
-              </button>
+              </Button>
             )}
           </div>
 
@@ -296,27 +325,29 @@ export default function DocWiki({ data }: DocWikiProps) {
                 </span>
                 {pages > 1 && (
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
+                    <Button
+                      variant="pill"
+                      size="xs"
                       onClick={() => gotoPage(page - 1)}
                       disabled={page <= 0}
-                      className={`${CHIP} ${page <= 0 ? "border-transparent" : "border-white/25 hover:border-white/60"}`}
-                      style={{ color: page <= 0 ? FAINT : INK }}
+                      className={`shrink-0 uppercase tracking-[0.14em] ${page <= 0 ? "border-transparent" : "border-white/25 hover:border-white/60"}`}
+                      style={{ ...CHIP_PAD, color: page <= 0 ? FAINT : INK, borderColor: undefined }}
                     >
                       ← prev
-                    </button>
+                    </Button>
                     <span className={META} style={{ color: FAINT }}>
                       page {page + 1} / {pages}
                     </span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="pill"
+                      size="xs"
                       onClick={() => gotoPage(page + 1)}
                       disabled={page >= pages - 1}
-                      className={`${CHIP} ${page >= pages - 1 ? "border-transparent" : "border-white/25 hover:border-white/60"}`}
-                      style={{ color: page >= pages - 1 ? FAINT : INK }}
+                      className={`shrink-0 uppercase tracking-[0.14em] ${page >= pages - 1 ? "border-transparent" : "border-white/25 hover:border-white/60"}`}
+                      style={{ ...CHIP_PAD, color: page >= pages - 1 ? FAINT : INK, borderColor: undefined }}
                     >
                       next →
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -336,14 +367,25 @@ export default function DocWiki({ data }: DocWikiProps) {
 function Folder({ space, open, onPick }: { space: DocFacet; open: boolean; onPick: () => void }) {
   return (
     <li>
-      <button
-        type="button"
+      {/* `row` is the variant for exactly this — a full-width, left-aligned
+          selectable list row — and it is the family the old code most often
+          left invisible to the keyboard. The closed state keeps its own
+          transparent edge and hover border (the accent's default 0.4 rim would
+          paint a gold outline on every space in the rail), so borderColor is
+          handed back to the classNames by setting it undefined here. */}
+      <Button
+        variant="row"
+        size="xs"
+        selected={open}
         onClick={onPick}
-        aria-pressed={open}
-        className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left transition ${
-          open ? "" : "border-transparent hover:border-white/15 hover:bg-white/[0.03]"
-        }`}
-        style={open ? { borderColor: withAlpha(GOLD, 0.55), background: withAlpha(GOLD, 0.09) } : undefined}
+        className={`border ${open ? "" : "border-transparent hover:border-white/15"}`}
+        style={{
+          paddingTop: "0.375rem",
+          paddingBottom: "0.375rem",
+          ...(open
+            ? { borderColor: withAlpha(GOLD, 0.55), background: withAlpha(GOLD, 0.09) }
+            : { borderColor: undefined }),
+        }}
       >
         <span className={`${FONT_MONO} w-2 shrink-0 text-sm`} style={{ color: open ? GOLD : FAINT }}>
           {open ? "▸" : "·"}
@@ -354,7 +396,7 @@ function Folder({ space, open, onPick }: { space: DocFacet; open: boolean; onPic
         <span className={`${META} w-6 shrink-0 text-right tabular-nums`} style={{ color: FAINT }}>
           {space.count}
         </span>
-      </button>
+      </Button>
     </li>
   );
 }
@@ -387,10 +429,16 @@ function Directory({
     >
       {spaces.map((s) => (
         <li key={s.value}>
-          <button
-            type="button"
+          {/* `quiet` is the shapeless variant, which is what a card wants: the
+              tile owns its own geometry (rounded-xl, p-4, the panel wash), and
+              what it takes from the primitive is the focus ring and the
+              cursor/disabled contract. `row` would impose flex + gap + a
+              capsule radius and reflow the two lines inside. */}
+          <Button
+            variant="quiet"
+            size="md"
             onClick={() => onPick(s.value)}
-            className="w-full rounded-xl border p-4 text-left transition hover:border-white/25 hover:bg-white/[0.03]"
+            className="w-full rounded-xl border p-4 text-left hover:border-white/25 hover:bg-white/[0.03]"
             style={{ background: PANEL, borderColor: BORDER }}
           >
             <div className="flex items-baseline justify-between gap-2">
@@ -406,7 +454,7 @@ function Directory({
                 {s.count === 1 ? "page" : "pages"}
               </span>
             </div>
-          </button>
+          </Button>
         </li>
       ))}
     </motion.ul>

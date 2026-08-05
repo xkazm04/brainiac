@@ -21,7 +21,9 @@
 
 import { useEffect, useState } from "react";
 
-import { FONT_MONO, LABEL } from "./theme";
+import Button from "@/components/ui/Button";
+
+import { LABEL } from "./theme";
 
 export interface VariantDef {
   id: string;
@@ -97,22 +99,30 @@ export default function PrototypeSwitcher({
         <span className={`${LABEL} px-3`} style={{ color: "rgba(233,237,255,0.3)" }}>
           prototype
         </span>
+        {/* These are capsules WITHOUT a rim — the bar itself is the border, and
+            a `pill`'s edge would draw a second one inside it. So `quiet`, the
+            variant that imposes no shape, plus this bar's own radius/padding.
+            `selected` earns the aria-pressed the switcher never emitted; the
+            selected colour stays the flat white/wash pair the bar was designed
+            around. */}
         {variants.map((v) => {
           const on = v.id === variant;
           return (
-            <button
+            <Button
               key={v.id}
-              type="button"
+              variant="quiet"
+              size="sm"
+              selected={on}
               onClick={() => onVariant(v.id)}
               title={v.blurb}
-              className={`${FONT_MONO} cursor-pointer rounded-full px-3.5 py-1.5 text-xs transition`}
+              className="rounded-full px-3.5 py-1.5"
               style={{
                 background: on ? "rgba(233,237,255,0.10)" : "transparent",
                 color: on ? "#fff" : "rgba(233,237,255,0.5)",
               }}
             >
               {v.name}
-            </button>
+            </Button>
           );
         })}
 
@@ -123,18 +133,20 @@ export default function PrototypeSwitcher({
           { on: false, label: smallLabel },
           { on: true, label: largeLabel },
         ].map((s) => (
-          <button
+          <Button
             key={String(s.on)}
-            type="button"
+            variant="quiet"
+            size="xs"
+            selected={large === s.on}
             onClick={() => onScale(s.on)}
-            className={`${FONT_MONO} cursor-pointer rounded-full px-3 py-1.5 text-[11px] transition`}
+            className="rounded-full px-3 py-1.5"
             style={{
               background: large === s.on ? "rgba(233,237,255,0.10)" : "transparent",
               color: large === s.on ? "#fff" : "rgba(233,237,255,0.45)",
             }}
           >
             {s.label}
-          </button>
+          </Button>
         ))}
       </div>
 

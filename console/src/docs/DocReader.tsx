@@ -26,6 +26,7 @@
 
 import { useState } from "react";
 
+import Button from "@/components/ui/Button";
 import {
   band,
   BORDER,
@@ -78,23 +79,31 @@ function Cite({ node, ctx, k }: { node: Extract<InlineNode, { t: "cite" }>; ctx:
   const isOpen = ctx.open === k;
   return (
     <span className="relative inline-block align-baseline">
-      <button
-        type="button"
+      {/* A provenance marker sits INSIDE a sentence, superscript, at 10px — no
+          capsule and no hit-area padding, or it would push the line apart. So
+          it takes `quiet` (the variant that imposes no shape) and keeps its own
+          rim, and what it gains from the primitive is the focus ring: this is a
+          real control on every page of the wiki, and keyboard operators could
+          not see which citation they were on. */}
+      <Button
+        variant="quiet"
+        size="xs"
         aria-expanded={isOpen}
         aria-label={
           mem ? `Source ${node.n}: ${mem.kind} owned by ${mem.team ?? "org"}` : "Unresolved source"
         }
         onClick={() => ctx.setOpen(isOpen ? null : k)}
         onMouseEnter={() => ctx.setOpen(k)}
-        className={`${FONT_MONO} mx-[2px] cursor-pointer rounded-[4px] border px-[5px] align-super text-[10px] leading-[15px] transition hover:brightness-125`}
+        className="mx-[2px] rounded-[4px] border px-[5px] align-super leading-[15px] hover:brightness-125"
         style={{
+          fontSize: "10px",
           color: accent,
           borderColor: withAlpha(accent, 0.33),
           background: isOpen ? withAlpha(accent, 0.13) : "transparent",
         }}
       >
         {mem ? node.n : "?"}
-      </button>
+      </Button>
       {isOpen && (
         <span
           role="tooltip"

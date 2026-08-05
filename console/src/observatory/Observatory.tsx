@@ -26,6 +26,7 @@ import {
   YAxis,
 } from "recharts";
 
+import Button from "@/components/ui/Button";
 import { band, bandGlow, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
 import type { DemandView, ObservatoryData } from "./observatory-data";
@@ -332,20 +333,35 @@ export default function Observatory({ data }: { data: ObservatoryData }) {
                 Kind × {axis}
               </h2>
               <div className="flex gap-1">
+                {/* The axis switch is a `pill` toggle; `selected` is what emits
+                    aria-pressed. Its own two-tone edge is kept rather than the
+                    accent-derived one — the wall's toggles read by border
+                    brightness alone, and the primitive's selected state adds a
+                    background wash this tile header does not want. Setting the
+                    three colour keys undefined hands them back to the
+                    classNames. */}
                 {(["team", "project"] as const).map((a) => (
-                  <button
+                  <Button
                     key={a}
-                    type="button"
+                    variant="pill"
+                    size="xs"
+                    selected={axis === a}
                     onClick={() => setAxis(a)}
-                    aria-pressed={axis === a}
-                    className={`${FONT_MONO} rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-[0.12em] transition ${
+                    className={`uppercase tracking-[0.12em] ${
                       axis === a
                         ? "border-white/40 text-white"
                         : "border-white/10 text-white/35 hover:border-white/25"
                     }`}
+                    style={{
+                      paddingTop: "0.125rem",
+                      paddingBottom: "0.125rem",
+                      borderColor: undefined,
+                      color: undefined,
+                      background: undefined,
+                    }}
                   >
                     {a}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>

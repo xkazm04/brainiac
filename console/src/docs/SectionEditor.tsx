@@ -21,6 +21,8 @@
 
 import { useState, useTransition } from "react";
 
+import Button from "@/components/ui/Button";
+import { Input, Textarea } from "@/components/ui/Input";
 import {
   band,
   BORDER,
@@ -67,14 +69,28 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
 
   if (!open) {
     return (
-      <button
-        type="button"
+      // The affordance that declares the mode. It is a `pill` at its own
+      // micro-scale — the shared xs bucket is py-1/10.5px, this one has always
+      // been py-[3px]/10px — so the geometry rides in `style`, where a value
+      // cannot lose a Tailwind stylesheet-order coin toss to the bucket's own
+      // padding utility.
+      <Button
+        variant="pill"
+        size="xs"
+        accent={accent}
         onClick={() => setOpen(true)}
-        className={`${FONT_MONO} mt-2 rounded-full border px-3 py-[3px] text-[10px] uppercase tracking-[0.14em] transition hover:bg-white/5`}
-        style={{ color: accent, borderColor: withAlpha(accent, 0.33) }}
+        className="mt-2 uppercase tracking-[0.14em]"
+        style={{
+          fontSize: "10px",
+          paddingLeft: "0.75rem",
+          paddingRight: "0.75rem",
+          paddingTop: "3px",
+          paddingBottom: "3px",
+          borderColor: withAlpha(accent, 0.33),
+        }}
       >
         {composed ? "propose a change" : "edit this prose"}
-      </button>
+      </Button>
     );
   }
 
@@ -107,23 +123,31 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
           <p className={`${FONT_MONO} mt-2 text-[12px]`} style={{ color: INK_DIM }}>
             {copy.next}
           </p>
-          <button
-            type="button"
+          <Button
+            variant="quiet"
+            size="xs"
+            accent={INK_FAINT}
             onClick={() => {
               setResult(null);
               setContent("");
               setNote("");
               setOpen(false);
             }}
-            className={`${FONT_MONO} mt-4 text-[11px] underline underline-offset-4`}
-            style={{ color: INK_FAINT }}
+            className="mt-4 underline underline-offset-4"
           >
             close
-          </button>
+          </Button>
         </div>
       ) : (
         <>
-          <textarea
+          {/* Both fields carried `outline-none`, which strips the keyboard ring
+              along with the pointer one — on the two controls in this module a
+              maintainer actually types into. The primitives carry `.focus-ring`
+              instead, and it lives outside Tailwind's cascade layers so no
+              stray utility can suppress it again. The dark inset wash, the
+              border and the type scale are this editor's own and stay in
+              `style`, on top of the field chrome. */}
+          <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={8}
@@ -133,10 +157,16 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
                 ? "Write the section as it should read. What you write is read for the knowledge in it, not pasted onto the page."
                 : "Write the section as it should read. It goes onto the page as typed."
             }
-            className={`${FONT_MONO} mt-4 w-full rounded-lg border p-3 text-[13px] leading-relaxed outline-none`}
-            style={{ background: "rgba(0,0,0,0.25)", borderColor: BORDER, color: INK }}
+            className="mt-4"
+            style={{
+              padding: "0.75rem",
+              fontSize: "13px",
+              background: "rgba(0,0,0,0.25)",
+              borderColor: BORDER,
+              color: INK,
+            }}
           />
-          <input
+          <Input
             value={note}
             onChange={(e) => setNote(e.target.value)}
             aria-label="why this changed"
@@ -145,31 +175,42 @@ export default function SectionEditor({ section, edit }: SectionEditorProps) {
                 ? "why did this change? (optional — but 'why' is the one thing a diff cannot recover)"
                 : "note (optional)"
             }
-            className={`${FONT_MONO} mt-2 w-full rounded-lg border px-3 py-2 text-[12px] outline-none`}
-            style={{ background: "rgba(0,0,0,0.25)", borderColor: BORDER, color: INK }}
+            className="mt-2"
+            style={{
+              paddingLeft: "0.75rem",
+              paddingRight: "0.75rem",
+              fontSize: "12px",
+              background: "rgba(0,0,0,0.25)",
+              borderColor: BORDER,
+              color: INK,
+            }}
           />
           <div className="mt-4 flex items-center gap-4">
-            <button
-              type="button"
+            {/* px-5 py-2 text-sm IS the `pill` md bucket — nothing to override
+                but the edge alpha this module chose. */}
+            <Button
+              variant="pill"
+              size="md"
+              accent={accent}
               disabled={pending || content.trim().length === 0}
               onClick={() =>
                 start(async () => {
                   setResult(await edit(section.id, content.trim(), note.trim()));
                 })
               }
-              className={`${FONT_MONO} rounded-full border px-5 py-2 text-sm transition hover:bg-white/5 disabled:opacity-40`}
-              style={{ borderColor: withAlpha(accent, 0.47), color: accent }}
+              style={{ borderColor: withAlpha(accent, 0.47) }}
             >
               {pending ? intent.cta_pending : intent.cta}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="quiet"
+              size="xs"
+              accent={INK_FAINT}
               onClick={() => setOpen(false)}
-              className={`${FONT_MONO} text-[11px] underline underline-offset-4`}
-              style={{ color: INK_FAINT }}
+              className="underline underline-offset-4"
             >
               cancel
-            </button>
+            </Button>
           </div>
           {result && !result.ok && (
             <p className={`${FONT_MONO} mt-3 text-[12px]`} style={{ color: MAGENTA }}>

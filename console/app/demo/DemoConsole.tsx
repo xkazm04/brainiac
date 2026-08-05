@@ -40,7 +40,8 @@ import type { DisputeData } from "../console/modules/disputes/disputes-data";
 import Archive from "../console/modules/memories/Archive";
 import type { ArchiveData } from "../console/modules/memories/archive-data";
 
-import { band, FONT_MONO, GOLD } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { band, BORDER, GOLD, withAlpha } from "@/design/theme";
 import type { ContradictionQueueItem, PromotionQueueItem } from "@/lib/governance-api";
 import type { KnowledgeHealth, PracticeDivergences } from "@/lib/types";
 import DemoStandards from "./DemoStandards";
@@ -275,18 +276,26 @@ export default function DemoConsole({ data }: { data: DemoData }) {
         {MODULES.map((m) => {
           const on = m.id === active;
           return (
-            <button
+            /* A tab, not a toggle — the pressed state is `aria-selected` inside
+               the tablist, so this deliberately does NOT pass `selected` (which
+               would emit a contradicting aria-pressed). `quiet` because the tab
+               keeps its own square-ish rounded-lg rim rather than a capsule.
+               The gold edge and wash used to be hand-spelled hsla literals that
+               happened to equal the gamma band; they are the tokens now, so a
+               palette change reaches them. */
+            <Button
               key={m.id}
-              type="button"
+              variant="quiet"
+              size="sm"
               role="tab"
               aria-selected={on}
               aria-controls="demo-panel"
               title={m.blurb}
               onClick={() => go(m.id)}
-              className={`${FONT_MONO} cursor-pointer rounded-lg border px-3 py-2 text-xs transition`}
+              className="rounded-lg border px-3 py-2"
               style={{
-                borderColor: on ? "hsla(46,90%,68%,0.45)" : "rgba(233,237,255,0.10)",
-                background: on ? "hsla(46,90%,60%,0.07)" : "transparent",
+                borderColor: on ? withAlpha(GOLD, 0.45) : BORDER,
+                background: on ? band("gamma", 60, 0.07) : "transparent",
                 color: on ? GOLD : "rgba(233,237,255,0.6)",
               }}
             >
@@ -299,7 +308,7 @@ export default function DemoConsole({ data }: { data: DemoData }) {
               >
                 {m.blurb}
               </span>
-            </button>
+            </Button>
           );
         })}
       </div>

@@ -25,6 +25,8 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import {
   band,
   type BandKey,
@@ -133,19 +135,25 @@ function Chip({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
+    /* A filter chip, but square-cornered rather than a capsule — the lanes read
+       as a strip, not as a row of pills — so it takes `quiet` (no imposed
+       shape) and keeps its own rim and wash, which are per-hue and not
+       derivable from a single accent. `selected` is what emits aria-pressed. */
+    <Button
+      variant="quiet"
+      size="xs"
+      selected={on}
       onClick={onClick}
-      aria-pressed={on}
-      className={`${FONT_MONO} rounded-md px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] transition`}
+      className="rounded-md border px-2.5 py-1 uppercase tracking-[0.14em]"
       style={{
+        fontSize: "10px",
         color: on ? hue.line : INK_FAINT,
-        border: `1px solid ${on ? hue.edge : BORDER}`,
+        borderColor: on ? hue.edge : BORDER,
         background: on ? hue.wash : "transparent",
       }}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -167,12 +175,21 @@ function BenchRow({
 
   return (
     <div style={{ borderTop: `1px solid ${BORDER}` }}>
-      <button
-        type="button"
+      {/* The row IS the control — `row` is the variant named for it, and the
+          family this board most needed a visible focus ring on, since a lead
+          works top-down through sixty of them. The bench's own px-4/gap-3 are
+          wider than the shared md bucket, so they ride in `style`. */}
+      <Button
+        variant="row"
+        size="md"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-white/[0.03]"
-        style={{ background: open ? accent.wash : "transparent" }}
+        style={{
+          gap: "0.75rem",
+          paddingLeft: "1rem",
+          paddingRight: "1rem",
+          background: open ? accent.wash : "transparent",
+        }}
       >
         <span
           aria-hidden
@@ -210,7 +227,7 @@ function BenchRow({
         >
           {open ? "−" : "+"}
         </span>
-      </button>
+      </Button>
 
       <AnimatePresence initial={false}>
         {open && (
@@ -275,14 +292,20 @@ function BenchRow({
               )}
 
               <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
+                {/* Permanently disabled by design, and the sentence beside it
+                    is the explanation — so it keeps opacity 1. INK_FAINT on a
+                    dashed rim already reads as "not available"; stacking the
+                    primitive's disabled 40% on top of a 0.35-alpha ink would
+                    take the label below legibility. */}
+                <Button
+                  variant="quiet"
+                  size="md"
                   disabled
-                  className={`${FONT_MONO} shrink-0 cursor-not-allowed rounded-md px-3 py-1.5 text-sm`}
-                  style={{ color: INK_FAINT, border: `1px dashed ${BORDER}` }}
+                  className="shrink-0 rounded-md border border-dashed px-3 py-1.5"
+                  style={{ opacity: 1, color: INK_FAINT, borderColor: BORDER }}
                 >
                   ratify as standard
-                </button>
+                </Button>
                 <span className="min-w-0 flex-1 text-sm leading-snug" style={{ color: INK_FAINT }}>
                   Not wired in this board yet — the server does record a ratification
                   (<code>POST /v1/library/divergences/{"{id}"}/ratify</code>, maintainer-gated, which
@@ -415,13 +438,26 @@ export default function StandardsVariantBoard({ data }: { data: PracticeDivergen
             className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl px-4 py-3"
             style={{ background: PANEL, border: `1px solid ${BORDER}` }}
           >
-            <input
+            {/* `fullWidth={false}` because the caller owns the width here
+                (w-full below sm, w-64 above) — the flag exists so a baked-in
+                w-full cannot win a stylesheet-order coin toss against it. The
+                xs bucket already is px-3 py-1.5 rounded-md; only the type scale
+                differs, and `outline-none` — which removed the keyboard ring —
+                is gone. */}
+            <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="search practices and summaries"
               placeholder="search practice or summary…"
-              className={`${FONT_MONO} w-full min-w-0 rounded-md border px-3 py-1.5 text-sm outline-none sm:w-64`}
-              style={{ background: "rgba(0,0,0,0.25)", borderColor: BORDER, color: INK }}
+              size="xs"
+              fullWidth={false}
+              className="w-full min-w-0 sm:w-64"
+              style={{
+                fontSize: "0.875rem",
+                background: "rgba(0,0,0,0.25)",
+                borderColor: BORDER,
+                color: INK,
+              }}
             />
 
             <div className="flex flex-wrap items-center gap-2">
@@ -459,14 +495,15 @@ export default function StandardsVariantBoard({ data }: { data: PracticeDivergen
             )}
 
             {dirty && (
-              <button
-                type="button"
+              <Button
+                variant="quiet"
+                size="md"
+                accent={INK_FAINT}
                 onClick={clear}
-                className={`${FONT_MONO} ml-auto text-sm underline underline-offset-4`}
-                style={{ color: INK_FAINT }}
+                className="ml-auto underline underline-offset-4"
               >
                 clear
-              </button>
+              </Button>
             )}
           </div>
 
@@ -478,14 +515,16 @@ export default function StandardsVariantBoard({ data }: { data: PracticeDivergen
               style={{ background: PANEL, border: `1px solid ${BORDER}`, color: INK_DIM }}
             >
               No rows match these filters — {rows.length} still on the bench behind them.{" "}
-              <button
-                type="button"
+              <Button
+                variant="quiet"
+                size="md"
+                accent={INK}
+                mono={false}
                 onClick={clear}
                 className="underline underline-offset-4"
-                style={{ color: INK }}
               >
                 Clear the filters
-              </button>{" "}
+              </Button>{" "}
               to see them.
             </p>
           ) : (
@@ -509,12 +548,19 @@ export default function StandardsVariantBoard({ data }: { data: PracticeDivergen
                     boxShadow: loud && accent.glow ? `0 0 24px -6px ${accent.glow}` : undefined,
                   }}
                 >
-                  <button
-                    type="button"
+                  <Button
+                    variant="row"
+                    size="md"
                     onClick={() => setShut((s) => ({ ...s, [k]: !s[k] }))}
                     aria-expanded={!closed}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-white/[0.03]"
-                    style={{ background: loud ? accent.wash : "transparent" }}
+                    style={{
+                      gap: "0.75rem",
+                      paddingLeft: "1rem",
+                      paddingRight: "1rem",
+                      paddingTop: "0.75rem",
+                      paddingBottom: "0.75rem",
+                      background: loud ? accent.wash : "transparent",
+                    }}
                   >
                     <span
                       aria-hidden
@@ -540,7 +586,7 @@ export default function StandardsVariantBoard({ data }: { data: PracticeDivergen
                     >
                       {closed ? "+" : "−"}
                     </span>
-                  </button>
+                  </Button>
 
                   {!closed &&
                     items.map((r) => (
