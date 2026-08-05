@@ -1,10 +1,45 @@
 @import "tailwindcss";
 
 /* Fused identity base (console/src/design/theme.ts) */
+:root {
+  /* Mirrors FOCUS_RING in src/design/theme.ts — gamma, the binding band. */
+  --focus-ring: hsla(46, 90%, 68%, 0.9);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+}
+
 body {
   background: #08070c;
   color: #e9edff;
 }
+
+/* ── Focus visibility ────────────────────────────────────────────────────
+   Two rules, both deliberately OUTSIDE any @layer.
+
+   Tailwind 4 emits everything into layers (theme/base/components/utilities),
+   and unlayered declarations outrank layered ones regardless of specificity.
+   That is the whole trick here: dozens of controls in this console carry
+   `focus:outline-none`, which suppresses the keyboard ring along with the
+   pointer one. A layered override would have to out-specify each of them; an
+   unlayered rule simply wins.
+
+   1. The baseline, at :where() (zero specificity) so any component that has a
+      genuine reason to draw its own ring can still out-specify it — see the
+      recharts block below, which does exactly that. This is the safety net:
+      every interactive element on every route is keyboard-visible even if no
+      one has migrated it onto the shared primitives yet.
+   2. `.focus-ring`, the explicit opt-in the shared primitives apply (FOCUS in
+      src/design/theme.ts). Carries real specificity so it holds inside
+      containers that suppress the baseline. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
+.focus-ring:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Pointer/mouse interaction never draws the ring — :focus-visible already
+   handles that — but a stray `outline: none` on :focus must not leak into the
+   keyboard case, so nothing here touches plain :focus. */
 
 /* ── Themed thin scrollbars (vertical + horizontal) ──────────────────────
    Instrument chrome, not OS chrome: hairline thumbs in the ink tone over a
