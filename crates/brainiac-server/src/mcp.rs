@@ -1434,8 +1434,8 @@ async fn memory_add(state: &McpState, args: &Value) -> Result<Value, ToolError> 
     // refused here too, because storing it would be permanently unreadable
     // (crate::http::NO_TEAM_MESSAGE). This surface has no `team_id` argument,
     // so the principal's own team is the only source.
-    let team_id = crate::http::write_team_id(&state.principal, None)
-        .map_err(|e| rejected(e.message))?;
+    let team_id =
+        crate::http::write_team_id(&state.principal, None).map_err(|e| rejected(e.message))?;
     let source_id = Uuid::new_v4();
     // PROJECT-PLAN PR2: the project to stamp this source with.
     //   1. A project-scoped key already knows its project — that wins,

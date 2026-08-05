@@ -1426,7 +1426,7 @@
             }
           },
           "400": {
-            "description": "Empty content, or an oversized content / Idempotency-Key"
+            "description": "Empty content, an oversized content / Idempotency-Key, or a principal with no team to attribute the memory to (a teamless write would be permanently unreadable — see the error message)"
           },
           "401": {
             "description": "Missing or unknown bearer token"
@@ -1466,7 +1466,7 @@
             }
           },
           "400": {
-            "description": "Empty batch or more than 100 items"
+            "description": "Empty batch or more than 100 items (a per-ITEM failure — including a principal with no team — is a `bad_request` entry in `results`, not a 400 on the batch)"
           },
           "401": {
             "description": "Missing or unknown bearer token"
