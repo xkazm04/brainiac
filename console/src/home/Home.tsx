@@ -763,6 +763,14 @@ export default function Home({
           </Fragment>
         ))}
 
+      </div>
+
+      {/* Moved OUT of the scroll track: the sine spine is `absolute h-full` over
+          that container, so it drew straight through the footer's text. That was
+          survivable when the footer was decoration; it is not now that the legal
+          links live there. Shortening the track also lets the spine finish on the
+          last station, which is what it is drawing a line between. */}
+      <div className="mx-auto max-w-5xl px-6">
         {/* Two rows, because a single justify-between strip silently drops the
             last items onto their own line the moment you add one — and the ones
             that wrapped were the legal links, which are exactly the ones that
