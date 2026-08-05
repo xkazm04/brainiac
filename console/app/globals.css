@@ -6,6 +6,16 @@
   --focus-ring: hsla(46, 90%, 68%, 0.9);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
+
+  /* The four colours that get spelled as raw hex inside Tailwind arbitrary
+     values — `text-[#f3c74f]`, `text-[#e9edff]/55` — where a JS import from
+     theme.ts cannot reach. Same values, one definition. Component code should
+     still import the token from theme.ts; these exist only for the className
+     case. */
+  --bg: #08070c;
+  --ink: #e9edff;
+  --gold: hsla(46, 90%, 68%, 1);
+  --magenta: #ff5da2;
 }
 
 body {

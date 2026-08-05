@@ -1,3 +1,4 @@
+import Button from "@/components/ui/Button";
 import { FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
 /**
@@ -30,14 +31,19 @@ export default function ApiOffline({
         <p className={`${FONT_MONO} mt-3 text-xs text-[#e9edff]/30`}>{error}</p>
       )}
       {onRetry && (
-        <button
-          type="button"
+        <Button
+          variant="pill"
+          size="md"
+          accent={MAGENTA}
           onClick={onRetry}
-          className={`${FONT_MONO} mt-6 rounded-full border px-5 py-2 text-sm transition hover:bg-white/5`}
-          style={{ borderColor: MAGENTA, color: MAGENTA }}
+          className="mt-6"
+          // Full-strength edge, not the 0.4 wash the accent normally derives:
+          // this is the only affordance on an error page and must not read as
+          // secondary chrome.
+          style={{ borderColor: MAGENTA }}
         >
           ↻ retry
-        </button>
+        </Button>
       )}
     </section>
   );

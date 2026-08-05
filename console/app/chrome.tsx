@@ -15,7 +15,8 @@ import {
   type NavGroup,
   type ProductRoute,
 } from "@/design/routes";
-import { FONT_MONO } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { FONT_MONO, INK_FAINT } from "@/design/theme";
 
 import { logout } from "./login/actions";
 
@@ -160,13 +161,19 @@ export default function Chrome() {
           {/* A shared-passcode session, so this clears the cookie for this
               browser — it does not sign out a person. */}
           <form action={logout}>
-            <button
+            <Button
               type="submit"
-              className="flex items-center gap-1.5 text-[#e9edff]/35 uppercase tracking-widest transition hover:text-white"
+              variant="quiet"
+              size="sm"
+              accent={INK_FAINT}
+              // The row sets its own uppercase/tracking scale, so the button
+              // must not bring the mono family's default type sizing with it.
+              mono={false}
+              className="flex items-center gap-1.5 text-xs uppercase tracking-widest"
             >
               <LogOut size={13} strokeWidth={1.75} aria-hidden />
               sign out
-            </button>
+            </Button>
           </form>
         </div>
       </div>

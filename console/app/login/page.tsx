@@ -1,7 +1,17 @@
 import Link from "next/link";
 
+import Button from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { isMisconfigured } from "@/lib/auth";
-import { BG, FONT_DISPLAY, FONT_MONO, GOLD, GOLD_GLOW, LABEL } from "@/design/theme";
+import {
+  BG,
+  FONT_DISPLAY,
+  FONT_MONO,
+  GOLD,
+  LABEL,
+  MAGENTA,
+  withAlpha,
+} from "@/design/theme";
 
 import { login } from "./actions";
 
@@ -36,7 +46,7 @@ export default async function LoginPage({
         <p className={`${FONT_MONO} mt-3 text-sm leading-relaxed`} style={{ color: dim(0.55) }}>
           The console reads and writes your organization&rsquo;s live memory — canonical
           decisions, provenance, the review queue. The{" "}
-          <Link href="/demo" className="underline decoration-dotted underline-offset-4 hover:text-[#f3c74f]">
+          <Link href="/demo" className="underline decoration-dotted underline-offset-4 hover:text-[var(--gold)]">
             public demo
           </Link>{" "}
           runs on the synthetic Meridian org and needs no key.
@@ -45,9 +55,13 @@ export default async function LoginPage({
         {unconfigured ? (
           <div
             className={`${FONT_MONO} mt-8 rounded-xl border p-5 text-xs leading-relaxed`}
-            style={{ borderColor: "rgba(255,93,162,0.35)", background: "rgba(255,93,162,0.05)", color: dim(0.7) }}
+            style={{
+              borderColor: withAlpha(MAGENTA, 0.35),
+              background: withAlpha(MAGENTA, 0.05),
+              color: dim(0.7),
+            }}
           >
-            <div className={LABEL} style={{ color: "#ff5da2" }}>
+            <div className={LABEL} style={{ color: MAGENTA }}>
               console not configured
             </div>
             <p className="mt-3">
@@ -61,23 +75,23 @@ export default async function LoginPage({
         ) : (
           <form action={login} className="mt-8 space-y-4">
             <input type="hidden" name="next" value={next ?? "/console"} />
-            <div>
-              <label className={LABEL} style={{ color: dim(0.45) }} htmlFor="passcode">
-                console passcode
-              </label>
-              <input
-                id="passcode"
-                name="passcode"
-                type="password"
-                autoFocus
-                autoComplete="current-password"
-                className={`${FONT_MONO} mt-2 w-full rounded-lg border bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition focus:border-[#f3c74f]`}
-                style={{ borderColor: "rgba(233,237,255,0.14)" }}
-              />
-            </div>
+            {/* `outline-none` used to live on this field, which took the
+                keyboard focus ring with it — on the one control that is the
+                entire front door. The shared Input carries the ring instead,
+                and it cannot be switched off from a className. */}
+            <Input
+              id="passcode"
+              name="passcode"
+              type="password"
+              size="md"
+              label="console passcode"
+              autoFocus
+              autoComplete="current-password"
+              invalid={err === "bad"}
+            />
 
             {err === "bad" && (
-              <p className={`${FONT_MONO} text-xs`} style={{ color: "#ff5da2" }}>
+              <p className={`${FONT_MONO} text-xs`} style={{ color: MAGENTA }}>
                 That passcode is not correct.
               </p>
             )}
@@ -88,13 +102,15 @@ export default async function LoginPage({
               </p>
             )}
 
-            <button
+            <Button
               type="submit"
-              className={`${FONT_MONO} w-full rounded-full px-6 py-3 text-sm font-semibold transition hover:scale-[1.01]`}
-              style={{ background: GOLD, color: "#1a1405", boxShadow: `0 0 32px ${GOLD_GLOW}` }}
+              variant="solid"
+              size="md"
+              accent={GOLD}
+              className="w-full hover:scale-[1.01]"
             >
               unlock the console
-            </button>
+            </Button>
           </form>
         )}
 

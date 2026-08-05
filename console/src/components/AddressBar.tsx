@@ -4,7 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Check, Link2 } from "lucide-react";
 
-import { FONT_MONO } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { band } from "@/design/theme";
+
+/** Confirmation tone: beta, the active-recall band, same as the nav's live dot.
+ *  It was a bare rgb(120,255,190) here — the same colour, spelled by hand. */
+const MINT = band("beta");
 
 /*
  * Copy a link to exactly what you are looking at.
@@ -56,19 +61,23 @@ export default function AddressBar() {
   }, []);
 
   return (
-    <button
-      type="button"
+    <Button
+      variant="pill"
+      size="xs"
+      accent={copied ? MINT : undefined}
       onClick={copy}
       title="Copy a link to this exact view"
       aria-label="Copy a link to this exact view"
-      className={`${FONT_MONO} inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors`}
-      style={{
-        borderColor: copied ? "rgba(120,255,190,0.4)" : "rgba(233,237,255,0.12)",
-        color: copied ? "rgb(120,255,190)" : "rgba(233,237,255,0.45)",
-      }}
+      className="inline-flex items-center gap-1.5 px-2 py-1 uppercase tracking-[0.14em]"
+      // A tab, not a capsule: this sits in the instrumentation row, where a
+      // pill would read as one more status chip. Radius and type size come
+      // through style rather than `rounded-md` / `text-[10px]` classes because
+      // Tailwind resolves competing utilities by stylesheet order, not
+      // className order — the override would win only by luck.
+      style={{ borderRadius: "0.375rem", fontSize: "10px" }}
     >
       {copied ? <Check size={11} aria-hidden /> : <Link2 size={11} aria-hidden />}
       {copied ? "copied" : failed ? "copy failed" : "copy link"}
-    </button>
+    </Button>
   );
 }

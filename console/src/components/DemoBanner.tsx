@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import Button from "@/components/ui/Button";
 import { band, FONT_MONO, LABEL } from "@/design/theme";
 
 const DISMISS_KEY = "brainiac-demo-banner-dismissed";
@@ -34,17 +35,17 @@ export default function DemoBanner() {
             <code>BRAINIAC_API_URL</code> + <code>BRAINIAC_API_TOKEN</code> to go live.
           </p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="pill"
+          size="sm"
+          accent={band("gamma")}
           onClick={() => {
             sessionStorage.setItem(DISMISS_KEY, "1");
             setDismissed(true);
           }}
-          className={`${FONT_MONO} rounded-full border px-4 py-1.5 text-sm transition hover:bg-white/5`}
-          style={{ borderColor: band("gamma", 68, 0.4), color: band("gamma") }}
         >
           dismiss
-        </button>
+        </Button>
       </div>
     </div>
   );

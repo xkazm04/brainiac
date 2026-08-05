@@ -1,5 +1,11 @@
+"use client";
+
 /*
  * The console's text fields.
+ *
+ * Client-side because of `useId`, which is what wires label→field without the
+ * caller inventing an id. Button deliberately has no directive and no hooks, so
+ * it stays usable from server components (the login page is one).
  *
  * Same story as Button: every field spelled out its own border, its own
  * placeholder tint, and — in every single case — `focus:outline-none`, which

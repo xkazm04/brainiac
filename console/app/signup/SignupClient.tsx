@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 
+import Button from "@/components/ui/Button";
 import { signInWithGoogle } from "@/lib/firebase/client";
-import { FONT_DISPLAY, FONT_MONO, GOLD, GOLD_GLOW, LABEL } from "@/design/theme";
+import { FONT_MONO, GOLD, INK_DIM, LABEL, MAGENTA } from "@/design/theme";
 
 import { claimProjectWithGoogle, type SignupResult } from "./actions";
 
@@ -56,17 +57,19 @@ export default function SignupClient({ configured }: { configured: boolean }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <button
+      <Button
+        variant="solid"
+        size="md"
+        accent={GOLD}
         onClick={() => start(false)}
         disabled={busy}
-        className={`${FONT_MONO} w-full rounded-full px-6 py-3 text-sm font-semibold transition hover:scale-[1.01] disabled:opacity-50`}
-        style={{ background: GOLD, color: "#1a1405", boxShadow: `0 0 32px ${GOLD_GLOW}` }}
+        className="w-full hover:scale-[1.01]"
       >
         {busy ? "…" : "Continue with Google"}
-      </button>
+      </Button>
 
       {result && !result.ok && (
-        <p className={`${FONT_MONO} text-xs`} style={{ color: "#ff5da2" }}>
+        <p className={`${FONT_MONO} text-xs`} style={{ color: MAGENTA }}>
           {result.message}
         </p>
       )}
@@ -88,7 +91,10 @@ export default function SignupClient({ configured }: { configured: boolean }) {
                 {result.apiKey}
               </code>
               <div className="flex items-center gap-3">
-                <button
+                <Button
+                  variant="pill"
+                  size="sm"
+                  accent={copied ? GOLD : undefined}
                   onClick={async () => {
                     // Only claim success when the write resolves — this secret is
                     // not stored anywhere and a false ✓ loses it for good.
@@ -99,10 +105,14 @@ export default function SignupClient({ configured }: { configured: boolean }) {
                       setCopied(false);
                     }
                   }}
-                  className={`${FONT_MONO} rounded-full border border-white/20 px-4 py-1.5 text-xs text-[#e9edff]/70 transition hover:border-white/50 hover:text-white`}
+                  className="px-4"
+                  // Type size through style, not `text-xs`: Tailwind resolves
+                  // competing font-size utilities by stylesheet order, so the
+                  // primitive's text-sm would beat it about as often as not.
+                  style={{ fontSize: "0.75rem", color: copied ? GOLD : INK_DIM }}
                 >
                   {copied ? "✓ copied" : "copy key"}
-                </button>
+                </Button>
               </div>
               <p className={`${FONT_MONO} mt-1 text-[11px] leading-relaxed text-[#e9edff]/40`}>
                 Point your local agent at this project by setting{" "}
@@ -111,13 +121,16 @@ export default function SignupClient({ configured }: { configured: boolean }) {
               </p>
             </div>
           ) : (
-            <button
+            <Button
+              variant="pill"
+              size="sm"
               onClick={() => start(true)}
               disabled={busy}
-              className={`${FONT_MONO} self-start rounded-full border border-white/20 px-4 py-1.5 text-xs text-[#e9edff]/70 transition hover:border-white/50 hover:text-white disabled:opacity-50`}
+              className="self-start px-4"
+              style={{ fontSize: "0.75rem" }}
             >
               issue a new device key
-            </button>
+            </Button>
           )}
         </div>
       )}
