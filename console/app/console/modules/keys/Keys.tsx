@@ -15,51 +15,11 @@ import { refreshTokens, revokeKey } from "./keys-data";
 import { fmtAgo, MintPanel } from "./KeyShared";
 import Button from "@/components/ui/Button";
 import { FONT_DISPLAY, FONT_MONO, GROUND, LABEL, MAGENTA } from "@/design/theme";
-
-/** The developer-facing bootstrap: one copyable command that installs the
- *  brainiac-onboard skill into a checkout. No secret in it — the key arrives
- *  via the pairing the skill drives (approved in the Projects module). */
-function OnboardPanel({ apiUrl }: { apiUrl: string }) {
-  const [copied, setCopied] = useState(false);
-  const cmd = `mkdir -p .claude/skills/brainiac-onboard && curl -fsSL ${apiUrl}/v1/onboard/skill -o .claude/skills/brainiac-onboard/SKILL.md`;
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.015] p-5">
-      <div className={LABEL} style={{ color: "rgba(233,237,255,0.4)" }}>
-        onboard a repo — no key handling required
-      </div>
-      <p className={`${FONT_MONO} mt-2 text-xs leading-relaxed text-[var(--ink)]/55`}>
-        A developer runs this in their checkout, then <span className="text-[var(--ink)]/80">/brainiac-onboard</span> in
-        Claude Code. The skill pairs the repo here (approve it in the Projects module), writes a
-        project-scoped key straight into their <span className="text-[var(--ink)]/80">.env</span>, and verifies the
-        round trip.
-      </p>
-      <div className={`${FONT_MONO} mt-3 select-all break-all rounded-lg border border-white/15 bg-white/[0.03] p-3 text-xs text-[var(--ink)]/80`}>
-        {cmd}
-      </div>
-      {/* Ground-band capsule. `accent` carries the text colour; the explicit
-          borderColor restores the full-opacity edge this panel always had —
-          controlStyle fades a pill's border to 0.4 by default. */}
-      <Button
-        variant="pill"
-        size="sm"
-        accent={GROUND}
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(cmd);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          } catch {
-            setCopied(false);
-          }
-        }}
-        className="mt-3 px-4 text-xs"
-        style={{ borderColor: GROUND }}
-      >
-        {copied ? "✓ copied" : "copy command"}
-      </Button>
-    </div>
-  );
-}
+// The onboarding bootstrap used to be a local `OnboardPanel` here. It is now
+// shared, because the console's first-run front door needs to show the SAME
+// on-ramp — this was the good one, it was simply buried behind `?m=keys`, one
+// of fourteen modules with nothing pointing at it.
+import OnboardCommand from "@/onboarding/OnboardCommand";
 
 export default function Keys({ data }: { data: KeysData }) {
   const [tokens, setTokens] = useState(data.tokens);
@@ -184,7 +144,7 @@ export default function Keys({ data }: { data: KeysData }) {
           <div className="rounded-xl border border-white/10 bg-white/[0.015] p-5">
             <MintPanel users={data.users} live={data.live} onMinted={reload} />
           </div>
-          <OnboardPanel apiUrl={data.apiUrl} />
+          <OnboardCommand apiUrl={data.apiUrl} />
         </div>
       </div>
     </div>
