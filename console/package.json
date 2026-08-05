@@ -36,7 +36,7 @@
     "eslint-config-next": "^15.5.22",
     "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.3.2",
-    "typescript": "^5.8.0",
+    "typescript": "^7.0.2",
     "vitest": "^3.1.0"
   },
   "overrides": {
