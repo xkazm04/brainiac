@@ -52,16 +52,12 @@ export async function refreshTokens(): Promise<ApiToken[]> {
 // day these drifted (this list stuck at read/write/admin while kb:*/lib:*
 // were enforced server-side) the UI could not mint a key that any KB or
 // Library endpoint would accept — see auth.rs's doc comment for the autopsy.
-export const SCOPES = [
-  "read",
-  "write",
-  "kb:read",
-  "kb:publish",
-  "lib:read",
-  "lib:propose",
-  "lib:publish",
-  "admin",
-] as const;
+//
+// It now lives in lib/scopes.ts and is re-exported here so the chip row keeps
+// its import path. The move is the point: /api/keys validates the request
+// against the same list, and a form offering a scope its own guard rejects is
+// the drift above wearing a different hat.
+export { SCOPES } from "@/lib/scopes";
 
 // ── demo shapes ─────────────────────────────────────────────────────────
 
