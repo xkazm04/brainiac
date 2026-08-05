@@ -34,11 +34,21 @@ export type ControlSize = "xs" | "sm" | "md";
  *  prefers-reduced-motion. */
 const BASE = `${FOCUS} cursor-pointer transition disabled:cursor-not-allowed disabled:opacity-40`;
 
+/*
+ * Hover on the text-only variants is `brightness`, not `hover:text-white`.
+ *
+ * controlStyle always returns an inline `color`, and an inline declaration
+ * outranks every class — so a `hover:text-*` utility on one of these could
+ * never fire at any call site. The bug was invisible in review (the class was
+ * right there in the string) and only turned up when a migration had to work
+ * around it. A filter composes with whatever colour the accent resolved to
+ * instead of trying to replace it.
+ */
 const SHAPE: Record<ControlVariant, string> = {
   solid: "rounded-full font-semibold hover:brightness-110",
   pill: "rounded-full border hover:bg-white/5",
-  quiet: "hover:text-white",
-  icon: "grid place-items-center rounded hover:bg-white/10",
+  quiet: "hover:brightness-125",
+  icon: "grid place-items-center rounded hover:bg-white/10 hover:brightness-125",
   row: "flex w-full items-center gap-2 rounded-md text-left hover:bg-white/[0.03]",
 };
 
@@ -63,12 +73,28 @@ const SIZING: Record<ControlVariant, Record<ControlSize, string>> = {
   },
 };
 
+/**
+ * `unpadded` drops the size bucket's padding so a caller can supply its own.
+ *
+ * It exists because "just pass px-4 in className" is only half true. Tailwind
+ * resolves two competing utilities by stylesheet order, and its padding scale
+ * ascends: px-2 is emitted before px-3.5 before px-5. So a caller overriding
+ * DOWNWARD loses silently — `size="md"` (px-5) plus `className="px-4"` renders
+ * at px-5 — while overriding upward happens to work. A rule that holds in one
+ * direction is worse than no rule, because nobody checks which direction they
+ * are going. Opt out of the padding entirely instead.
+ *
+ * (Radius and type scale do not have this problem: rounded-full is emitted
+ * before rounded-md, and text-sm before text-xs, so those overrides hold. Both
+ * verified against the compiled stylesheet rather than assumed.)
+ */
 export function controlClass(
   variant: ControlVariant,
   size: ControlSize,
   extra?: string,
+  unpadded = false,
 ): string {
-  return [BASE, SHAPE[variant], SIZING[variant][size], extra]
+  return [BASE, SHAPE[variant], unpadded ? "" : SIZING[variant][size], extra]
     .filter(Boolean)
     .join(" ");
 }

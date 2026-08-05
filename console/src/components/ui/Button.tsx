@@ -40,6 +40,10 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   selected?: boolean;
   /** Set false when the caller supplies its own type scale/family. */
   mono?: boolean;
+  /** Drop the size bucket's padding and supply your own in `className`.
+   *  Required when your padding is SMALLER than the bucket's — see
+   *  controlClass for why a plain className override loses that fight. */
+  unpadded?: boolean;
 };
 
 export default function Button({
@@ -48,6 +52,7 @@ export default function Button({
   accent,
   selected,
   mono = true,
+  unpadded = false,
   className,
   style,
   type = "button",
@@ -64,6 +69,7 @@ export default function Button({
         variant,
         size,
         [mono ? FONT_MONO : "", className ?? ""].filter(Boolean).join(" "),
+        unpadded,
       )}
       style={{ ...controlStyle(variant, accent, selected ?? false), ...style }}
     />

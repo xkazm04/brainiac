@@ -64,6 +64,7 @@ export default function AddressBar() {
     <Button
       variant="pill"
       size="xs"
+      unpadded
       accent={copied ? MINT : undefined}
       onClick={copy}
       title="Copy a link to this exact view"
