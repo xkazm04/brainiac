@@ -11,6 +11,8 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { band, FONT_DISPLAY, FONT_MONO, LABEL } from "@/design/theme";
 
 import { hash01, teamColor, type CortexData } from "../cortex-data";
@@ -79,7 +81,16 @@ export default function StarChartView({ data }: { data: CortexData }) {
             The night sky of what the org knows.
           </h1>
         </div>
-        <input
+        {/* The shared field already IS this box — same wash, same mono face,
+            same placeholder tint, same 15%-ink edge — so only the capsule radius
+            and the wider gutter are overrides, and both go through `style`
+            because two competing radius/padding utilities resolve by stylesheet
+            order rather than className order. `fullWidth={false}` because the
+            caller owns the width (w-56); that flag exists precisely so a baked-in
+            w-full cannot beat it. Gone with the migration: `focus:outline-none`,
+            which suppressed the keyboard ring, and the gold `focus:border` that
+            stood in for it — the ring itself is now the focus affordance. */}
+        <Input
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -89,8 +100,10 @@ export default function StarChartView({ data }: { data: CortexData }) {
             if (hit) setSelected(hit.id);
           }}
           placeholder="search the sky…"
-          className={`${FONT_MONO} w-56 rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm text-white placeholder:text-[#e9edff]/30 focus:border-[#f3c74f]/60 focus:outline-none`}
           aria-label="Search canonical entities"
+          fullWidth={false}
+          className="w-56"
+          style={{ borderRadius: "9999px", paddingLeft: "1rem", paddingRight: "1rem" }}
         />
       </div>
 
@@ -159,35 +172,60 @@ export default function StarChartView({ data }: { data: CortexData }) {
         {/* legend + the grouping lens */}
         <div className="absolute bottom-3 left-4 flex flex-wrap items-center gap-4">
           <div className="flex gap-1">
+            {/* `pill` — a bordered capsule toggle, which is what these were.
+                `selected` now emits the aria-pressed that was written by hand.
+                The lens pair sits ON the chart at 10px, below even the xs
+                bucket's 11px, so its metrics ride in `style` (deterministic;
+                utilities of the same family resolve by stylesheet order). The
+                edge stays a class pair — white at two weights, not an accent —
+                so borderColor/color are cleared out of its way. */}
             {(["team", "project"] as const).map((l) => (
-              <button
+              <Button
                 key={l}
-                type="button"
+                variant="pill"
+                size="xs"
                 onClick={() => {
                   setLens(l);
                   setHoverGroup(null);
                 }}
-                aria-pressed={lens === l}
-                className={`${FONT_MONO} rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] transition ${
+                selected={lens === l}
+                style={{
+                  borderColor: undefined,
+                  color: undefined,
+                  background: undefined,
+                  fontSize: "10px",
+                  paddingLeft: "0.5rem",
+                  paddingRight: "0.5rem",
+                  paddingTop: "0.125rem",
+                  paddingBottom: "0.125rem",
+                }}
+                className={`uppercase tracking-[0.12em] ${
                   lens === l
                     ? "border-white/40 text-white"
                     : "border-white/10 text-white/35 hover:border-white/25"
                 }`}
               >
                 {l}s
-              </button>
+              </Button>
             ))}
           </div>
+          {/* `quiet` — a legend entry that lights its stars, with no chrome of
+              its own. xs already carries LABEL's 11px/mono; only the tracking
+              stays a class. The inline colour is the whole control (it IS the
+              team's hue, brightening on hover), so it outranks the variant's
+              neutral ink and its hover:text-white — deliberately. */}
           {groups.map((t, i) => (
-            <button
+            <Button
               key={t.id}
+              variant="quiet"
+              size="xs"
               onMouseEnter={() => setHoverGroup(t.id)}
               onMouseLeave={() => setHoverGroup(null)}
-              className={`${LABEL} transition`}
+              className="uppercase tracking-[0.2em]"
               style={{ color: hoverGroup === t.id ? teamColor(i, 78) : teamColor(i, 68, 0.55) }}
             >
               ● {t.name}
-            </button>
+            </Button>
           ))}
           <span className={LABEL} style={{ color: "rgba(233,237,255,0.3)" }}>
             {lens === "project" && groups.length === 0
@@ -225,9 +263,19 @@ export default function StarChartView({ data }: { data: CortexData }) {
                       {detail.canonical.name}
                       <span className={`${FONT_MONO} ml-2 text-xs text-[#e9edff]/40`}>{detail.canonical.kind}</span>
                     </h2>
-                    <button onClick={() => setSelected(null)} className={`${FONT_MONO} text-xs text-[#e9edff]/40 hover:text-white`}>
+                    {/* `quiet` — text-only, and sm already matches its type
+                        scale and its hover. The aria-label is new: a lone ✕
+                        glyph gave the control no accessible name at all. */}
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      onClick={() => setSelected(null)}
+                      aria-label="Close"
+                      style={{ color: undefined }}
+                      className="text-[#e9edff]/40"
+                    >
                       ✕
-                    </button>
+                    </Button>
                   </div>
                   <SurfaceForms detail={detail} teamIndex={teamIndex} />
                   <NeighborHops detail={detail} onHop={setSelected} />

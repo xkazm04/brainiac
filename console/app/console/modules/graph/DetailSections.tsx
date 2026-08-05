@@ -7,12 +7,27 @@
  * neighbor hops.
  */
 
+import type { CSSProperties } from "react";
+
+import Button from "@/components/ui/Button";
 import type { CanonicalDetail } from "@/lib/types";
-import { band, FONT_MONO, LABEL } from "@/design/theme";
+import { band, FONT_MONO, LABEL, withAlpha } from "@/design/theme";
 
 import { teamColor } from "./cortex-data";
 
 const GOLD = band("gamma");
+
+/*
+ * The neighbor hop's hover gold.
+ *
+ * It was two raw `#f3c74f` literals — a hand-mixed twin of the gamma band that
+ * had drifted a shade off the real token, so the hop chips lit a different gold
+ * than everything else on the map. It cannot ride in `style` (it only applies on
+ * :hover, and an inline colour would win in BOTH states, killing the hover
+ * outright), so it rides as a custom property instead — the same trick Archive
+ * uses for --vio — and GOLD is now the single source for both.
+ */
+const HOP_VARS = { "--hop": GOLD, "--hop-edge": withAlpha(GOLD, 0.6) } as CSSProperties;
 
 export function SurfaceForms({
   detail,
@@ -113,13 +128,30 @@ export function NeighborHops({
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
         {detail.neighbors.map((n) => (
-          <button
+          /* `pill` — the bordered capsule this already was. Its sm bucket is a
+             touch roomier than the original (px-3.5/py-1.5 vs px-3/py-1), so the
+             gutters ride in `style`, which is the only deterministic override:
+             two padding utilities resolve by stylesheet order, not className
+             order. borderColor/color are cleared for the same reason the hover
+             gold is a variable — an inline colour would outrank both hovers. */
+          <Button
             key={n.id}
+            variant="pill"
+            size="sm"
             onClick={() => onHop(n.id)}
-            className={`${FONT_MONO} rounded-full border border-white/15 px-3 py-1 text-sm text-[#e9edff]/70 transition hover:border-[#f3c74f]/60 hover:text-[#f3c74f]`}
+            style={{
+              ...HOP_VARS,
+              borderColor: undefined,
+              color: undefined,
+              paddingLeft: "0.75rem",
+              paddingRight: "0.75rem",
+              paddingTop: "0.25rem",
+              paddingBottom: "0.25rem",
+            }}
+            className="border-white/15 text-[#e9edff]/70 hover:border-[var(--hop-edge)] hover:text-[var(--hop)]"
           >
             {n.name} <span className="text-[#e9edff]/35">×{n.shared_edges}</span>
-          </button>
+          </Button>
         ))}
       </div>
     </div>

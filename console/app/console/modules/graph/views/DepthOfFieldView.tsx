@@ -12,7 +12,8 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-import { band, FONT_DISPLAY, FONT_MONO, LABEL } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { band, FOCUS, FONT_DISPLAY, FONT_MONO, LABEL } from "@/design/theme";
 
 import { teamColor, type CortexData } from "../cortex-data";
 import { useCanonicalDetail } from "../useCanonicalDetail";
@@ -32,12 +33,18 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
     <div className="mx-auto max-w-6xl px-6 py-6">
       {/* focal stack breadcrumb */}
       <div className={`${FONT_MONO} flex items-center gap-2 text-xs`}>
-        <button
+        {/* `quiet` — a breadcrumb crumb, which must not read as a button beside
+            the trail it sits in. sm matches the strip's own text-xs, and the
+            variant's hover:text-white is the hover this already had. */}
+        <Button
+          variant="quiet"
+          size="sm"
           onClick={() => setSelected(null)}
+          style={{ color: undefined }}
           className={focused ? "text-[#e9edff]/40 hover:text-white" : "text-white"}
         >
           org meridian
-        </button>
+        </Button>
         {focused && (
           <>
             <span className="text-[#e9edff]/25">▸</span>
@@ -76,11 +83,16 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
           aria-hidden={focused}
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {/* These stay plain <button>s. A card is a BLOCK — a title row, a
+                count, a team ribbon stacked down it — and Button's `row`
+                variant is `flex`, which would lay those three out side by side.
+                What they take from the primitives is the piece that was
+                genuinely missing: FOCUS, so tabbing through the grid is visible. */}
             {overview.canonicals.map((c) => (
               <button
                 key={c.id}
                 onClick={() => setSelected(c.id)}
-                className="group rounded-lg border p-4 text-left transition"
+                className={`${FOCUS} group rounded-lg border p-4 text-left transition`}
                 style={{
                   borderColor: c.teams === 3 ? "hsla(46,90%,68%,0.4)" : "rgba(233,237,255,0.1)",
                   background: c.teams === 3 ? "hsla(46,90%,60%,0.05)" : "rgba(255,255,255,0.015)",
@@ -133,12 +145,21 @@ export default function DepthOfFieldView({ data }: { data: CortexData }) {
                         {detail.canonical.name}
                         <span className={`${FONT_MONO} ml-3 text-sm text-[#e9edff]/40`}>{detail.canonical.kind} · canonical</span>
                       </h2>
-                      <button
+                      {/* `pill` — the bordered capsule this already was. px-4
+                          beats the variant's px-3.5 on stylesheet order so it
+                          can stay a class, but text-xs would LOSE to sm's
+                          text-sm, so the type size rides in `style`. The white
+                          edge pair stays in classes, hence the cleared
+                          borderColor/color. */}
+                      <Button
+                        variant="pill"
+                        size="sm"
                         onClick={() => setSelected(null)}
-                        className={`${FONT_MONO} rounded-full border border-white/15 px-4 py-1.5 text-xs text-[#e9edff]/60 transition hover:border-white/40 hover:text-white`}
+                        style={{ borderColor: undefined, color: undefined, fontSize: "0.75rem" }}
+                        className="border-white/15 px-4 text-[#e9edff]/60 hover:border-white/40 hover:text-white"
                       >
                         esc · defocus
-                      </button>
+                      </Button>
                     </div>
                     <div className="grid gap-6 lg:grid-cols-2">
                       <div className="space-y-5">

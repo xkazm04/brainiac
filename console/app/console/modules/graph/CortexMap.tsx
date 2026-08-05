@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
+import Button from "@/components/ui/Button";
 import { band } from "@/design/theme";
 
 import { makeLargeCortex, type CortexData } from "./cortex-data";
@@ -94,12 +95,23 @@ export default function CortexMap({ data }: { data: CortexData }) {
           {VIEWS.map((v) => {
             const selected = v.id === active;
             return (
-              <button
+              /* `quiet`, not `pill`: the capsule you see is the shared
+                 layoutId pill sliding underneath, so the control itself must
+                 stay chrome-less — a `pill` border would draw a second, static
+                 outline around every tab and fight the animation. `selected` is
+                 NOT passed: aria-selected is the correct state for role=tab, and
+                 an aria-pressed beside it would announce two conflicting things.
+                 `mono={false}` keeps the display face these tabs already used. */
+              <Button
                 key={v.id}
+                variant="quiet"
+                size="sm"
+                mono={false}
                 role="tab"
                 aria-selected={selected}
                 onClick={() => pick(v.id)}
-                className={`relative rounded-full px-4 py-2 text-sm font-medium transition ${
+                style={{ color: undefined }}
+                className={`relative rounded-full px-4 py-2 text-sm font-medium ${
                   selected ? "text-black" : "text-white/70 hover:text-white"
                 }`}
               >
@@ -114,20 +126,32 @@ export default function CortexMap({ data }: { data: CortexData }) {
                   <span className="inline-block h-2 w-2 rounded-full" style={{ background: band("gamma") }} />
                   {v.name}
                 </span>
-              </button>
+              </Button>
             );
           })}
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-3 text-[11px] text-white/60 [text-shadow:0_1px_4px_rgba(0,0,0,0.9)]">
           <span>{current.blurb}</span>
           <span className="text-white/25">·</span>
-          <button
+          {/* Also `quiet` rather than `pill`, for a legibility reason: this chip
+              floats over the map artwork, and its bg-black/50 backing is what
+              keeps the label readable there. `pill` brings a shared
+              hover:bg-white/5 wash that would replace that backing exactly when
+              the pointer is on it. Keeping the capsule as classes costs one line
+              and holds the original hover (border + text brighten, backing
+              stays). `selected` supplies the aria-pressed that was hand-written;
+              `color: undefined` lets the strip's inherited white/60 through. */}
+          <Button
+            variant="quiet"
+            size="xs"
+            mono={false}
             onClick={() => pickScale(!large)}
-            className="rounded-full border border-white/20 bg-black/50 px-2.5 py-0.5 transition hover:border-white/50 hover:text-white"
-            aria-pressed={large}
+            selected={large}
+            style={{ color: undefined }}
+            className="rounded-full border border-white/20 bg-black/50 px-2.5 py-0.5 hover:border-white/50"
           >
             scale: {large ? "50 hubs · 7 teams (mock)" : `${data.overview.canonicals.length} hubs · ${data.overview.teams.length} teams`}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -17,7 +17,8 @@ import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Check, ChevronDown } from "lucide-react";
 
-import { band, FONT_MONO, INK_DIM as DIM, INK_FAINT as FAINT, LABEL, withAlpha } from "@/design/theme";
+import Button from "@/components/ui/Button";
+import { band, FONT_MONO, INK_DIM as DIM, INK_FAINT as FAINT, withAlpha } from "@/design/theme";
 import type { ArchiveFacet } from "./archive-data";
 
 import { GlyphLegend } from "./row-icons";
@@ -80,13 +81,19 @@ export default function ColumnFilter({
 
   return (
     <div className="relative" ref={wrap}>
-      <button
-        type="button"
+      {/* `quiet` — a column header first, a control second: it carries LABEL's
+          type scale (which xs matches exactly) and no chrome of its own, so it
+          never reads as a button sitting in the table head. The explicit `style`
+          colour outranks the primitive's neutral ink, which is the point — this
+          header goes violet while a filter is on. */}
+      <Button
+        variant="quiet"
+        size="xs"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="true"
         aria-label={`Filter by ${label}${on ? ` — ${active} on` : ""}`}
-        className={`${LABEL} flex w-full items-center gap-1 rounded px-1 py-0.5 transition hover:text-white`}
+        className="flex w-full items-center gap-1 rounded px-1 py-0.5 uppercase tracking-[0.2em]"
         style={{ color: on ? VIOLET : FAINT }}
       >
         <span className="truncate">{label}</span>
@@ -98,7 +105,7 @@ export default function ColumnFilter({
           />
         )}
         <ChevronDown size={11} strokeWidth={2} aria-hidden className="shrink-0 opacity-60" />
-      </button>
+      </Button>
 
       {open && (
         <motion.div
@@ -122,15 +129,29 @@ export default function ColumnFilter({
               const picked = active === o.value;
               return (
                 <li key={o.value}>
-                  <button
-                    type="button"
+                  {/* `row` — the full-width selectable list row, which is what
+                      this always was. It keeps its own `border` + the delta
+                      selection edge rather than the primitive's neutral accent:
+                      the wash here is the archive's band colour, not ink. The
+                      unpicked branch clears borderColor/background back to
+                      undefined so the hover classes stay reachable — an inline
+                      colour would outrank them. No `selected` prop: role=checkbox
+                      already announces the state through aria-checked, and a
+                      second aria-pressed would contradict it. */}
+                  <Button
+                    variant="row"
+                    size="xs"
                     role="checkbox"
                     aria-checked={picked}
                     onClick={() => take(o.value)}
-                    className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left transition ${
-                      picked ? "" : "border-transparent hover:border-white/15 hover:bg-white/[0.04]"
+                    className={`border py-1.5 ${
+                      picked ? "" : "border-transparent hover:border-white/15"
                     }`}
-                    style={picked ? { borderColor: SEL_EDGE, background: SEL_FILL } : undefined}
+                    style={
+                      picked
+                        ? { borderColor: SEL_EDGE, background: SEL_FILL }
+                        : { borderColor: undefined, background: undefined, color: undefined }
+                    }
                   >
                     <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                       {picked && <Check size={12} strokeWidth={2.5} color={VIOLET} aria-hidden />}
@@ -148,24 +169,29 @@ export default function ColumnFilter({
                     >
                       {o.count}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               );
             })}
           </ul>
           {on && (
             <div className="border-t border-white/10 p-1">
-              <button
-                type="button"
+              {/* Same `row` family as the options above it — it is the last row
+                  of the same list. Padding rides in `style` because px-2 loses
+                  to the variant's px-2.5 on stylesheet order, not className
+                  order (the trap the FIELD_BASE docblock calls out); an inline
+                  value is the only deterministic way to hold the original gutter. */}
+              <Button
+                variant="row"
+                size="sm"
                 onClick={() => {
                   onClear();
                   setOpen(false);
                 }}
-                className={`${FONT_MONO} w-full rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-white/[0.04]`}
-                style={{ color: DIM }}
+                style={{ color: DIM, paddingLeft: "0.5rem", paddingRight: "0.5rem" }}
               >
                 clear {label} filter
-              </button>
+              </Button>
             </div>
           )}
         </motion.div>

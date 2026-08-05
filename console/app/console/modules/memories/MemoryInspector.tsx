@@ -7,6 +7,7 @@
  * differently; the facts are identical.
  */
 
+import Button from "@/components/ui/Button";
 import type { MemoryDetail } from "@/lib/types";
 import { band, FONT_DISPLAY, FONT_MONO, LABEL, MAGENTA } from "@/design/theme";
 
@@ -91,10 +92,21 @@ export default function MemoryInspector({
                   {chain[chain.length - 1] !== c && (
                     <span className="absolute left-[3.5px] top-5 h-full w-px bg-[#e9edff]/15" />
                   )}
-                  <button
+                  {/* `quiet` — a text-only hop that must not compete with the
+                      claim it renders. Two overrides, both deliberate:
+                      `color: undefined` clears the primitive's inline ink so the
+                      per-state classes below stay in charge (an inline colour
+                      would also kill the violet hover), and disabled:opacity-100
+                      cancels the shared 40% fade — the disabled node here is the
+                      CURRENT memory, the one thing in the lineage that must read
+                      brightest, not faintest. */}
+                  <Button
+                    variant="quiet"
+                    size="md"
                     disabled={current}
                     onClick={() => onHop(c.id)}
-                    className={`${FONT_MONO} pb-3 text-left text-sm leading-snug ${
+                    style={{ color: undefined }}
+                    className={`pb-3 text-left leading-snug disabled:cursor-default disabled:opacity-100 ${
                       current ? "text-white" : "text-[#e9edff]/50 transition hover:text-[#c9b6ff]"
                     }`}
                   >
@@ -102,7 +114,7 @@ export default function MemoryInspector({
                     <span className="ml-2 text-[10px] uppercase tracking-widest" style={{ color: statusTone(c.status) }}>
                       {c.status} · {fmtDate(c.valid_from)}–{c.valid_to ? fmtDate(c.valid_to) : "now"}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               );
             })}

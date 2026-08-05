@@ -29,8 +29,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
+import Button from "@/components/ui/Button";
 import {
   band,
+  FOCUS,
   FONT_DISPLAY,
   FONT_MONO,
   INK_DIM as DIM,
@@ -70,7 +72,30 @@ const DAY_MS = 86_400_000;
 /** Long enough to swallow a burst of typing/scrubbing, short enough to feel live. */
 const DEBOUNCE_MS = 220;
 
-const CHIP = `${FONT_MONO} shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-[0.14em] transition`;
+/*
+ * The chip pair, now that the capsule itself comes from Button's `pill` variant.
+ *
+ * Two things `pill` deliberately does not know about, kept here as classes:
+ *
+ *  - The live/inert EDGE. A chip that can act carries a white edge that
+ *    brightens on hover; one that cannot carries no edge at all. That has to
+ *    stay in classes — every call site therefore also clears `borderColor` back
+ *    to undefined in `style`, because the primitive's inline accent would
+ *    outrank `hover:border-white/60` and silently drop the brightening. (Inline
+ *    styles beat every :hover utility; the hover would have just stopped
+ *    working, which is the kind of regression nobody files a bug for.)
+ *  - The disabled treatment. BASE fades a disabled control to 40%, but these
+ *    chips already SAY inert — transparent edge, faint ink — and stacking the
+ *    fade on top of that made "no filters on" and the exhausted pager arrows
+ *    nearly unreadable.
+ */
+const CHIP_INERT = "disabled:cursor-default disabled:opacity-100";
+const chipEdge = (off: boolean) =>
+  off ? "border-transparent" : "border-white/25 text-white hover:border-white/60";
+/** pill/xs is py-1; the chips were py-0.5. Padding utilities resolve by
+ *  stylesheet order rather than className order (see the FIELD_BASE docblock in
+ *  control-styles.ts), so the original gutter rides in `style` to be certain. */
+const CHIP_BOX: CSSProperties = { paddingTop: "0.125rem", paddingBottom: "0.125rem" };
 
 /*
  * status · kind · memory · team · valid — the two glyph columns sized by their
@@ -304,19 +329,20 @@ export default function Archive({
             />
           ))}
 
-          <button
-            type="button"
+          {/* pill/xs is px-2.5; this one was px-3 — a larger padding utility
+              wins on stylesheet order, so it can stay a class here. */}
+          <Button
+            variant="pill"
+            size="xs"
             onClick={clearAll}
             disabled={activeCount === 0 || demo}
-            className={`${FONT_MONO} w-full rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.14em] transition ${
-              activeCount === 0
-                ? "border-transparent"
-                : "border-white/25 text-white hover:border-white/60"
-            }`}
-            style={activeCount === 0 ? { color: FAINT } : undefined}
+            className={`w-full px-3 uppercase tracking-[0.14em] ${CHIP_INERT} ${chipEdge(
+              activeCount === 0,
+            )}`}
+            style={{ borderColor: undefined, color: activeCount === 0 ? FAINT : undefined }}
           >
             {activeCount === 0 ? "no filters on" : `clear ${activeCount} filter${activeCount > 1 ? "s" : ""}`}
-          </button>
+          </Button>
         </motion.aside>
 
         {/* the catalog itself */}
@@ -339,6 +365,11 @@ export default function Archive({
               <span className={`${FONT_MONO} shrink-0 text-sm tabular-nums`} style={{ color: VIOLET }}>
                 {fmtDate(atDate.toISOString())}
               </span>
+              {/* Stays a bare <input type=range>: the field primitives draw a
+                  text box (border, wash, padding), which is the wrong body
+                  entirely for a slider. It already has an aria-label, and the
+                  unlayered :focus-visible baseline in globals.css gives its
+                  thumb the same ring every migrated control gets. */}
               <input
                 type="range"
                 min={0}
@@ -348,15 +379,16 @@ export default function Archive({
                 aria-label="As-of date"
                 className="h-1 min-w-0 flex-1 accent-[var(--vio)]"
               />
-              <button
-                type="button"
+              <Button
+                variant="pill"
+                size="xs"
                 onClick={toNow}
                 disabled={atNow}
-                className={`${CHIP} ${atNow ? "border-transparent" : "border-white/25 text-white hover:border-white/60"}`}
-                style={atNow ? { color: FAINT } : undefined}
+                className={`shrink-0 uppercase tracking-[0.14em] ${CHIP_INERT} ${chipEdge(atNow)}`}
+                style={{ ...CHIP_BOX, borderColor: undefined, color: atNow ? FAINT : undefined }}
               >
                 {atNow ? "● now" : "→ now"}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -413,20 +445,26 @@ export default function Archive({
                 {demo ? (
                   <span className={LABEL} style={{ color: FAINT }}>valid</span>
                 ) : (
-                  <button
-                    type="button"
+                  /* `quiet` — a column header that happens to act, so it carries
+                     LABEL's type scale (which xs matches exactly) and no chrome.
+                     `selected` replaces the hand-written aria-pressed. The
+                     explicit colour outranks the primitive's ink on purpose:
+                     this header goes violet while the sort is on. */
+                  <Button
+                    variant="quiet"
+                    size="xs"
                     onClick={cycleSort}
-                    aria-pressed={sortActive}
+                    selected={sortActive}
                     data-sort={sortActive ? dir : "off"}
                     aria-label={`Sort by validity — currently ${
                       !sortActive ? "unsorted" : dir === "asc" ? "oldest first" : "newest first"
                     }. Click to ${!sortActive ? "sort oldest first" : dir === "asc" ? "sort newest first" : "clear the sort"}.`}
-                    className={`${LABEL} flex items-center gap-1 rounded px-1 py-0.5 transition hover:text-white`}
+                    className="flex items-center gap-1 rounded px-1 py-0.5 uppercase tracking-[0.2em]"
                     style={{ color: sortActive ? VIOLET : FAINT }}
                   >
                     <span>valid</span>
                     <SortIcon size={11} strokeWidth={2} aria-hidden className="shrink-0 opacity-70" />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -443,10 +481,19 @@ export default function Archive({
                   const on = selected === r.id;
                   return (
                     <li key={r.id}>
+                      {/* Stays a plain <button>, unlike every other control in
+                          this file. The row IS the table: it carries COLS, the
+                          same grid the header cell above it uses, so the five
+                          cells stay in column. Button's `row` variant is
+                          `flex`, which would collapse that alignment — the
+                          table would stop being a table to satisfy a primitive.
+                          What it takes from the primitives instead is the one
+                          thing that was actually missing: FOCUS, so keyboard
+                          operators can see which record they are on. */}
                       <button
                         type="button"
                         onClick={() => setSelected(on ? null : r.id)}
-                        className={`grid w-full grid-cols-[minmax(0,1fr)] gap-x-3 px-3 py-2 text-left transition hover:bg-white/[0.03] md:items-center ${COLS}`}
+                        className={`${FOCUS} grid w-full grid-cols-[minmax(0,1fr)] gap-x-3 px-3 py-2 text-left transition hover:bg-white/[0.03] md:items-center ${COLS}`}
                         style={on ? { background: SEL_FILL } : undefined}
                       >
                         <span className="hidden md:block">
@@ -515,27 +562,35 @@ export default function Archive({
               </span>
               {!demo && pages > 1 && (
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="pill"
+                    size="xs"
                     onClick={() => gotoPage(page - 1)}
                     disabled={page <= 0}
-                    className={`${CHIP} ${page <= 0 ? "border-transparent" : "border-white/25 text-white hover:border-white/60"}`}
-                    style={page <= 0 ? { color: FAINT } : undefined}
+                    className={`shrink-0 uppercase tracking-[0.14em] ${CHIP_INERT} ${chipEdge(page <= 0)}`}
+                    style={{ ...CHIP_BOX, borderColor: undefined, color: page <= 0 ? FAINT : undefined }}
                   >
                     ← prev
-                  </button>
+                  </Button>
                   <span className={`${FONT_MONO} text-[11px] uppercase tracking-[0.14em]`} style={{ color: FAINT }}>
                     page {page + 1} / {pages}
                   </span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="pill"
+                    size="xs"
                     onClick={() => gotoPage(page + 1)}
                     disabled={page >= pages - 1}
-                    className={`${CHIP} ${page >= pages - 1 ? "border-transparent" : "border-white/25 text-white hover:border-white/60"}`}
-                    style={page >= pages - 1 ? { color: FAINT } : undefined}
+                    className={`shrink-0 uppercase tracking-[0.14em] ${CHIP_INERT} ${chipEdge(
+                      page >= pages - 1,
+                    )}`}
+                    style={{
+                      ...CHIP_BOX,
+                      borderColor: undefined,
+                      color: page >= pages - 1 ? FAINT : undefined,
+                    }}
                   >
                     next →
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -606,19 +661,27 @@ function FacetBlock({
           const on = active === o.value;
           return (
             <li key={o.value}>
-              <button
-                type="button"
+              {/* `row` is exactly this shelf: full-width, left-aligned, and its
+                  xs bucket is the px-2 py-1 the channel strip already used.
+                  `selected` now emits the aria-pressed that used to be written
+                  by hand. The wash stays delta rather than the primitive's
+                  neutral accent — this rail is the archive's band — so the on
+                  state sets its own colours and the off state clears them back
+                  to undefined, keeping the hover edge reachable. */}
+              <Button
+                variant="row"
+                size="xs"
                 onClick={() => onToggle(o.value)}
                 disabled={disabled}
-                aria-pressed={on}
-                className={`flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left transition ${
-                  disabled
-                    ? "cursor-default border-transparent"
-                    : on
-                      ? ""
-                      : "border-transparent hover:border-white/15 hover:bg-white/[0.03]"
+                selected={on}
+                className={`border ${CHIP_INERT} ${
+                  disabled ? "border-transparent" : on ? "" : "border-transparent hover:border-white/15"
                 }`}
-                style={on ? { borderColor: SEL_EDGE, background: SEL_FILL } : undefined}
+                style={
+                  on
+                    ? { borderColor: SEL_EDGE, background: SEL_FILL }
+                    : { borderColor: undefined, background: undefined, color: undefined }
+                }
               >
                 <span
                   className={`${FONT_MONO} min-w-0 flex-1 truncate text-sm`}
@@ -643,7 +706,7 @@ function FacetBlock({
                 >
                   {o.count}
                 </span>
-              </button>
+              </Button>
             </li>
           );
         })}
