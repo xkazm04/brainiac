@@ -50,9 +50,9 @@ jobs:
     # hung `up` burn an hour, so cap it at something a human would wait for.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # docker-compose.test.yml declares every one of these with `:?`, so a
       # missing value fails the `up` rather than silently starting a weakened
