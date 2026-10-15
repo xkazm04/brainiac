@@ -41,7 +41,7 @@ sha2 = "0.10"
 # toolchain) so the gateway still builds identically on Windows, macOS, and the slim
 # Debian release image.
 hmac = "0.12"
-base64 = "0.22"
+base64 = "0.23"
 rsa = { version = "0.9", features = ["sha2"] }
 regex = "1"
 schemars = { version = "1", features = ["chrono04"] }
