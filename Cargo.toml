@@ -35,7 +35,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 async-trait = "0.1"
-sha2 = "0.10"
+sha2 = "0.11"
 # Signing/crypto for the cloud-native gateway providers (Bedrock SigV4 = HMAC-SHA256;
 # Vertex service-account auth = RS256 JWT → OAuth). All pure-Rust (no ring/OpenSSL/C
 # toolchain) so the gateway still builds identically on Windows, macOS, and the slim
