@@ -60,7 +60,7 @@ export default function SignupClient({ configured }: { configured: boolean }) {
 
   if (!configured) {
     return (
-      <p className={`${FONT_MONO} text-sm text-[#e9edff]/50`}>
+      <p className={`${FONT_MONO} text-sm text-[var(--ink)]/50`}>
         Google sign-in is not configured on this deployment. Set
         NEXT_PUBLIC_FIREBASE_API_KEY, _AUTH_DOMAIN, _PROJECT_ID and _APP_ID.
       </p>
@@ -92,8 +92,8 @@ export default function SignupClient({ configured }: { configured: boolean }) {
             <div className={LABEL} style={{ color: GOLD }}>
               {result.created ? "project created" : "your project"}
             </div>
-            <p className={`${FONT_MONO} mt-1 text-xs text-[#e9edff]/50`}>{result.message}</p>
-            <p className={`${FONT_MONO} mt-1 text-xs text-[#e9edff]/35`}>id {result.projectId}</p>
+            <p className={`${FONT_MONO} mt-1 text-xs text-[var(--ink)]/50`}>{result.message}</p>
+            <p className={`${FONT_MONO} mt-1 text-xs text-[var(--ink)]/35`}>id {result.projectId}</p>
           </div>
 
           {result.apiKey ? (
@@ -126,10 +126,10 @@ export default function SignupClient({ configured }: { configured: boolean }) {
                   {copied ? "✓ copied" : "copy key"}
                 </Button>
               </div>
-              <p className={`${FONT_MONO} mt-1 text-[11px] leading-relaxed text-[#e9edff]/40`}>
+              <p className={`${FONT_MONO} mt-1 text-[11px] leading-relaxed text-[var(--ink)]/40`}>
                 Point your local agent at this project by setting{" "}
-                <span className="text-[#e9edff]/70">BRAINIAC_TOKEN</span> to the key above and{" "}
-                <span className="text-[#e9edff]/70">BRAINIAC_API_URL</span> to this service.
+                <span className="text-[var(--ink)]/70">BRAINIAC_TOKEN</span> to the key above and{" "}
+                <span className="text-[var(--ink)]/70">BRAINIAC_API_URL</span> to this service.
               </p>
             </div>
           ) : (
